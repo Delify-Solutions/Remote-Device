@@ -269,7 +269,7 @@ function renderDevices() {
     if (!DEVICES.length) {
       emptyEl.textContent = "Chưa có board nào. Bấm “Quét board”.";
       emptyEl.hidden = SCANNING;
-      if (SCANNING) tb.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-muted">
+      if (SCANNING) tb.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-muted">
         <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
         &nbsp; Đang quét board…</td></tr>`;
     } else {
@@ -290,8 +290,19 @@ function renderDevices() {
       : (SCANNING
           ? `<span class="spinner" style="width:12px;height:12px;border-width:2px"></span><span class="txt">quét…</span>`
           : `<span class="dot off"></span><span class="txt">offline</span>`);
-    const iosCell = d.ios ? `<span class="pill ok">iOS ${esc(d.ios)}</span>`
-                 : (d.udid ? `<span class="pill warn">chưa kết nối</span>` : `<span class="pill mut">—</span>`);
+    // cột iPhone gộp: model/tên + iOS + UDID (có nút copy)
+    let phoneCell;
+    if (d.udid || d.ios) {
+      const head = d.ios
+        ? `<div class="cell-name">${esc(model || "iPhone")}</div>${phoneName ? `<div class="cell-sub">${esc(phoneName)}</div>` : ""}`
+        : "";
+      const iosP = d.ios ? `<span class="pill ok">iOS ${esc(d.ios)}</span>` : `<span class="pill warn">chưa kết nối</span>`;
+      phoneCell = `${head}
+        <div class="cell-pills">${iosP}</div>
+        <div class="cell-pills">${udidCell(d.udid)}</div>`;
+    } else {
+      phoneCell = `<span class="pill mut">chưa gán iPhone</span>`;
+    }
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -301,12 +312,8 @@ function renderDevices() {
       <td>
         <div class="cell-name">${esc(d.label || d.name)}</div>
         <div class="cell-sub mono nowrap">${esc(d.name)}</div></td>
-      <td>
-        <div class="cell-name">${esc(model || "—")}</div>
-        ${phoneName ? `<div class="cell-sub">${esc(phoneName)}</div>` : ""}</td>
-      <td>${iosCell}</td>
+      <td>${phoneCell}</td>
       <td class="mono nowrap">${esc(shortPort(d.port))}</td>
-      <td>${udidCell(d.udid)}</td>
       <td class="ta-r">
         <div class="row-actions-h">
           ${(d.board_online && d.ble === true) ? `<button class="btn btn-sm btn-primary" data-probe="${esc(d.name)}" title="Rung chuột để nhận diện iPhone đang nối board này">Dò máy</button>` : ""}
