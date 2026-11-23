@@ -50,6 +50,21 @@
 .cell-pills { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .nowrap { white-space: nowrap; }
 
+/* ---- ô UDID + nút copy ---- */
+.udid-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.udid-txt { white-space: nowrap; }
+.btn-copy { border: 1px solid var(--bs-border-color); background: var(--bs-body-bg);
+  color: var(--bs-secondary-color); border-radius: 6px; width: 26px; height: 26px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: .9rem; }
+.btn-copy:hover { background: var(--bs-primary); border-color: var(--bs-primary); color: #fff; }
+
+/* ---- điều khiển tự-động-đọc-lại trên navbar ---- */
+.auto-wrap { display: inline-flex; align-items: center; gap: .35rem; padding: .25rem .5rem;
+  border: 1px solid var(--bs-border-color); border-radius: 8px; color: var(--bs-secondary-color); }
+.auto-sel { border: 0; background: transparent; color: var(--bs-body-color); font-size: .82rem;
+  cursor: pointer; outline: none; }
+.auto-sel option { color: initial; }
+
 /* ---- compact table (two-up device/iphone layout) ---- */
 .table-compact > :not(caption) > * > * { padding: .7rem .75rem; vertical-align: top; }
 .table-compact thead th { font-size: .7rem; text-transform: uppercase; letter-spacing: .03em;

@@ -188,6 +188,18 @@ function shortPort(p) {
   return String(p).replace(/^\/dev\/(cu\.|tty\.?)?/, "");   // /dev/cu.usbserial-5 → usbserial-5
 }
 
+// Ô UDID: hiện rút gọn + nút copy (bấm copy đầy đủ); rê chuột thấy full.
+function udidCell(udid, emptyText = "chưa gán") {
+  if (!udid) return `<span class="pill mut">${emptyText}</span>`;
+  return `<span class="udid-wrap">
+    <span class="mono udid-txt" title="${esc(udid)}">${esc(udid.slice(0, 12))}…</span>
+    <button class="btn-copy" data-copyudid="${esc(udid)}" title="Copy UDID đầy đủ"><i class="ti tabler-copy"></i></button>
+  </span>`;
+}
+function wireCopyUdid(root) {
+  $$("[data-copyudid]", root).forEach(b => b.onclick = () => copyText(b.dataset.copyudid));
+}
+
 /* ---- tab con (Tất cả / Board / iPhone) + phân trang ---- */
 const PAGE_SIZE = 8;
 let DEV_TAB = "all", DEV_PAGE = 1, IOS_PAGE = 1;
@@ -247,8 +259,6 @@ function renderDevices() {
           : `<span class="dot off"></span><span class="txt">offline</span>`);
     const iosCell = d.ios ? `<span class="pill ok">iOS ${esc(d.ios)}</span>`
                  : (d.udid ? `<span class="pill warn">chưa kết nối</span>` : `<span class="pill mut">—</span>`);
-    const udidCell = d.udid ? `<span class="mono">${esc(d.udid.slice(0, 10))}…</span>`
-                            : `<span class="pill mut">chưa gán</span>`;
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -263,7 +273,7 @@ function renderDevices() {
         ${phoneName ? `<div class="cell-sub">${esc(phoneName)}</div>` : ""}</td>
       <td>${iosCell}</td>
       <td class="mono nowrap">${esc(shortPort(d.port))}</td>
-      <td>${udidCell}</td>
+      <td>${udidCell(d.udid)}</td>
       <td class="ta-r">
         <div class="row-actions-h">
           ${d.udid ? `<button class="btn btn-sm btn-label-secondary" data-ready="${esc(d.udid)}" data-rname="${esc(d.label || d.name)}">Kiểm tra</button>` : ""}
@@ -275,6 +285,7 @@ function renderDevices() {
   $$("[data-edit]", tb).forEach(b => b.onclick = () => editDevice(b.dataset.edit));
   $$("[data-ready]", tb).forEach(b => b.onclick = () => openReadiness(b.dataset.ready, b.dataset.rname));
   $$("[data-del]", tb).forEach(b => b.onclick = () => deleteDevice(b.dataset.del));
+  wireCopyUdid(tb);
   renderPager("dev-pager", DEVICES.length, DEV_PAGE, p => { DEV_PAGE = p; renderDevices(); });
 }
 
@@ -319,7 +330,7 @@ function renderIOS() {
       <td>${esc(p.model || p.product_type || "—")}</td>
       <td>${p.ios ? `<span class="pill ok">iOS ${esc(p.ios)}</span>` : "—"}</td>
       <td class="mono">${esc(p.connection || "USB")}</td>
-      <td class="mono">${u ? u.slice(0, 10) + "…" : "—"}</td>
+      <td>${udidCell(p.udid, "—")}</td>
       <td class="ta-r">
         <div class="row-actions-h">
           <button class="btn btn-sm btn-primary"          data-iosact="check"   data-u="${u}" data-nm="${nm}">Kiểm tra</button>
@@ -331,6 +342,7 @@ function renderIOS() {
     tb.appendChild(tr);
   });
   $$("[data-iosact]", tb).forEach(b => b.onclick = () => iosRowAction(b.dataset.iosact, b));
+  wireCopyUdid(tb);
   renderPager("ios-pager", IOS.length, IOS_PAGE, p => { IOS_PAGE = p; renderIOS(); });
 }
 
@@ -486,8 +498,43 @@ function logOv(t) {
 }
 
 async function copyText(t) {
-  try { await navigator.clipboard.writeText(t); toast("Đã copy lệnh", "ok"); }
-  catch (e) { toast("Không copy được — tự chọn & copy: " + t, "warn"); }
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(t);
+    } else {
+      // pywebview (file://) không có clipboard API → fallback execCommand
+      const ta = document.createElement("textarea");
+      ta.value = t; ta.style.position = "fixed"; ta.style.top = "-1000px"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      document.execCommand("copy"); ta.remove();
+    }
+    toast("Đã copy", "ok");
+  } catch (e) { toast("Không copy được — tự bôi đen & copy", "warn"); }
+}
+
+/* =========================================================
+   Nạp lại + tự động đọc lại (áp dụng toàn app)
+   ========================================================= */
+let AUTO_SECS = 0, AUTO_TIMER = null;
+
+function refreshCurrentView(manual = false) {
+  // bỏ qua khi đang quét hoặc đang mở hộp thoại để không gián đoạn thao tác
+  if (SCANNING && !manual) return;
+  const m1 = $("#modal"), m2 = $("#ready-modal");
+  if (!manual && ((m1 && !m1.hidden) || (m2 && !m2.hidden))) return;
+  const active = $(".view.active");
+  const id = active ? active.id : "";
+  if (id === "view-overview") loadOverview();
+  else if (id === "view-esp" || id === "view-devices") { if (!SCANNING) espScan(); }
+  else if (id === "view-flows") loadDevices();
+  else espScan();
+}
+
+function setAuto(secs) {
+  AUTO_SECS = secs | 0;
+  try { localStorage.setItem("ipf-auto", String(AUTO_SECS)); } catch (e) {}
+  if (AUTO_TIMER) { clearInterval(AUTO_TIMER); AUTO_TIMER = null; }
+  if (AUTO_SECS > 0) AUTO_TIMER = setInterval(() => refreshCurrentView(false), AUTO_SECS * 1000);
 }
 
 async function installPip(names, btn) {
@@ -1063,6 +1110,17 @@ function init() {
       try { localStorage.setItem("ipf-theme", next); } catch (e) {}
       location.reload();
     };
+  }
+
+  // nạp lại + tự động đọc lại (toàn app)
+  const reloadBtn = $("#btn-reload-all");
+  if (reloadBtn) reloadBtn.onclick = (e) => { busy(e.currentTarget, true); refreshCurrentView(true); setTimeout(() => busy(e.currentTarget, false), 800); };
+  const autoSel = $("#auto-sel");
+  if (autoSel) {
+    let saved = 0; try { saved = parseInt(localStorage.getItem("ipf-auto") || "0") || 0; } catch (e) {}
+    autoSel.value = String(saved);
+    setAuto(saved);
+    autoSel.onchange = () => setAuto(parseInt(autoSel.value) || 0);
   }
 
   // devices

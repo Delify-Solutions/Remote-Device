@@ -96,11 +96,24 @@
         </div>
         <div class="navbar-nav-right d-flex align-items-center justify-content-between w-100" id="navbar-collapse">
           <span class="fw-medium" id="page-title">Tổng quan</span>
-          <div class="d-flex align-items-center gap-3">
-            <span class="d-flex align-items-center gap-2">
+          <div class="d-flex align-items-center gap-2">
+            <span class="d-flex align-items-center gap-2 me-1">
               <span class="conn-dot" id="conn-dot"></span>
               <small id="conn-text">Đang kết nối…</small>
             </span>
+            <button class="btn btn-sm btn-label-secondary" id="btn-reload-all" title="Nạp lại ngay">
+              <i class="ti tabler-reload me-1"></i>Nạp lại
+            </button>
+            <div class="auto-wrap" title="Tự động đọc lại">
+              <i class="ti tabler-refresh"></i>
+              <select id="auto-sel" class="auto-sel">
+                <option value="0">Tắt tự động</option>
+                <option value="10">Mỗi 10 giây</option>
+                <option value="30">Mỗi 30 giây</option>
+                <option value="60">Mỗi 60 giây</option>
+                <option value="120">Mỗi 2 phút</option>
+              </select>
+            </div>
             <a href="javascript:void(0)" class="btn btn-icon btn-sm btn-label-secondary" id="btn-theme" title="Sáng/Tối">
               <i class="ti tabler-sun icon-md"></i>
             </a>

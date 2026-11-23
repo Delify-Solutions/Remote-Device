@@ -62,16 +62,28 @@ def probe(port, timeout=3.0):
                 name = line[5:].strip(); break
         ble = None
         if name:
-            # hỏi trạng thái Bluetooth (đã nối với iPhone chưa)
+            # Hỏi trạng thái Bluetooth nhiều lần rồi BỎ PHIẾU ĐA SỐ.
+            # Vì firmware isConnected() lúc đầu còn lag + Serial có thể trả dòng
+            # rỗng/cũ khi BLE đang bận → đọc 1 lần dễ trượt thành "?" hoặc sai.
             ser.reset_input_buffer()
-            for _ in range(5):
+            conn = disc = 0
+            for _ in range(8):
                 ser.write(b"status\n"); ser.flush()
-                time.sleep(0.2)
-                line = ser.readline().decode("utf-8", "ignore").strip()
-                if "ble=" in line:
-                    # LƯU Ý: "disconnected" cũng chứa chuỗi con "connected",
-                    # nên phải so khớp đúng "ble=connected" / "ble=disconnected".
-                    ble = ("ble=connected" in line); break
+                time.sleep(0.15)
+                got = None
+                # vét hết các dòng đang có trong buffer, lấy dòng 'ble=' mới nhất
+                for _2 in range(4):
+                    line = ser.readline().decode("utf-8", "ignore").strip()
+                    if not line:
+                        break
+                    if "ble=" in line:
+                        got = line
+                if got is not None:
+                    # LƯU Ý: "disconnected" chứa chuỗi con "connected" → khớp đúng.
+                    if "ble=connected" in got: conn += 1
+                    else: disc += 1
+            if conn or disc:
+                ble = conn > disc
         ser.close()
         return {"flashed": name is not None, "name": name, "ble": ble}
     except Exception as e:
