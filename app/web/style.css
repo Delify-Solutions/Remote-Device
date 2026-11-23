@@ -82,7 +82,7 @@
 .modal-select:focus { outline: none; border-color: var(--bs-primary); }
 
 /* ---- compact table (two-up device/iphone layout) ---- */
-.table-compact > :not(caption) > * > * { padding: .7rem .75rem; vertical-align: top; }
+.table-compact > :not(caption) > * > * { padding: .5rem .75rem; vertical-align: middle; }
 .table-compact thead th { font-size: .7rem; text-transform: uppercase; letter-spacing: .03em;
   color: var(--bs-secondary-color); vertical-align: middle; }
 .table-compact td.col-status { width: 1%; white-space: nowrap; }

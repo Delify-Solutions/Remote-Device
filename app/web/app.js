@@ -290,16 +290,15 @@ function renderDevices() {
       : (SCANNING
           ? `<span class="spinner" style="width:12px;height:12px;border-width:2px"></span><span class="txt">quét…</span>`
           : `<span class="dot off"></span><span class="txt">offline</span>`);
-    // cột iPhone gộp: model/tên + iOS + UDID (có nút copy)
+    // cột iPhone gộp gọn: dòng 1 = model · tên máy; dòng 2 = iOS + UDID
     let phoneCell;
     if (d.udid || d.ios) {
-      const head = d.ios
-        ? `<div class="cell-name">${esc(model || "iPhone")}</div>${phoneName ? `<div class="cell-sub">${esc(phoneName)}</div>` : ""}`
+      const title = d.ios
+        ? `${esc(model || "iPhone")}${phoneName ? ` <span class="cell-sub" style="font-weight:400">· ${esc(phoneName)}</span>` : ""}`
         : "";
       const iosP = d.ios ? `<span class="pill ok">iOS ${esc(d.ios)}</span>` : `<span class="pill warn">chưa kết nối</span>`;
-      phoneCell = `${head}
-        <div class="cell-pills">${iosP}</div>
-        <div class="cell-pills">${udidCell(d.udid)}</div>`;
+      phoneCell = `${title ? `<div class="cell-name">${title}</div>` : ""}
+        <div class="cell-pills">${iosP} ${udidCell(d.udid)}</div>`;
     } else {
       phoneCell = `<span class="pill mut">chưa gán iPhone</span>`;
     }
@@ -311,8 +310,7 @@ function renderDevices() {
         ${online ? bleBadge(d.ble) : ""}</td>
       <td>
         <div class="cell-name">${esc(d.label || d.name)}</div>
-        <div class="cell-sub mono nowrap">${esc(d.name)}</div>
-        <div class="cell-sub mono nowrap">⎍ ${esc(shortPort(d.port))}</div></td>
+        <div class="cell-sub mono nowrap">${esc(d.name)} · ${esc(shortPort(d.port))}</div></td>
       <td>${phoneCell}</td>
       <td class="ta-r">
         <div class="row-actions-h">
