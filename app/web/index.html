@@ -144,44 +144,46 @@
               </div>
             </div>
 
-            <div class="dev-stats mb-4" id="dev-stats"></div>
+            <div class="dev-stats mb-3" id="dev-stats"></div>
 
-            <div class="card mb-4">
-              <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">Danh sách board</h5>
-                <span class="text-muted small" id="dev-count-lbl"></span>
+            <div class="row g-3">
+              <div class="col-lg-7">
+                <div class="card h-100">
+                  <div class="card-header d-flex justify-content-between align-items-center py-3">
+                    <h5 class="mb-0">Danh sách board <span class="text-muted" style="font-size:.78rem" id="dev-count-lbl"></span></h5>
+                    <small class="text-muted">ESP32 điều khiển qua Bluetooth</small>
+                  </div>
+                  <div class="table-responsive">
+                    <table class="table table-hover table-compact mb-0">
+                      <thead>
+                        <tr>
+                          <th>Trạng thái</th><th>Thiết bị</th><th>iPhone</th><th class="text-end">Thao tác</th>
+                        </tr>
+                      </thead>
+                      <tbody id="dev-tbody"></tbody>
+                    </table>
+                  </div>
+                  <div class="p-4 text-center text-muted" id="dev-empty" hidden>Chưa có board nào. Bấm “Quét board”.</div>
+                </div>
               </div>
-              <div class="table-responsive text-nowrap">
-                <table class="table table-hover">
-                  <thead>
-                    <tr>
-                      <th>Trạng thái</th><th>Tên / Nhãn</th><th>iPhone</th>
-                      <th>iOS</th><th>Cổng</th><th>UDID</th><th class="text-end">Thao tác</th>
-                    </tr>
-                  </thead>
-                  <tbody id="dev-tbody"></tbody>
-                </table>
-              </div>
-              <div class="p-5 text-center text-muted" id="dev-empty" hidden>Chưa có board nào. Bấm “Quét board”.</div>
-            </div>
 
-            <div class="card">
-              <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">iPhone đang cắm USB</h5>
-                <small class="text-muted">Phát hiện qua USB, chưa chắc đã gán board</small>
+              <div class="col-lg-5">
+                <div class="card h-100">
+                  <div class="card-header d-flex justify-content-between align-items-center py-3">
+                    <h5 class="mb-0">iPhone cắm USB</h5>
+                    <small class="text-muted">dùng để chụp màn hình</small>
+                  </div>
+                  <div class="table-responsive">
+                    <table class="table table-hover table-compact mb-0">
+                      <thead>
+                        <tr><th>Máy</th><th>iOS</th><th class="text-end">Gán board</th></tr>
+                      </thead>
+                      <tbody id="ios-tbody"></tbody>
+                    </table>
+                  </div>
+                  <div class="p-4 text-center text-muted" id="ios-empty" hidden>Không có iPhone nào đang cắm.</div>
+                </div>
               </div>
-              <div class="table-responsive text-nowrap">
-                <table class="table table-hover">
-                  <thead>
-                    <tr>
-                      <th>Tên máy</th><th>Model</th><th>iOS</th>
-                      <th>Kết nối</th><th>UDID</th><th class="text-end">Trạng thái</th>
-                    </tr>
-                  </thead>
-                  <tbody id="ios-tbody"></tbody>
-                </table>
-              </div>
-              <div class="p-5 text-center text-muted" id="ios-empty" hidden>Không có iPhone nào đang cắm.</div>
             </div>
           </section>
 

@@ -188,7 +188,7 @@ function renderDevices() {
   tb.innerHTML = "";
   if (!DEVICES.length) {
     $("#dev-empty").hidden = SCANNING;
-    if (SCANNING) tb.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-muted">
+    if (SCANNING) tb.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-muted">
       <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
       &nbsp; Đang quét board…</td></tr>`;
     return;
@@ -196,34 +196,39 @@ function renderDevices() {
   $("#dev-empty").hidden = true;
   DEVICES.forEach(d => {
     const online = d.board_online;
-    const iosOk = d.ios_connected;
-    const model = d.model || "—";
-    const phoneName = d.device_name || d.label || "";
-    const iosCell = d.ios
+    const model = d.model || "";
+    const phoneName = d.device_name || "";
+    const iosPill = d.ios
       ? `<span class="pill ok">iOS ${esc(d.ios)}</span>`
-      : (iosOk ? `<span class="pill mut">—</span>` : `<span class="pill warn">chưa kết nối</span>`);
-    const udidShort = d.udid ? esc(d.udid.slice(0, 10)) + "…" : `<span class="pill warn">chưa gán</span>`;
+      : `<span class="pill warn">chưa kết nối</span>`;
+    const udidCell = d.udid
+      ? `<span class="cell-sub mono">${esc(d.udid.slice(0, 8))}…</span>`
+      : `<span class="pill warn">chưa gán UDID</span>`;
+    const statusHtml = online
+      ? `<span class="dot on"></span><span class="txt">online</span>`
+      : (SCANNING
+          ? `<span class="spinner" style="width:12px;height:12px;border-width:2px"></span><span class="txt">quét…</span>`
+          : `<span class="dot off"></span><span class="txt">offline</span>`);
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>
-        <div class="status-cell">${online
-          ? `<span class="dot on"></span><span class="txt">online</span>`
-          : (SCANNING
-              ? `<span class="spinner" style="width:12px;height:12px;border-width:2px"></span><span class="txt">đang quét…</span>`
-              : `<span class="dot off"></span><span class="txt">offline</span>`)}</div>
+        <div class="status-cell">${statusHtml}</div>
         ${online ? bleBadge(d.ble) : ""}</td>
-      <td><div class="cell-name">${esc(d.label || d.name)}</div>
-        <div class="cell-sub mono">${esc(d.name)}</div></td>
-      <td><div class="cell-name">${esc(model)}</div>
-        ${phoneName ? `<div class="cell-sub">${esc(phoneName)}</div>` : ""}</td>
-      <td>${iosCell}</td>
-      <td class="mono">${d.port ? esc(d.port) : "—"}</td>
-      <td class="mono">${udidShort}</td>
+      <td>
+        <div class="cell-name">${esc(d.label || d.name)}</div>
+        <div class="cell-sub mono">${esc(d.name)}</div>
+        <div class="cell-sub mono">${d.port ? esc(d.port) : "—"}</div></td>
+      <td>
+        <div class="cell-name">${esc(model || "—")}</div>
+        ${phoneName ? `<div class="cell-sub">${esc(phoneName)}</div>` : ""}
+        <div class="cell-pills">${iosPill} ${udidCell}</div></td>
       <td class="ta-r">
-        ${d.udid ? `<button class="btn btn-sm btn-label-secondary" data-ready="${esc(d.udid)}" data-rname="${esc(d.label || d.name)}">Kiểm tra</button>` : ""}
-        <button class="btn btn-sm btn-label-secondary" data-edit="${esc(d.name)}">Sửa</button>
-        ${d.configured ? `<button class="btn btn-sm btn-label-danger" data-del="${esc(d.name)}">Xoá</button>` : ""}</td>`;
+        <div class="row-actions">
+          ${d.udid ? `<button class="btn btn-sm btn-label-secondary" data-ready="${esc(d.udid)}" data-rname="${esc(d.label || d.name)}">Kiểm tra</button>` : ""}
+          <button class="btn btn-sm btn-label-secondary" data-edit="${esc(d.name)}">Sửa</button>
+          ${d.configured ? `<button class="btn btn-sm btn-label-danger" data-del="${esc(d.name)}">Xoá</button>` : ""}
+        </div></td>`;
     tb.appendChild(tr);
   });
   $$("[data-edit]", tb).forEach(b => b.onclick = () => editDevice(b.dataset.edit));
@@ -246,9 +251,9 @@ function renderIOS() {
   tb.innerHTML = "";
   if (!IOS.length) {
     $("#ios-empty").hidden = IOS_LOADING;
-    if (IOS_LOADING) tb.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-muted">
+    if (IOS_LOADING) tb.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-muted">
       <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
-      &nbsp; Đang tải iPhone qua USB…</td></tr>`;
+      &nbsp; Đang tải iPhone…</td></tr>`;
     return;
   }
   $("#ios-empty").hidden = true;
@@ -257,13 +262,15 @@ function renderIOS() {
     const isMapped = mapped.has(p.udid);
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td class="cell-name">${esc(p.name || "—")}</td>
-      <td>${esc(p.model || p.product_type || "—")}</td>
-      <td>${p.ios ? `<span class="pill ok">iOS ${esc(p.ios)}</span>` : "—"}</td>
-      <td class="mono">${esc(p.connection || "USB")}</td>
-      <td class="mono">${esc((p.udid || "").slice(0, 10))}${p.udid ? "…" : ""}</td>
+      <td>
+        <div class="cell-name">${esc(p.name || "—")}</div>
+        <div class="cell-sub">${esc(p.model || p.product_type || "—")}</div>
+        <div class="cell-sub mono">${esc((p.udid || "").slice(0, 8))}${p.udid ? "…" : ""}</div></td>
+      <td>
+        ${p.ios ? `<span class="pill ok">iOS ${esc(p.ios)}</span>` : "—"}
+        <div class="cell-sub mono" style="margin-top:3px">${esc(p.connection || "USB")}</div></td>
       <td class="ta-r">${isMapped
-        ? `<span class="pill ok">đã gán board</span>`
+        ? `<span class="pill ok">đã gán</span>`
         : `<span class="pill warn">chưa gán</span>`}</td>`;
     tb.appendChild(tr);
   });
@@ -415,10 +422,13 @@ async function installTool(name, btn) {
 /* =========================================================
    Kiểm tra iPhone (sẵn sàng chụp màn hình)
    ========================================================= */
-let READY_UDID = null, READY_NAME = "";
+let READY_UDID = null, READY_NAME = "", READY_BOARD = "", READY_BLE = null;
 
 function openReadiness(udid, name) {
   READY_UDID = udid; READY_NAME = name || "";
+  const dev = DEVICES.find(d => d.udid === udid);
+  READY_BOARD = dev ? dev.name : "";
+  READY_BLE = dev ? dev.ble : null;   // theo lần quét gần nhất; có nút "Dò lại" để kiểm tra trực tiếp
   $("#ready-sub").textContent = `${name || ""} · ${udid.slice(0, 12)}…`;
   $("#ready-modal").hidden = false;
   checkReady();
@@ -444,21 +454,48 @@ function readyRow(ok, title, desc, actionsHtml) {
 
 function renderReady(r) {
   const body = $("#ready-body");
-  const overall = r.ready
-    ? `<div class="pill ok" style="font-size:.85rem;padding:.3rem .7rem">✓ Sẵn sàng chụp màn hình</div>`
-    : `<div class="pill warn" style="font-size:.85rem;padding:.3rem .7rem">Chưa sẵn sàng — xử lý các mục ✕ bên dưới</div>`;
-  body.innerHTML = `<div class="mb-3">${overall}</div>
+  const ble = READY_BLE;
+  const shotBadge = r.ready
+    ? `<span class="pill ok">✓ Chụp màn hình (USB): sẵn sàng</span>`
+    : `<span class="pill warn">Chụp màn hình (USB): chưa sẵn sàng</span>`;
+  const bleBadge = ble === true ? `<span class="pill ok">✓ Điều khiển (Bluetooth): đã nối</span>`
+                 : ble === false ? `<span class="pill bad">✕ Điều khiển (Bluetooth): chưa nối</span>`
+                 : `<span class="pill mut">Điều khiển (Bluetooth): ?</span>`;
+  const bleDesc = ble === true
+    ? "Board ESP32 đã nối Bluetooth với iPhone — bấm/gõ được."
+    : "Vào iPhone → Bluetooth → ghép lại board ESP32 (nếu vừa xoá/nạp thì “Quên thiết bị này” rồi ghép lại).";
+  body.innerHTML = `
+    <div class="mb-3 d-flex flex-wrap gap-2">${shotBadge}${bleBadge}</div>
+    <div class="ready-sec">Chụp màn hình — qua cáp USB</div>
     ${readyRow(r.trusted, "Tin cậy máy tính (Trust)", "Cắm USB → bấm “Tin cậy” + nhập passcode trên iPhone",
       `<button class="btn btn-sm btn-primary" data-act="pair">Ghép nối</button>`)}
     ${readyRow(r.dev_mode, "Developer Mode", "iOS 16+ cần bật (máy sẽ khởi động lại)",
       `<button class="btn btn-sm btn-primary" data-act="devmode">Bật</button>
        <button class="btn btn-sm btn-label-secondary" data-act="reveal">Hiện mục</button>`)}
     ${readyRow(r.ddi, "Developer Disk Image", "Mount để chụp màn (lần đầu cần mạng)",
-      `<button class="btn btn-sm btn-primary" data-act="mount">Tải &amp; Mount</button>`)}`;
+      `<button class="btn btn-sm btn-primary" data-act="mount">Tải &amp; Mount</button>`)}
+    <div class="ready-sec">Điều khiển chuột/phím — qua Bluetooth</div>
+    ${readyRow(ble === true, "Bluetooth (board ESP32 ↔ iPhone)", bleDesc,
+      `<button class="btn btn-sm btn-label-secondary" data-act="blerecheck">Dò lại</button>`)}`;
   $$("[data-act]", body).forEach(b => b.onclick = () => readyAction(b.dataset.act, b));
 }
 
+async function recheckBle(btn) {
+  if (!READY_BOARD) { toast("Board chưa gán, không dò được", "warn"); return; }
+  busy(btn, true);
+  try {
+    const r = await API().ble_status(READY_BOARD);
+    if (r && r.ok) READY_BLE = !String(r.status).includes("disconnected");
+    else { READY_BLE = null; toast("Không dò được: " + ((r && r.error) || "?"), "warn"); }
+  } catch (e) { READY_BLE = null; toast("Lỗi dò BLE: " + e, "bad"); }
+  const d = DEVICES.find(x => x.name === READY_BOARD);
+  if (d) { d.ble = READY_BLE; renderDevices(); updateCounts(); }
+  busy(btn, false);
+  checkReady();   // dựng lại đầy đủ (query lại USB + BLE mới) để chắc chắn
+}
+
 async function readyAction(act, btn) {
+  if (act === "blerecheck") return recheckBle(btn);
   const map = {
     pair:    { fn: "ios_pair",           confirm: null, note: "Nhìn iPhone và bấm “Tin cậy” + nhập passcode." },
     devmode: { fn: "ios_enable_devmode", confirm: "Bật Developer Mode sẽ KHỞI ĐỘNG LẠI iPhone. Tiếp tục?",
