@@ -1,0 +1,15 @@
+__pycache__/
+.env
+.venv/
+.wda-build/
+devices.txt
+logs/
+run/
+shots/
+tmp/
+.arduino/
+.arduino-user/
+# runtime state (device UDID/label, flows) — per-install, không đẩy lên repo
+app/data/
+# backup/test artifacts
+app/web/_backup_precustom/
