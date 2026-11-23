@@ -183,6 +183,11 @@ function stat(val, lbl, kind = "") {
   return `<div class="stat ${kind}"><div class="stat-val">${val}</div><div class="stat-lbl">${esc(lbl)}</div></div>`;
 }
 
+function shortPort(p) {
+  if (!p) return "—";
+  return String(p).replace(/^\/dev\/(cu\.|tty\.?)?/, "");   // /dev/cu.usbserial-5 → usbserial-5
+}
+
 function renderDevices() {
   const tb = $("#dev-tbody");
   tb.innerHTML = "";
@@ -198,32 +203,35 @@ function renderDevices() {
     const online = d.board_online;
     const model = d.model || "";
     const phoneName = d.device_name || "";
-    const iosPill = d.ios
-      ? `<span class="pill ok">iOS ${esc(d.ios)}</span>`
-      : `<span class="pill warn">chưa kết nối</span>`;
-    const udidCell = d.udid
-      ? `<span class="cell-sub mono">${esc(d.udid.slice(0, 8))}…</span>`
-      : `<span class="pill warn">chưa gán UDID</span>`;
     const statusHtml = online
       ? `<span class="dot on"></span><span class="txt">online</span>`
       : (SCANNING
           ? `<span class="spinner" style="width:12px;height:12px;border-width:2px"></span><span class="txt">quét…</span>`
           : `<span class="dot off"></span><span class="txt">offline</span>`);
 
+    // cột iPhone: gọn, mỗi loại thông tin một dòng
+    let phoneCell;
+    if (d.ios) {
+      phoneCell = `<div class="cell-name">${esc(model || "iPhone")}</div>
+        ${phoneName ? `<div class="cell-sub">${esc(phoneName)}</div>` : ""}
+        <div class="cell-pills"><span class="pill ok">iOS ${esc(d.ios)}</span></div>`;
+    } else if (d.udid) {
+      phoneCell = `<div class="cell-pills"><span class="pill warn">chưa kết nối</span></div>`;
+    } else {
+      phoneCell = `<div class="cell-pills"><span class="pill mut">chưa gán iPhone</span></div>`;
+    }
+
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>
+      <td class="col-status">
         <div class="status-cell">${statusHtml}</div>
         ${online ? bleBadge(d.ble) : ""}</td>
       <td>
         <div class="cell-name">${esc(d.label || d.name)}</div>
-        <div class="cell-sub mono">${esc(d.name)}</div>
-        <div class="cell-sub mono">${d.port ? esc(d.port) : "—"}</div></td>
-      <td>
-        <div class="cell-name">${esc(model || "—")}</div>
-        ${phoneName ? `<div class="cell-sub">${esc(phoneName)}</div>` : ""}
-        <div class="cell-pills">${iosPill} ${udidCell}</div></td>
-      <td class="ta-r">
+        <div class="cell-sub mono nowrap">${esc(d.name)}</div>
+        <div class="cell-sub mono nowrap">${esc(shortPort(d.port))}</div></td>
+      <td>${phoneCell}</td>
+      <td class="col-act">
         <div class="row-actions">
           ${d.udid ? `<button class="btn btn-sm btn-label-secondary" data-ready="${esc(d.udid)}" data-rname="${esc(d.label || d.name)}">Kiểm tra</button>` : ""}
           <button class="btn btn-sm btn-label-secondary" data-edit="${esc(d.name)}">Sửa</button>
