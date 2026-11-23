@@ -269,7 +269,7 @@ function renderDevices() {
     if (!DEVICES.length) {
       emptyEl.textContent = "Chưa có board nào. Bấm “Quét board”.";
       emptyEl.hidden = SCANNING;
-      if (SCANNING) tb.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-muted">
+      if (SCANNING) tb.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-muted">
         <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
         &nbsp; Đang quét board…</td></tr>`;
     } else {
@@ -311,9 +311,9 @@ function renderDevices() {
         ${online ? bleBadge(d.ble) : ""}</td>
       <td>
         <div class="cell-name">${esc(d.label || d.name)}</div>
-        <div class="cell-sub mono nowrap">${esc(d.name)}</div></td>
+        <div class="cell-sub mono nowrap">${esc(d.name)}</div>
+        <div class="cell-sub mono nowrap">⎍ ${esc(shortPort(d.port))}</div></td>
       <td>${phoneCell}</td>
-      <td class="mono nowrap">${esc(shortPort(d.port))}</td>
       <td class="ta-r">
         <div class="row-actions-h">
           ${(d.board_online && d.ble === true) ? `<button class="btn btn-sm btn-primary" data-probe="${esc(d.name)}" title="Rung chuột để nhận diện iPhone đang nối board này">Dò máy</button>` : ""}
@@ -398,7 +398,7 @@ function renderIOS() {
     if (!IOS.length) {
       emptyEl.textContent = "Không có iPhone nào đang cắm.";
       emptyEl.hidden = IOS_LOADING;
-      if (IOS_LOADING) tb.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-muted">
+      if (IOS_LOADING) tb.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-muted">
         <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
         &nbsp; Đang tải iPhone…</td></tr>`;
     } else {
@@ -422,8 +422,9 @@ function renderIOS() {
         <div class="cell-sub">${isMapped
           ? `<span class="pill ok">đã gán board</span>`
           : `<span class="pill warn">chưa gán board</span>`}</div></td>
-      <td>${esc(p.model || p.product_type || "—")}</td>
-      <td>${p.ios ? `<span class="pill ok">iOS ${esc(p.ios)}</span>` : "—"}</td>
+      <td>
+        <div class="cell-name">${esc(p.model || p.product_type || "—")}</div>
+        <div class="cell-pills">${p.ios ? `<span class="pill ok">iOS ${esc(p.ios)}</span>` : `<span class="pill mut">—</span>`}</div></td>
       <td class="mono">${esc(p.connection || "USB")}</td>
       <td>${udidCell(p.udid, "—")}</td>
       <td class="ta-r">
