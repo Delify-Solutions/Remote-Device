@@ -309,7 +309,7 @@ function renderDevices() {
       <td>${udidCell(d.udid)}</td>
       <td class="ta-r">
         <div class="row-actions-h">
-          ${d.ble === true ? `<button class="btn btn-sm btn-primary" data-probe="${esc(d.name)}" title="Rung chuột để nhận diện iPhone đang nối board này">Dò máy</button>` : ""}
+          ${(d.board_online && d.ble === true) ? `<button class="btn btn-sm btn-primary" data-probe="${esc(d.name)}" title="Rung chuột để nhận diện iPhone đang nối board này">Dò máy</button>` : ""}
           ${d.udid ? `<button class="btn btn-sm btn-label-secondary" data-ready="${esc(d.udid)}" data-rname="${esc(d.label || d.name)}">Kiểm tra</button>` : ""}
           <button class="btn btn-sm btn-label-secondary" data-edit="${esc(d.name)}">Sửa</button>
           ${d.configured ? `<button class="btn btn-sm btn-label-danger" data-del="${esc(d.name)}">Xoá</button>` : ""}
