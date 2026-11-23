@@ -1228,7 +1228,17 @@ function init() {
   const reloadBtn = $("#btn-reload-all");
   if (reloadBtn) reloadBtn.onclick = (e) => { busy(e.currentTarget, true); refreshCurrentView(true); setTimeout(() => busy(e.currentTarget, false), 800); };
   const reloadUiBtn = $("#btn-reload-ui");
-  if (reloadUiBtn) reloadUiBtn.onclick = () => location.reload();   // F5: tải lại toàn bộ giao diện
+  if (reloadUiBtn) reloadUiBtn.onclick = async () => {
+    // Ưu tiên nhờ backend điều hướng lại (giữ cầu nối pywebview API).
+    // location.reload() trên pywebview/macOS làm MẤT window.pywebview.api.
+    try {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.reload_ui) {
+        await window.pywebview.api.reload_ui();
+        return;
+      }
+    } catch (e) {}
+    location.reload();   // fallback (trình duyệt thường)
+  };
   const restartBtn = $("#btn-restart");
   if (restartBtn) restartBtn.onclick = async () => {
     if (!confirmBox("Khởi động lại app? Cửa sổ sẽ đóng rồi mở lại (vài giây).")) return;
@@ -1237,7 +1247,7 @@ function init() {
   };
   const autoSel = $("#auto-sel");
   if (autoSel) {
-    let saved = 0; try { saved = parseInt(localStorage.getItem("ipf-auto") || "0") || 0; } catch (e) {}
+    let saved = 60; try { const v = localStorage.getItem("ipf-auto"); saved = (v === null) ? 60 : (parseInt(v) || 0); } catch (e) {}
     autoSel.value = String(saved);
     setAuto(saved);
     autoSel.onchange = () => setAuto(parseInt(autoSel.value) || 0);

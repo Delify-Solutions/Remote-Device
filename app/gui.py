@@ -8,7 +8,7 @@ Cấu trúc: Manager giữ phiên điều khiển từng board; Api là cầu n�
 (web/index.html) gọi xuống Python; webview hiển thị giao diện trong cửa sổ native.
 """
 from __future__ import annotations
-import os, sys, base64, threading, traceback, json
+import os, sys, base64, threading, traceback, json, pathlib
 sys.path.insert(0, os.path.dirname(__file__))
 
 import cv2
@@ -102,6 +102,18 @@ class Api:
             return sysinfo.tool_install(name)
         except Exception as e:
             return {"ok": False, "log": str(e)}
+
+    def reload_ui(self):
+        """Tải lại giao diện (như F5) — phải do pywebview điều hướng để GẮN LẠI
+        window.pywebview.api; location.reload() của JS làm MẤT cầu nối API trên macOS."""
+        def _do():
+            try:
+                url = WINDOW.get_current_url() or pathlib.Path(os.path.join(WEB_DIR, "index.html")).as_uri()
+                WINDOW.load_url(url)
+            except Exception:
+                pass
+        threading.Timer(0.2, _do).start()
+        return {"ok": True}
 
     def restart_app(self):
         """Khởi động lại toàn bộ app (đóng cửa sổ, chạy lại tiến trình)."""
