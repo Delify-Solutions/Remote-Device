@@ -239,16 +239,30 @@
   gap: .55rem; z-index: 2000; }
 .app-toast {
   display: flex; align-items: center; gap: .6rem; min-width: 240px; max-width: 380px;
-  background: var(--bs-card-bg); border: 1px solid var(--bs-border-color);
-  border-left: 3px solid var(--bs-secondary); border-radius: var(--bs-border-radius);
-  padding: .7rem .9rem; box-shadow: var(--bs-box-shadow); font-size: .86rem;
+  /* nền ĐẶC (không trong suốt), tương phản cao — mặc định theme sáng */
+  background: #ffffff; color: #1e1e2d;
+  border: 1px solid rgba(0, 0, 0, .10);
+  border-left: 4px solid var(--bs-secondary); border-radius: 10px;
+  padding: .75rem .95rem; box-shadow: 0 10px 30px rgba(0, 0, 0, .28);
+  font-size: .88rem; font-weight: 500;
   animation: toastin .22s ease;
+}
+/* theme tối: nền đặc màu xám xanh nổi hẳn trên nền app */
+:root[data-bs-theme="dark"] .app-toast {
+  background: #2f3349; color: #e9eaf2;
+  border-color: rgba(255, 255, 255, .14);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .6);
 }
 .app-toast.ok   { border-left-color: var(--bs-success); }
 .app-toast.bad  { border-left-color: var(--bs-danger); }
 .app-toast.warn { border-left-color: var(--bs-warning); }
 .app-toast.out  { opacity: 0; transform: translateX(16px); transition: all .26s; }
-.app-toast .ti  { font-style: normal; font-weight: 700; }
+.app-toast .ti  { font-style: normal; font-weight: 800; width: 22px; height: 22px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 50%;
+  background: var(--bs-secondary-bg); color: var(--bs-secondary-color); font-size: .8rem; }
+.app-toast.ok   .ti { background: var(--bs-success-bg-subtle); color: var(--bs-success); }
+.app-toast.bad  .ti { background: var(--bs-danger-bg-subtle);  color: var(--bs-danger); }
+.app-toast.warn .ti { background: var(--bs-warning-bg-subtle); color: var(--bs-warning); }
 @keyframes toastin { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 
 /* ---- prompt modal ---- */
