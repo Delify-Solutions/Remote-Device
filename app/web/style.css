@@ -50,6 +50,26 @@
 .cell-pills { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .nowrap { white-space: nowrap; }
 
+/* ---- chip gán nhóm ở hàng thiết bị ---- */
+.cell-grp { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.group-chip { border: 1px dashed var(--bs-border-color); background: transparent; color: var(--bs-secondary-color);
+  border-radius: 20px; padding: .14rem .6rem; font-size: .72rem; cursor: pointer; white-space: nowrap; }
+.group-chip:hover { border-color: var(--bs-primary); color: var(--bs-primary); }
+.group-chip.has { border-style: solid; border-color: var(--bs-primary);
+  background: var(--bs-primary-bg-subtle); color: var(--bs-primary); font-weight: 500; }
+
+/* ---- hàng thành viên nhóm (tab Nhóm & Kịch bản) ---- */
+.mem-row { display: flex; align-items: center; gap: .6rem; padding: .5rem .2rem;
+  border-bottom: 1px solid var(--bs-border-color); }
+.mem-row:last-child { border-bottom: 0; }
+.mem-info { flex: 1; min-width: 0; }
+.mem-name { font-weight: 500; font-size: .88rem; }
+.mem-sub { font-size: .74rem; color: var(--bs-secondary-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mem-act { display: inline-flex; gap: 5px; flex: 0 0 auto; }
+.mem-act .btn { padding: .22rem .55rem; font-size: .76rem; }
+.dot.on { animation: pulse 1.4s infinite; }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 3px rgba(var(--bs-success-rgb), .18); } 50% { box-shadow: 0 0 0 6px rgba(var(--bs-success-rgb), .05); } }
+
 /* ---- ô UDID + nút copy ---- */
 .udid-wrap { display: inline-flex; align-items: center; gap: 6px; }
 .udid-txt { white-space: nowrap; }

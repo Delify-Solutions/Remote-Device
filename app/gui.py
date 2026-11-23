@@ -17,6 +17,7 @@ import webview
 import store, engine, fleet, esp, ios, iosdev, sysinfo, prober
 from nav import Nav
 from eyes import Eyes
+from runner import Runner
 
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 
@@ -69,6 +70,7 @@ class Manager:
 
 
 MGR = Manager()
+RUNNER = Runner(MGR.session)      # chạy kịch bản nhóm, dừng từng máy độc lập
 
 # Cửa sổ pywebview (đặt trong main) để đẩy cập nhật streaming về giao diện.
 WINDOW = None
@@ -141,12 +143,20 @@ class Api:
             ios_by_udid = {d["udid"]: d for d in ios.list_connected()}
         except Exception:
             ios_by_udid = {}
+        grp_by_dev = {}
+        for g in store.get_groups():
+            for dn in g.get("devices", []):
+                grp_by_dev[dn] = {"id": g["id"], "name": g.get("name", g["id"])}
         def enrich(entry):
             info = ios_by_udid.get(entry.get("udid"))
             entry["ios_connected"] = info is not None
             entry["ios"] = info["ios"] if info else None
             entry["model"] = info["model"] if info else None
             entry["device_name"] = info["name"] if info else None
+            g = grp_by_dev.get(entry.get("name"))
+            entry["group_id"] = g["id"] if g else None
+            entry["group_name"] = g["name"] if g else None
+            entry["running"] = RUNNER.is_running(entry.get("name"))
             return entry
         out = []
         for d in store.get_devices():
@@ -360,7 +370,7 @@ class Api:
             return {"ok": False, "error": str(e), "tb": traceback.format_exc()}
 
     def run_flow_multi(self, names, flow_id):
-        """Chạy 1 flow trên nhiều máy song song."""
+        """Chạy 1 flow trên nhiều máy song song (1 lượt, đồng bộ)."""
         flow = store.get_flow(flow_id)
         if not flow:
             return {"ok": False, "error": "flow không tồn tại"}
@@ -376,6 +386,63 @@ class Api:
             t = threading.Thread(target=worker, args=(nm,)); t.start(); threads.append(t)
         for t in threads: t.join()
         return {"ok": True, "results": out}
+
+    # ---- NHÓM (group) + chạy/dừng từng máy ----
+    def groups_list(self):
+        return store.get_groups()
+
+    def group_save(self, group):
+        return store.save_group(group)
+
+    def group_delete(self, group_id):
+        g = store.get_group(group_id)
+        if g:
+            RUNNER.stop_group(g)
+        store.delete_group(group_id)
+        return {"ok": True}
+
+    def set_device_group(self, name, group_id):
+        store.set_device_group(name, group_id or None)
+        return {"ok": True}
+
+    def group_run(self, group_id, names=None):
+        g = store.get_group(group_id)
+        if not g:
+            return {"ok": False, "error": "nhóm không tồn tại"}
+        if not g.get("steps"):
+            return {"ok": False, "error": "nhóm chưa có bước nào trong kịch bản"}
+        started = RUNNER.start_group(g, names)
+        return {"ok": True, "started": started}
+
+    def group_stop(self, group_id):
+        g = store.get_group(group_id)
+        if g:
+            RUNNER.stop_group(g)
+        return {"ok": True}
+
+    def machine_run(self, group_id, name):
+        g = store.get_group(group_id)
+        if not g:
+            return {"ok": False, "error": "nhóm không tồn tại"}
+        if not g.get("steps"):
+            return {"ok": False, "error": "nhóm chưa có bước nào"}
+        ok = RUNNER.start_machine(name, g)
+        return {"ok": True, "started": ok}
+
+    def machine_stop(self, name):
+        RUNNER.stop_machine(name)
+        return {"ok": True}
+
+    def run_status(self):
+        return RUNNER.status()
+
+    def test_flow(self, name, steps):
+        """Chạy thử nguyên kịch bản (1 lượt) trên 1 máy — dùng trong trình dựng."""
+        try:
+            nav = MGR.session(name)
+            return {"ok": True, "results": engine.run_flow(nav, steps)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
 
 def main():

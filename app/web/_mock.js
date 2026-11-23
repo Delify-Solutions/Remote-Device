@@ -25,6 +25,14 @@
   let FLOWS = [{ id: "demo1", name: "Mở eFootball", steps: [
     { type: "launch", app: "efootball" }, { type: "wait", seconds: 3 }, { type: "tap", x: 300, y: 500 },
   ], created: 0, updated: 0 }];
+  let GROUPS = [{ id: "g1", name: "iPhone 8 · 16.7", mode: "loop", loops: 0,
+    devices: ["iPhoneFarm-01"], steps: [{ type: "home" }, { type: "wait", seconds: 2 }] }];
+  let RUN = {};   // name -> {running, status, iter, last_ok, last_msg, group_id, mode}
+  function syncGroupFields() {
+    DEVICES.forEach(d => { d.group_id = null; d.group_name = null; d.running = !!(RUN[d.name] && RUN[d.name].running); });
+    GROUPS.forEach(g => (g.devices || []).forEach(dn => { const d = DEVICES.find(x => x.name === dn); if (d) { d.group_id = g.id; d.group_name = g.name; } }));
+  }
+  syncGroupFields();
 
   const OV = {
     ok: true,
@@ -84,6 +92,21 @@
     screenshot: (n) => P({ ok: true, img: SMALL_PNG, w: 375, h: 667 }),
     ble_status: (n) => P({ ok: true, status: "OK ble=connected" }),
     run_step: (n, s) => P({ ok: true, msg: "test " + s.type + " OK" }),
+    // ---- nhóm & chạy ----
+    groups_list: () => P(JSON.parse(JSON.stringify(GROUPS))),
+    group_save: (g) => { if (!g.id) g.id = "g" + Date.now(); const i = GROUPS.findIndex(x => x.id === g.id); if (i >= 0) GROUPS[i] = g; else GROUPS.push(g); syncGroupFields(); return P(JSON.parse(JSON.stringify(g))); },
+    group_delete: (id) => { GROUPS = GROUPS.filter(x => x.id !== id); syncGroupFields(); return P({ ok: true }); },
+    set_device_group: (name, gid) => {
+      GROUPS.forEach(g => { if (g.id !== gid) g.devices = (g.devices || []).filter(d => d !== name); });
+      if (gid) { const g = GROUPS.find(x => x.id === gid); if (g && !(g.devices || []).includes(name)) (g.devices = g.devices || []).push(name); }
+      syncGroupFields(); return P({ ok: true });
+    },
+    group_run: (gid) => { const g = GROUPS.find(x => x.id === gid); (g ? g.devices : []).forEach(n => RUN[n] = { running: true, status: "đang chạy · vòng 1", iter: 1, last_ok: true, last_msg: "2/2 bước OK", group_id: gid, mode: g.mode }); syncGroupFields(); return P({ ok: true, started: g ? g.devices : [] }); },
+    group_stop: (gid) => { const g = GROUPS.find(x => x.id === gid); (g ? g.devices : []).forEach(n => { if (RUN[n]) { RUN[n].running = false; RUN[n].status = "đã dừng"; } }); syncGroupFields(); return P({ ok: true }); },
+    machine_run: (gid, name) => { const g = GROUPS.find(x => x.id === gid); RUN[name] = { running: true, status: "đang chạy · vòng 1", iter: 1, last_ok: true, last_msg: "2/2 bước OK", group_id: gid, mode: g && g.mode }; syncGroupFields(); return P({ ok: true, started: true }); },
+    machine_stop: (name) => { if (RUN[name]) { RUN[name].running = false; RUN[name].status = "đã dừng"; } syncGroupFields(); return P({ ok: true }); },
+    run_status: () => P(JSON.parse(JSON.stringify(RUN))),
+    test_flow: (name, steps) => P({ ok: true, results: (steps || []).map((s, i) => ({ i, type: s.type, ok: true, msg: "test " + s.type })) }),
     get_flows: () => P(FLOWS),
     save_flow: (f) => { if (!f.id) f.id = "f" + Date.now(); const i = FLOWS.findIndex(x => x.id === f.id); if (i >= 0) FLOWS[i] = f; else FLOWS.push(f); return P(JSON.parse(JSON.stringify(f))); },
     delete_flow: (id) => { FLOWS = FLOWS.filter(x => x.id !== id); return P({ ok: true }); },

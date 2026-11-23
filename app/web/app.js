@@ -11,9 +11,12 @@ let DEVICES = [];
 let IOS = [];
 let ESP = [];
 let FLOWS = [];
-let SEL = null;                        // tên board đang chọn (ở tab Kịch bản)
+let GROUPS = [];                       // danh sách nhóm
+let GROUP = null;                      // nhóm đang chọn (bản sao để sửa)
+let RUN_STATUS = {};                   // trạng thái chạy từng máy (poll)
+let SEL = null;                        // tên board đang chọn để thử (tab Nhóm)
 let SCREEN = { w: 0, h: 0 };
-let FLOW = { id: "", name: "", steps: [] };
+let FLOW = { id: "", name: "", steps: [] };   // bản steps đang dựng (của nhóm)
 let ESP_SCANNED = false;               // đã quét ESP lần nào chưa (để tự quét khi mở tab)
 let SCANNING = false;                  // đang quét board (serial) — hiện trạng thái "đang quét"
 let IOS_LOADING = false;               // đang tải danh sách iPhone qua USB
@@ -132,10 +135,10 @@ function busy(btn, on) {
 function showView(name) {
   $$(".app-nav").forEach(b => b.closest(".menu-item").classList.toggle("active", b.dataset.view === name));
   $$(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
-  const titles = { overview: "Tổng quan", devices: "Thiết bị", esp: "ESP32", flows: "Kịch bản" };
+  const titles = { overview: "Tổng quan", devices: "Thiết bị", esp: "ESP32", flows: "Nhóm & Kịch bản" };
   const pt = document.getElementById("page-title"); if (pt) pt.textContent = titles[name] || "";
   if (name === "overview") loadOverview();
-  if (name === "flows") { renderDevicePicker(); renderMultiList(); }
+  if (name === "flows") { loadGroups(); startStatusPoll(); } else { stopStatusPoll(); }
   if (name === "esp" && !ESP_SCANNED) espScan();   // tự quét lần đầu mở tab ESP
 }
 
@@ -150,7 +153,7 @@ async function loadDevices() {
   } catch (e) { toast("Lỗi tải thiết bị: " + e, "bad"); DEVICES = []; }
   renderDevices();
   renderDevicePicker();
-  renderMultiList();
+  if (GROUP) { renderMembers(); renderGroupAddDev(); }
   updateCounts();
   try {
     IOS = await API().ios_list() || [];
@@ -310,7 +313,11 @@ function renderDevices() {
         ${online ? bleBadge(d.ble) : ""}</td>
       <td>
         <div class="cell-name">${esc(d.label || d.name)}</div>
-        <div class="cell-sub mono nowrap">${esc(d.name)} · ${esc(shortPort(d.port))}</div></td>
+        <div class="cell-sub mono nowrap">${esc(d.name)} · ${esc(shortPort(d.port))}</div>
+        <div class="cell-grp">
+          <button class="group-chip ${d.group_id ? "has" : ""}" data-grpassign="${esc(d.name)}">${d.group_name ? "👥 " + esc(d.group_name) : "+ Gán nhóm"}</button>
+          ${d.running ? `<span class="pill ok" style="font-size:.66rem">▶ đang chạy</span>` : ""}
+        </div></td>
       <td>${phoneCell}</td>
       <td class="ta-r">
         <div class="row-actions-h">
@@ -325,6 +332,7 @@ function renderDevices() {
   $$("[data-ready]", tb).forEach(b => b.onclick = () => openReadiness(b.dataset.ready, b.dataset.rname));
   $$("[data-del]", tb).forEach(b => b.onclick = () => deleteDevice(b.dataset.del));
   $$("[data-probe]", tb).forEach(b => b.onclick = () => probeMatch(b.dataset.probe));
+  $$("[data-grpassign]", tb).forEach(b => b.onclick = () => assignDeviceGroup(b.dataset.grpassign));
   wireCopyUdid(tb);
   renderPager("dev-pager", list.length, DEV_PAGE, p => { DEV_PAGE = p; renderDevices(); });
 }
@@ -337,6 +345,42 @@ async function deleteDevice(name) {
     toast("Đã xoá " + name, "ok");
     await loadDevices();
   } catch (e) { toast("Lỗi xoá: " + e, "bad"); }
+}
+
+// Gán nhanh 1 máy vào nhóm ngay từ trang Thiết bị
+async function assignDeviceGroup(name) {
+  try { GROUPS = await API().groups_list() || []; } catch (e) {}
+  const d = DEVICES.find(x => x.name === name);
+  const who = d ? (d.label || name) : name;
+  if (!GROUPS.length) {
+    const nm = await askOne("Chưa có nhóm — tạo nhóm mới", "Tên nhóm", "", "VD: iPhone 8 · iOS 16.7");
+    if (nm == null) return;
+    try {
+      await API().group_save({ name: nm.trim() || "Nhóm mới", mode: "loop", loops: 0, steps: [], devices: [name] });
+      toast("Đã tạo nhóm & gán máy", "ok"); await loadDevices();
+    } catch (e) { toast("Lỗi: " + e, "bad"); }
+    return;
+  }
+  const opts = [{ value: "", label: "— Bỏ khỏi nhóm —" }]
+    .concat(GROUPS.map(g => ({ value: g.id, label: `${g.name} (${(g.devices || []).length} máy)` })))
+    .concat([{ value: "__new__", label: "➕ Tạo nhóm mới…" }]);
+  const r = await askForm("Gán nhóm cho máy", `Máy: ${who}`, [
+    { key: "group", label: "Chọn nhóm", type: "select", value: (d && d.group_id) || "", options: opts },
+  ]);
+  if (!r) return;
+  try {
+    if (r.group === "__new__") {
+      const nm = await askOne("Tạo nhóm mới", "Tên nhóm", "", "VD: iPhone 8 · iOS 16.7");
+      if (nm == null) return;
+      await API().group_save({ name: nm.trim() || "Nhóm mới", mode: "loop", loops: 0, steps: [], devices: [name] });
+      toast("Đã tạo nhóm & gán máy", "ok");
+    } else {
+      await API().set_device_group(name, r.group || "");
+      toast(r.group ? "Đã gán nhóm" : "Đã bỏ khỏi nhóm", "ok");
+    }
+    await loadDevices();
+    if (GROUP) await loadGroups(GROUP.id);
+  } catch (e) { toast("Lỗi gán nhóm: " + e, "bad"); }
 }
 
 /* =========================================================
@@ -934,39 +978,24 @@ async function handleEsp(action, btn) {
    ========================================================= */
 function renderDevicePicker() {
   const sel = $("#flow-device");
+  if (!sel) return;
   const prev = SEL;
+  // ưu tiên máy trong nhóm đang chọn để thử
+  const members = (GROUP && GROUP.devices) ? GROUP.devices : [];
+  const pool = DEVICES.filter(d => !members.length || members.includes(d.name));
   sel.innerHTML = "";
-  if (!DEVICES.length) {
-    sel.innerHTML = `<option value="">(chưa có board)</option>`;
+  if (!pool.length) {
+    sel.innerHTML = `<option value="">(chưa có máy)</option>`;
     SEL = null; return;
   }
-  DEVICES.forEach(d => {
+  pool.forEach(d => {
     const o = document.createElement("option");
     o.value = d.name;
     o.textContent = `${d.label || d.name}${d.board_online ? "" : " (offline)"}`;
     sel.appendChild(o);
   });
-  SEL = DEVICES.some(d => d.name === prev) ? prev : DEVICES[0].name;
+  SEL = pool.some(d => d.name === prev) ? prev : pool[0].name;
   sel.value = SEL;
-}
-
-function renderMultiList() {
-  const box = $("#multi-list");
-  const checked = new Set($$(".multi-item input:checked", box).map(c => c.value));
-  box.innerHTML = "";
-  if (!DEVICES.length) { box.innerHTML = `<div class="empty">Chưa có board.</div>`; return; }
-  DEVICES.forEach(d => {
-    const lab = document.createElement("label");
-    lab.className = "multi-item";
-    lab.innerHTML = `
-      <input type="checkbox" value="${esc(d.name)}" ${checked.has(d.name) ? "checked" : ""}>
-      <span class="dot ${d.board_online ? "on" : "off"}"></span>
-      <span class="nm">${esc(d.label || d.name)}</span>`;
-    box.appendChild(lab);
-  });
-}
-function checkedDevices() {
-  return $$("#multi-list input:checked").map(c => c.value);
 }
 
 async function shot(btn) {
@@ -1107,67 +1136,182 @@ async function addStepPrompt(type) {
 }
 
 /* =========================================================
-   FLOWS — save / load / run
+   NHÓM — tải / chọn / lưu / xoá / chạy + thành viên + trạng thái
    ========================================================= */
-async function loadFlows(selectId) {
-  try { FLOWS = await API().get_flows() || []; }
-  catch (e) { FLOWS = []; toast("Lỗi tải flow: " + e, "bad"); }
-  const sel = $("#flow-select");
-  sel.innerHTML = '<option value="">+ Flow mới</option>';
-  FLOWS.forEach(f => {
-    const o = document.createElement("option");
-    o.value = f.id; o.textContent = f.name;
-    sel.appendChild(o);
-  });
-  if (selectId) sel.value = selectId;
-  $("#nav-flow-count").textContent = FLOWS.length;
-}
-
-function onFlowSelect() {
-  const id = $("#flow-select").value;
-  if (!id) FLOW = { id: "", name: "", steps: [] };
-  else {
-    const f = FLOWS.find(x => x.id === id);
-    FLOW = f ? JSON.parse(JSON.stringify({ id: f.id, name: f.name, steps: f.steps || [] }))
-             : { id: "", name: "", steps: [] };
+async function loadGroups(selectId) {
+  try { GROUPS = await API().groups_list() || []; }
+  catch (e) { GROUPS = []; toast("Lỗi tải nhóm: " + e, "bad"); }
+  const sel = $("#group-select");
+  $("#nav-flow-count").textContent = GROUPS.length;
+  if (!GROUPS.length) {
+    sel.innerHTML = `<option value="">(chưa có nhóm)</option>`;
+    $("#group-empty").hidden = false; $("#group-panel").hidden = true;
+    GROUP = null; return;
   }
-  $("#flow-name").value = FLOW.name || "";
-  renderSteps();
+  sel.innerHTML = GROUPS.map(g => `<option value="${esc(g.id)}">${esc(g.name)} (${(g.devices || []).length})</option>`).join("");
+  const pick = (selectId && GROUPS.some(g => g.id === selectId)) ? selectId
+             : (GROUP && GROUPS.some(g => g.id === GROUP.id)) ? GROUP.id : GROUPS[0].id;
+  sel.value = pick;
+  selectGroup(pick);
 }
 
-async function saveFlow(btn) {
-  FLOW.name = $("#flow-name").value.trim() || "Flow không tên";
-  busy(btn, true);
+function selectGroup(id) {
+  const g = GROUPS.find(x => x.id === id);
+  $("#group-empty").hidden = true; $("#group-panel").hidden = !g;
+  if (!g) { GROUP = null; return; }
+  GROUP = JSON.parse(JSON.stringify({ id: g.id, name: g.name, steps: g.steps || [],
+    devices: g.devices || [], mode: g.mode || "loop", loops: g.loops || 0 }));
+  FLOW = { id: GROUP.id, name: GROUP.name, steps: GROUP.steps };   // tái dùng renderSteps/addStep
+  $("#group-name").value = GROUP.name || "";
+  $("#group-mode").value = GROUP.mode;
+  $("#group-loops").value = GROUP.loops;
+  $("#group-loops-wrap").style.display = GROUP.mode === "loop" ? "" : "none";
+  renderSteps(); renderMembers(); renderGroupAddDev(); renderDevicePicker();
+}
+
+async function newGroup() {
+  const name = await askOne("Tạo nhóm mới", "Tên nhóm", "", "VD: iPhone 8 · iOS 16.7");
+  if (name == null) return;
   try {
-    const saved = await API().save_flow(FLOW);
-    FLOW.id = saved.id;
-    await loadFlows(saved.id);
-    toast("Đã lưu flow: " + saved.name, "ok");
-  } catch (e) { toast("Lỗi lưu: " + e, "bad"); }
+    const g = await API().group_save({ name: name.trim() || "Nhóm mới", mode: "loop", loops: 0, steps: [], devices: [] });
+    toast("Đã tạo nhóm: " + g.name, "ok");
+    await loadGroups(g.id);
+  } catch (e) { toast("Lỗi tạo nhóm: " + e, "bad"); }
+}
+
+async function saveGroupSilent() {
+  if (!GROUP) return;
+  GROUP.name = $("#group-name").value.trim() || GROUP.name;
+  GROUP.mode = $("#group-mode").value;
+  GROUP.loops = parseInt($("#group-loops").value) || 0;
+  GROUP.steps = FLOW.steps;
+  try { return await API().group_save(GROUP); } catch (e) {}
+}
+
+async function saveGroup(btn) {
+  if (!GROUP) return;
+  busy(btn, true);
+  const saved = await saveGroupSilent();
+  if (saved) { toast("Đã lưu nhóm: " + saved.name, "ok"); await loadGroups(saved.id); }
+  else toast("Lỗi lưu nhóm", "bad");
   busy(btn, false);
 }
 
-async function delFlow() {
-  if (!FLOW.id) { toast("Chưa có flow để xoá", "warn"); return; }
-  if (!confirmBox(`Xoá flow “${FLOW.name}”?`)) return;
+async function delGroup() {
+  if (!GROUP) return;
+  if (!confirmBox(`Xoá nhóm “${GROUP.name}”?\n(Máy trong nhóm sẽ về trạng thái chưa có nhóm — không ảnh hưởng iPhone/board.)`)) return;
   try {
-    await API().delete_flow(FLOW.id);
-    toast("Đã xoá flow", "ok");
-  } catch (e) { toast("Lỗi xoá: " + e, "bad"); return; }
-  FLOW = { id: "", name: "", steps: [] };
-  $("#flow-name").value = ""; $("#flow-select").value = "";
-  renderSteps();
-  await loadFlows();
+    await API().group_delete(GROUP.id);
+    toast("Đã xoá nhóm", "ok");
+    GROUP = null;
+    await loadGroups();
+    await loadDevices();
+  } catch (e) { toast("Lỗi xoá: " + e, "bad"); }
 }
 
-async function runFlow(btn) {
-  if (!SEL) { toast("Chọn máy", "warn"); return; }
-  if (!FLOW.id) { toast("Lưu flow trước khi chạy", "warn"); return; }
+function renderMembers() {
+  const box = $("#group-members");
+  if (!box || !GROUP) { if (box) box.innerHTML = ""; return; }
+  $("#group-mem-count").textContent = GROUP.devices.length ? `(${GROUP.devices.length} máy)` : "";
+  if (!GROUP.devices.length) {
+    box.innerHTML = `<div class="text-muted small py-2">Chưa có máy. Thêm máy ở trên, hoặc gán nhóm từ trang Thiết bị.</div>`;
+    return;
+  }
+  box.innerHTML = "";
+  GROUP.devices.forEach(name => {
+    const d = DEVICES.find(x => x.name === name);
+    const st = RUN_STATUS[name];
+    const running = !!(st && st.running);
+    const label = d ? (d.label || d.name) : name;
+    const online = d ? d.board_online : false;
+    const statusTxt = running ? (st.status || "đang chạy") : (st ? (st.status || "nghỉ") : "nghỉ");
+    const dotStyle = running ? "" : online ? "background:var(--bs-warning)" : "background:var(--bs-secondary)";
+    const row = document.createElement("div");
+    row.className = "mem-row";
+    row.innerHTML = `
+      <span class="dot ${running ? "on" : ""}" style="${dotStyle}"></span>
+      <div class="mem-info">
+        <div class="mem-name">${esc(label)}</div>
+        <div class="mem-sub">${esc(statusTxt)}${st && st.last_msg ? " · " + esc(st.last_msg) : ""}</div>
+      </div>
+      <div class="mem-act">
+        ${running
+          ? `<button class="btn btn-sm btn-label-danger" data-mstop="${esc(name)}">Dừng</button>`
+          : `<button class="btn btn-sm btn-success" data-mrun="${esc(name)}">Chạy</button>`}
+        <button class="btn btn-sm btn-label-secondary" data-mremove="${esc(name)}" title="Bỏ khỏi nhóm">✕</button>
+      </div>`;
+    box.appendChild(row);
+  });
+  $$("[data-mrun]", box).forEach(b => b.onclick = () => runMachine(b.dataset.mrun));
+  $$("[data-mstop]", box).forEach(b => b.onclick = () => stopMachine(b.dataset.mstop));
+  $$("[data-mremove]", box).forEach(b => b.onclick = () => removeMember(b.dataset.mremove));
+}
+
+function renderGroupAddDev() {
+  const sel = $("#group-add-dev");
+  if (!sel || !GROUP) return;
+  const avail = DEVICES.filter(d => !GROUP.devices.includes(d.name));
+  sel.innerHTML = `<option value="">+ Thêm máy…</option>` +
+    avail.map(d => `<option value="${esc(d.name)}">${esc(d.label || d.name)}${d.group_name ? ` — đang ở: ${esc(d.group_name)}` : ""}</option>`).join("");
+}
+
+async function addMember(name) {
+  if (!GROUP || !name) return;
+  try { await API().set_device_group(name, GROUP.id); await loadGroups(GROUP.id); await loadDevices(); }
+  catch (e) { toast("Lỗi: " + e, "bad"); }
+}
+async function removeMember(name) {
+  try { await API().set_device_group(name, ""); await loadGroups(GROUP && GROUP.id); await loadDevices(); }
+  catch (e) { toast("Lỗi: " + e, "bad"); }
+}
+
+async function runGroup(btn) {
+  if (!GROUP) return;
+  if (!GROUP.devices.length) { toast("Nhóm chưa có máy nào", "warn"); return; }
+  if (!FLOW.steps.length) { toast("Nhóm chưa có bước nào trong kịch bản", "warn"); return; }
   busy(btn, true);
-  log(`▶ Chạy “${FLOW.name}” trên ${SEL}`);
+  await saveGroupSilent();
   try {
-    const r = await API().run_flow(SEL, FLOW.id);
-    if (!r || !r.ok) { log("✗ " + ((r && r.error) || "lỗi"), "bad"); toast("Chạy thất bại", "bad"); }
+    const r = await API().group_run(GROUP.id);
+    if (r && r.ok) { log(`▶ Chạy nhóm “${GROUP.name}”: ${(r.started || []).join(", ") || "(không có máy mới)"}`); toast("Đã chạy nhóm", "ok"); }
+    else toast("Lỗi: " + ((r && r.error) || "?"), "bad");
+  } catch (e) { toast("Lỗi: " + e, "bad"); }
+  busy(btn, false);
+  pollStatus();
+}
+async function stopGroup(btn) {
+  if (!GROUP) return;
+  busy(btn, true);
+  try { await API().group_stop(GROUP.id); log(`■ Dừng nhóm “${GROUP.name}”`); toast("Đã dừng nhóm", ""); }
+  catch (e) { toast("Lỗi: " + e, "bad"); }
+  busy(btn, false);
+  pollStatus();
+}
+async function runMachine(name) {
+  if (!GROUP) return;
+  if (!FLOW.steps.length) { toast("Nhóm chưa có bước nào", "warn"); return; }
+  await saveGroupSilent();
+  try {
+    const r = await API().machine_run(GROUP.id, name);
+    if (r && r.ok) log(`▶ Chạy máy ${name}`);
+    else toast("Lỗi: " + ((r && r.error) || "?"), "bad");
+  } catch (e) { toast("Lỗi: " + e, "bad"); }
+  pollStatus();
+}
+async function stopMachine(name) {
+  try { await API().machine_stop(name); log(`■ Dừng máy ${name}`); }
+  catch (e) { toast("Lỗi: " + e, "bad"); }
+  pollStatus();
+}
+
+async function testFlow(btn) {
+  if (!SEL) { toast("Chọn máy để thử", "warn"); return; }
+  if (!FLOW.steps.length) { toast("Chưa có bước nào", "warn"); return; }
+  busy(btn, true);
+  log(`▶ Chạy thử kịch bản trên ${SEL}`);
+  try {
+    const r = await API().test_flow(SEL, FLOW.steps);
+    if (!r || !r.ok) { log("✗ " + ((r && r.error) || "lỗi"), "bad"); toast("Chạy thử lỗi", "bad"); }
     else {
       let okN = 0;
       r.results.forEach(x => { if (x.ok) okN++; log(`   [${x.i + 1}] ${x.type}: ${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad"); });
@@ -1178,25 +1322,20 @@ async function runFlow(btn) {
   busy(btn, false);
 }
 
-async function runMulti(btn) {
-  const names = checkedDevices();
-  if (!names.length) { toast("Tick ít nhất 1 máy", "warn"); return; }
-  if (!FLOW.id) { toast("Lưu flow trước khi chạy", "warn"); return; }
-  busy(btn, true);
-  log(`⇉ Chạy “${FLOW.name}” trên: ${names.join(", ")}`);
-  try {
-    const r = await API().run_flow_multi(names, FLOW.id);
-    if (!r || !r.ok) { log("✗ " + ((r && r.error) || "lỗi"), "bad"); toast("Chạy thất bại", "bad"); }
-    else {
-      Object.entries(r.results).forEach(([nm, res]) => {
-        const okN = res.filter(x => x.ok).length;
-        const allOk = okN === res.length;
-        log(`   ${nm}: ${okN}/${res.length} bước OK`, allOk ? "ok" : "bad");
-      });
-      toast(`Đã chạy trên ${names.length} máy`, "ok");
-    }
-  } catch (e) { log("✗ " + e, "bad"); toast("Lỗi: " + e, "bad"); }
-  busy(btn, false);
+// poll trạng thái chạy khi đang ở tab Nhóm & Kịch bản
+let STATUS_TIMER = null;
+async function pollStatus() {
+  try { RUN_STATUS = await API().run_status() || {}; } catch (e) { return; }
+  const active = $(".view.active");
+  if (active && active.id === "view-flows") renderMembers();
+}
+function startStatusPoll() {
+  if (STATUS_TIMER) return;
+  pollStatus();
+  STATUS_TIMER = setInterval(pollStatus, 2500);
+}
+function stopStatusPoll() {
+  if (STATUS_TIMER) { clearInterval(STATUS_TIMER); STATUS_TIMER = null; }
 }
 
 /* =========================================================
@@ -1276,27 +1415,34 @@ function init() {
   // probe (dò máy) modal
   const pc = $("#probe-close"); if (pc) pc.onclick = () => { if (!PROBING) $("#probe-modal").hidden = true; };
 
-  // flows — screen
+  // nhóm & kịch bản — chọn nhóm / tạo / xoá / cấu hình / chạy
+  $("#group-select").onchange = (e) => selectGroup(e.target.value);
+  $("#btn-group-new").onclick = newGroup;
+  $("#btn-group-del").onclick = delGroup;
+  $("#group-mode").onchange = (e) => {
+    $("#group-loops-wrap").style.display = e.target.value === "loop" ? "" : "none";
+    if (GROUP) GROUP.mode = e.target.value;
+  };
+  $("#btn-group-run").onclick = (e) => runGroup(e.currentTarget);
+  $("#btn-group-stop").onclick = (e) => stopGroup(e.currentTarget);
+  $("#group-add-dev").onchange = (e) => { const v = e.target.value; if (v) { addMember(v); e.target.value = ""; } };
+
+  // màn hình thử
   $("#flow-device").onchange = (e) => { SEL = e.target.value || null; };
   $("#btn-shot").onclick = (e) => shot(e.currentTarget);
   $("#btn-ble").onclick = (e) => bleStatus(e.currentTarget);
   $("#screen").onclick = onScreenClick;
   $("#pick-mode").onchange = (e) => $("#screen").classList.toggle("pick", e.target.checked);
 
-  // flows — builder
+  // trình dựng kịch bản
   $$(".add-grid .chip").forEach(b => b.onclick = () => addStepPrompt(b.dataset.add));
-  $("#flow-select").onchange = onFlowSelect;
-  $("#flow-name").oninput = (e) => { FLOW.name = e.target.value; };
-  $("#btn-save").onclick = (e) => saveFlow(e.currentTarget);
-  $("#btn-del").onclick = delFlow;
-  $("#btn-run").onclick = (e) => runFlow(e.currentTarget);
-  $("#btn-run-multi").onclick = (e) => runMulti(e.currentTarget);
+  $("#btn-save").onclick = (e) => saveGroup(e.currentTarget);
+  $("#btn-flow-test").onclick = (e) => testFlow(e.currentTarget);
   $("#btn-clear-log").onclick = () => { $("#log").innerHTML = ""; };
 
   // initial load
   loadOverview();     // trang mặc định
   SCANNING = true;
-  loadFlows();
   espScan();          // quét song song + streaming → badge + board hiện dần
   loadDevices();      // tải iPhone (USB) song song; __scanDone sẽ chốt lại
   renderSteps();

@@ -11,6 +11,7 @@ import json, os, time, uuid
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DEVICES_FILE = os.path.join(DATA_DIR, "devices.json")
 FLOWS_FILE = os.path.join(DATA_DIR, "flows.json")
+GROUPS_FILE = os.path.join(DATA_DIR, "groups.json")
 
 
 def _ensure():
@@ -19,6 +20,8 @@ def _ensure():
         _write(DEVICES_FILE, [])
     if not os.path.exists(FLOWS_FILE):
         _write(FLOWS_FILE, [])
+    if not os.path.exists(GROUPS_FILE):
+        _write(GROUPS_FILE, [])
 
 
 def _read(path):
@@ -112,4 +115,68 @@ def save_flow(flow):
 def delete_flow(flow_id):
     flows = [f for f in get_flows() if f["id"] != flow_id]
     _write(FLOWS_FILE, flows)
+    return True
+
+
+# ---- groups (nhóm máy + 1 kịch bản riêng) ----
+# group = {id, name, steps:[...], devices:[board_name...], mode:"loop"|"once",
+#          loops:int (0=vô hạn), created, updated}
+def get_groups():
+    _ensure(); return _read(GROUPS_FILE)
+
+
+def get_group(group_id):
+    for g in get_groups():
+        if g["id"] == group_id:
+            return g
+    return None
+
+
+def save_group(group):
+    _ensure()
+    groups = get_groups()
+    if not group.get("id"):
+        group["id"] = uuid.uuid4().hex[:8]
+        group["created"] = time.time()
+    group.setdefault("steps", [])
+    group.setdefault("devices", [])
+    group.setdefault("mode", "loop")
+    group.setdefault("loops", 0)
+    group["updated"] = time.time()
+    for i, g in enumerate(groups):
+        if g["id"] == group["id"]:
+            groups[i] = group
+            break
+    else:
+        groups.append(group)
+    _write(GROUPS_FILE, groups)
+    return group
+
+
+def delete_group(group_id):
+    groups = [g for g in get_groups() if g["id"] != group_id]
+    _write(GROUPS_FILE, groups)
+    return True
+
+
+def group_of_device(name):
+    """Trả group (dict) chứa máy `name`, hoặc None."""
+    for g in get_groups():
+        if name in g.get("devices", []):
+            return g
+    return None
+
+
+def set_device_group(name, group_id):
+    """Gán máy vào 1 nhóm (gỡ khỏi nhóm cũ). group_id=None/"" = bỏ khỏi mọi nhóm."""
+    groups = get_groups()
+    for g in groups:
+        devs = g.get("devices", [])
+        if name in devs and g["id"] != group_id:
+            g["devices"] = [d for d in devs if d != name]
+    if group_id:
+        for g in groups:
+            if g["id"] == group_id and name not in g.get("devices", []):
+                g.setdefault("devices", []).append(name)
+    _write(GROUPS_FILE, groups)
     return True

@@ -244,104 +244,132 @@
 
           <!-- ---------- VIEW: FLOWS ---------- -->
           <section class="view" id="view-flows">
-            <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+            <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
               <div>
-                <h4 class="mb-1">Kịch bản</h4>
-                <small class="text-muted">Dựng, kiểm thử và chạy flow tự động trên các máy.</small>
+                <h4 class="mb-1">Nhóm &amp; Kịch bản</h4>
+                <small class="text-muted">Mỗi nhóm gom máy cùng loại + 1 kịch bản riêng. Chạy/dừng từng máy độc lập.</small>
               </div>
-              <div style="min-width:220px">
-                <label class="form-label small mb-1">Máy đang chọn</label>
-                <select id="flow-device" class="form-select form-select-sm"></select>
+              <div class="d-flex gap-2 align-items-end flex-wrap">
+                <div>
+                  <label class="form-label small mb-1">Nhóm</label>
+                  <select id="group-select" class="form-select form-select-sm" style="min-width:200px"></select>
+                </div>
+                <button class="btn btn-sm btn-primary" id="btn-group-new"><i class="ti tabler-plus me-1"></i>Tạo nhóm</button>
+                <button class="btn btn-sm btn-label-danger" id="btn-group-del"><i class="ti tabler-trash me-1"></i>Xoá nhóm</button>
               </div>
             </div>
 
-            <div class="row g-4">
-              <!-- LEFT: screen + multi -->
-              <div class="col-lg-5">
-                <div class="card mb-4">
-                  <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">Màn hình</h5>
-                    <div class="form-check form-switch mb-0">
-                      <input class="form-check-input" type="checkbox" id="pick-mode">
-                      <label class="form-check-label small" for="pick-mode">Bấm ảnh để thêm Tap</label>
-                    </div>
-                  </div>
-                  <div class="card-body">
-                    <div id="screen-wrap">
-                      <img id="screen" alt="">
-                      <div id="screen-hint">
-                        <i class="ti tabler-device-mobile mb-2" style="font-size:42px"></i>
-                        <div>Chọn máy rồi bấm “Chụp màn hình”.</div>
-                      </div>
-                      <div class="screen-spinner" id="screen-spin" hidden><span class="spinner"></span></div>
-                    </div>
-                  </div>
-                  <div class="card-footer d-flex justify-content-between align-items-center">
-                    <small class="text-muted" id="screen-info">—</small>
-                    <div class="d-flex gap-2">
-                      <button class="btn btn-sm btn-label-secondary" id="btn-ble"><i class="ti tabler-bluetooth me-1"></i>BLE?</button>
-                      <button class="btn btn-sm btn-primary" id="btn-shot"><i class="ti tabler-camera me-1"></i>Chụp màn hình</button>
-                    </div>
-                  </div>
-                </div>
+            <div id="group-empty" class="card"><div class="card-body text-center text-muted py-5">
+              Chưa có nhóm nào. Bấm <b>“Tạo nhóm”</b> để gom máy cùng loại và viết kịch bản cho chúng.</div></div>
 
-                <div class="card">
-                  <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">Chạy nhiều máy</h5>
-                    <small class="text-muted">Tick máy để chạy song song</small>
+            <div id="group-panel" hidden>
+              <!-- cấu hình nhóm -->
+              <div class="card mb-3"><div class="card-body">
+                <div class="row g-3 align-items-end">
+                  <div class="col-md-4">
+                    <label class="form-label small mb-1">Tên nhóm</label>
+                    <input id="group-name" class="form-control form-control-sm" placeholder="VD: iPhone 8 · iOS 16.7">
                   </div>
-                  <div class="card-body">
-                    <div class="multi-list" id="multi-list"></div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- RIGHT: builder + log -->
-              <div class="col-lg-7">
-                <div class="card mb-4">
-                  <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">Trình dựng flow</h5>
-                    <select id="flow-select" class="form-select form-select-sm" style="width:auto">
-                      <option value="">+ Flow mới</option>
+                  <div class="col-md-3">
+                    <label class="form-label small mb-1">Chế độ chạy</label>
+                    <select id="group-mode" class="form-select form-select-sm">
+                      <option value="loop">Lặp lại</option>
+                      <option value="once">Chạy 1 lần</option>
                     </select>
                   </div>
-                  <div class="card-body">
-                    <label class="form-label small">Tên flow</label>
-                    <input id="flow-name" class="form-control mb-3" placeholder="Ví dụ: Mở eFootball và đăng nhập">
+                  <div class="col-md-2" id="group-loops-wrap">
+                    <label class="form-label small mb-1">Số vòng (0 = ∞)</label>
+                    <input id="group-loops" type="number" min="0" value="0" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-md-3 d-flex gap-2 justify-content-md-end">
+                    <button class="btn btn-sm btn-success" id="btn-group-run"><i class="ti tabler-player-play me-1"></i>Chạy nhóm</button>
+                    <button class="btn btn-sm btn-label-danger" id="btn-group-stop"><i class="ti tabler-player-stop me-1"></i>Dừng nhóm</button>
+                  </div>
+                </div>
+              </div></div>
 
-                    <label class="form-label small">Thêm bước</label>
-                    <div class="add-grid mb-3">
-                      <button class="chip" data-add="type">Gõ chữ</button>
-                      <button class="chip" data-add="tap_text">Tap chữ</button>
-                      <button class="chip" data-add="key">Phím</button>
-                      <button class="chip" data-add="combo">Tổ hợp</button>
-                      <button class="chip" data-add="launch">Mở app</button>
-                      <button class="chip" data-add="home">Về home</button>
-                      <button class="chip" data-add="wait">Chờ</button>
-                      <button class="chip" data-add="wait_text">Chờ chữ</button>
-                      <button class="chip" data-add="assert_text">Kiểm chữ</button>
+              <div class="row g-4">
+                <!-- trái: thành viên + màn hình thử -->
+                <div class="col-lg-5">
+                  <div class="card mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                      <h5 class="mb-0">Máy trong nhóm <span class="text-muted" style="font-size:.8rem" id="group-mem-count"></span></h5>
+                      <select id="group-add-dev" class="form-select form-select-sm" style="width:auto">
+                        <option value="">+ Thêm máy…</option>
+                      </select>
                     </div>
+                    <div class="card-body"><div id="group-members"></div></div>
+                  </div>
 
-                    <label class="form-label small">Các bước <span class="text-muted" id="step-count"></span></label>
-                    <ol id="steps" class="list-unstyled mb-0"></ol>
-                    <div class="text-muted small py-2" id="steps-empty">Chưa có bước nào. Thêm bước ở trên, hoặc bấm vào ảnh màn hình.</div>
-
-                    <div class="d-flex flex-wrap gap-2 mt-3">
-                      <button class="btn btn-primary" id="btn-save"><i class="ti tabler-device-floppy me-1"></i>Lưu flow</button>
-                      <button class="btn btn-label-secondary" id="btn-run"><i class="ti tabler-player-play me-1"></i>Chạy máy đang chọn</button>
-                      <button class="btn btn-label-secondary" id="btn-run-multi"><i class="ti tabler-player-play me-1"></i>Chạy nhiều máy</button>
-                      <button class="btn btn-label-danger ms-auto" id="btn-del"><i class="ti tabler-trash me-1"></i>Xoá flow</button>
+                  <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                      <h5 class="mb-0">Màn hình thử</h5>
+                      <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="pick-mode">
+                        <label class="form-check-label small" for="pick-mode">Bấm ảnh để thêm Tap</label>
+                      </div>
+                    </div>
+                    <div class="card-body">
+                      <label class="form-label small mb-1">Máy để thử</label>
+                      <select id="flow-device" class="form-select form-select-sm mb-3"></select>
+                      <div id="screen-wrap">
+                        <img id="screen" alt="">
+                        <div id="screen-hint">
+                          <i class="ti tabler-device-mobile mb-2" style="font-size:42px"></i>
+                          <div>Chọn máy rồi bấm “Chụp màn hình”.</div>
+                        </div>
+                        <div class="screen-spinner" id="screen-spin" hidden><span class="spinner"></span></div>
+                      </div>
+                    </div>
+                    <div class="card-footer d-flex justify-content-between align-items-center">
+                      <small class="text-muted" id="screen-info">—</small>
+                      <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-label-secondary" id="btn-ble"><i class="ti tabler-bluetooth me-1"></i>BLE?</button>
+                        <button class="btn btn-sm btn-primary" id="btn-shot"><i class="ti tabler-camera me-1"></i>Chụp màn hình</button>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div class="card">
-                  <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">Nhật ký</h5>
-                    <button class="btn btn-sm btn-label-secondary" id="btn-clear-log">Xoá log</button>
+                <!-- phải: trình dựng kịch bản + log -->
+                <div class="col-lg-7">
+                  <div class="card mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                      <h5 class="mb-0">Kịch bản của nhóm <span class="text-muted" id="step-count"></span></h5>
+                      <button class="btn btn-sm btn-label-secondary" id="btn-flow-test"><i class="ti tabler-player-play me-1"></i>Chạy thử (máy đang chọn)</button>
+                    </div>
+                    <div class="card-body">
+                      <label class="form-label small">Thêm bước</label>
+                      <div class="add-grid mb-3">
+                        <button class="chip" data-add="type">Gõ chữ</button>
+                        <button class="chip" data-add="tap_text">Tap chữ</button>
+                        <button class="chip" data-add="key">Phím</button>
+                        <button class="chip" data-add="combo">Tổ hợp</button>
+                        <button class="chip" data-add="launch">Mở app</button>
+                        <button class="chip" data-add="home">Về home</button>
+                        <button class="chip" data-add="wait">Chờ</button>
+                        <button class="chip" data-add="wait_text">Chờ chữ</button>
+                        <button class="chip" data-add="assert_text">Kiểm chữ</button>
+                      </div>
+
+                      <label class="form-label small">Các bước</label>
+                      <ol id="steps" class="list-unstyled mb-0"></ol>
+                      <div class="text-muted small py-2" id="steps-empty">Chưa có bước nào. Thêm bước ở trên, hoặc bấm vào ảnh màn hình.</div>
+
+                      <div class="d-flex flex-wrap gap-2 mt-3">
+                        <button class="btn btn-primary" id="btn-save"><i class="ti tabler-device-floppy me-1"></i>Lưu kịch bản</button>
+                      </div>
+                    </div>
                   </div>
-                  <div class="card-body">
-                    <pre id="log" class="mb-0"></pre>
+
+                  <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                      <h5 class="mb-0">Nhật ký</h5>
+                      <button class="btn btn-sm btn-label-secondary" id="btn-clear-log">Xoá log</button>
+                    </div>
+                    <div class="card-body">
+                      <pre id="log" class="mb-0"></pre>
+                    </div>
                   </div>
                 </div>
               </div>

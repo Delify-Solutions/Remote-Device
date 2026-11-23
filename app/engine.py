@@ -71,10 +71,14 @@ def run_step(nav, step, log=print):
         return False, f"lỗi {t}: {e}"
 
 
-def run_flow(nav, steps, log=print, stop_on_fail=True):
-    """Chạy cả flow. Trả list kết quả [{i, type, ok, msg}]."""
+def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None):
+    """Chạy cả flow. Trả list kết quả [{i, type, ok, msg}].
+    stop_check: hàm trả True để DỪNG giữa chừng (dùng khi dừng 1 máy)."""
     results = []
     for i, step in enumerate(steps):
+        if stop_check and stop_check():
+            log("  ⟂ đã dừng theo yêu cầu")
+            break
         ok, msg = run_step(nav, step, log)
         log(f"[{i+1}/{len(steps)}] {step.get('type')}: {msg}")
         results.append({"i": i, "type": step.get("type"), "ok": ok, "msg": msg})
