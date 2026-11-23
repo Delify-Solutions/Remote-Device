@@ -188,18 +188,55 @@ function shortPort(p) {
   return String(p).replace(/^\/dev\/(cu\.|tty\.?)?/, "");   // /dev/cu.usbserial-5 → usbserial-5
 }
 
+/* ---- tab con (Tất cả / Board / iPhone) + phân trang ---- */
+const PAGE_SIZE = 8;
+let DEV_TAB = "all", DEV_PAGE = 1, IOS_PAGE = 1;
+
+function setDevTab(t) {
+  DEV_TAB = t;
+  $$("#dev-tabs .seg-btn").forEach(b => b.classList.toggle("active", b.dataset.dtab === t));
+  $("#card-board").hidden = (t === "ios");
+  $("#card-ios").hidden = (t === "board");
+}
+
+function renderPager(elId, total, page, go) {
+  const el = $("#" + elId);
+  if (!el) return;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (total <= PAGE_SIZE) { el.innerHTML = ""; el.hidden = true; return; }
+  el.hidden = false;
+  const from = (page - 1) * PAGE_SIZE + 1, to = Math.min(total, page * PAGE_SIZE);
+  let nums = "";
+  for (let i = 1; i <= pages; i++)
+    nums += `<button class="pg ${i === page ? "active" : ""}" data-pg="${i}">${i}</button>`;
+  el.innerHTML = `
+    <span class="pager-info">${from}–${to} / ${total}</span>
+    <div class="pager-btns">
+      <button class="pg" data-pg="${page - 1}" ${page <= 1 ? "disabled" : ""}>‹</button>
+      ${nums}
+      <button class="pg" data-pg="${page + 1}" ${page >= pages ? "disabled" : ""}>›</button>
+    </div>`;
+  $$(".pg[data-pg]", el).forEach(b => b.onclick = () => { if (!b.disabled) go(parseInt(b.dataset.pg)); });
+}
+
+function clampPage(page, total) { return Math.min(Math.max(1, page), Math.max(1, Math.ceil(total / PAGE_SIZE))); }
+
 function renderDevices() {
   const tb = $("#dev-tbody");
   tb.innerHTML = "";
+  const cnt = $("#seg-board-c"); if (cnt) cnt.textContent = DEVICES.length;
   if (!DEVICES.length) {
     $("#dev-empty").hidden = SCANNING;
-    if (SCANNING) tb.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-muted">
+    renderPager("dev-pager", 0, 1, () => {});
+    if (SCANNING) tb.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-muted">
       <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
       &nbsp; Đang quét board…</td></tr>`;
     return;
   }
   $("#dev-empty").hidden = true;
-  DEVICES.forEach(d => {
+  DEV_PAGE = clampPage(DEV_PAGE, DEVICES.length);
+  const slice = DEVICES.slice((DEV_PAGE - 1) * PAGE_SIZE, DEV_PAGE * PAGE_SIZE);
+  slice.forEach(d => {
     const online = d.board_online;
     const model = d.model || "";
     const phoneName = d.device_name || "";
@@ -208,18 +245,10 @@ function renderDevices() {
       : (SCANNING
           ? `<span class="spinner" style="width:12px;height:12px;border-width:2px"></span><span class="txt">quét…</span>`
           : `<span class="dot off"></span><span class="txt">offline</span>`);
-
-    // cột iPhone: gọn, mỗi loại thông tin một dòng
-    let phoneCell;
-    if (d.ios) {
-      phoneCell = `<div class="cell-name">${esc(model || "iPhone")}</div>
-        ${phoneName ? `<div class="cell-sub">${esc(phoneName)}</div>` : ""}
-        <div class="cell-pills"><span class="pill ok">iOS ${esc(d.ios)}</span></div>`;
-    } else if (d.udid) {
-      phoneCell = `<div class="cell-pills"><span class="pill warn">chưa kết nối</span></div>`;
-    } else {
-      phoneCell = `<div class="cell-pills"><span class="pill mut">chưa gán iPhone</span></div>`;
-    }
+    const iosCell = d.ios ? `<span class="pill ok">iOS ${esc(d.ios)}</span>`
+                 : (d.udid ? `<span class="pill warn">chưa kết nối</span>` : `<span class="pill mut">—</span>`);
+    const udidCell = d.udid ? `<span class="mono">${esc(d.udid.slice(0, 10))}…</span>`
+                            : `<span class="pill mut">chưa gán</span>`;
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -228,11 +257,15 @@ function renderDevices() {
         ${online ? bleBadge(d.ble) : ""}</td>
       <td>
         <div class="cell-name">${esc(d.label || d.name)}</div>
-        <div class="cell-sub mono nowrap">${esc(d.name)}</div>
-        <div class="cell-sub mono nowrap">${esc(shortPort(d.port))}</div></td>
-      <td>${phoneCell}</td>
-      <td class="col-act">
-        <div class="row-actions">
+        <div class="cell-sub mono nowrap">${esc(d.name)}</div></td>
+      <td>
+        <div class="cell-name">${esc(model || "—")}</div>
+        ${phoneName ? `<div class="cell-sub">${esc(phoneName)}</div>` : ""}</td>
+      <td>${iosCell}</td>
+      <td class="mono nowrap">${esc(shortPort(d.port))}</td>
+      <td>${udidCell}</td>
+      <td class="ta-r">
+        <div class="row-actions-h">
           ${d.udid ? `<button class="btn btn-sm btn-label-secondary" data-ready="${esc(d.udid)}" data-rname="${esc(d.label || d.name)}">Kiểm tra</button>` : ""}
           <button class="btn btn-sm btn-label-secondary" data-edit="${esc(d.name)}">Sửa</button>
           ${d.configured ? `<button class="btn btn-sm btn-label-danger" data-del="${esc(d.name)}">Xoá</button>` : ""}
@@ -242,6 +275,7 @@ function renderDevices() {
   $$("[data-edit]", tb).forEach(b => b.onclick = () => editDevice(b.dataset.edit));
   $$("[data-ready]", tb).forEach(b => b.onclick = () => openReadiness(b.dataset.ready, b.dataset.rname));
   $$("[data-del]", tb).forEach(b => b.onclick = () => deleteDevice(b.dataset.del));
+  renderPager("dev-pager", DEVICES.length, DEV_PAGE, p => { DEV_PAGE = p; renderDevices(); });
 }
 
 async function deleteDevice(name) {
@@ -257,31 +291,86 @@ async function deleteDevice(name) {
 function renderIOS() {
   const tb = $("#ios-tbody");
   tb.innerHTML = "";
+  const cnt = $("#seg-ios-c"); if (cnt) cnt.textContent = IOS.length;
+  const lbl = $("#ios-count-lbl"); if (lbl) lbl.textContent = IOS.length ? `${IOS.length} máy` : "";
   if (!IOS.length) {
     $("#ios-empty").hidden = IOS_LOADING;
-    if (IOS_LOADING) tb.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-muted">
+    renderPager("ios-pager", 0, 1, () => {});
+    if (IOS_LOADING) tb.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-muted">
       <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
       &nbsp; Đang tải iPhone…</td></tr>`;
     return;
   }
   $("#ios-empty").hidden = true;
   const mapped = new Set(DEVICES.filter(d => d.udid).map(d => d.udid));
-  IOS.forEach(p => {
+  IOS_PAGE = clampPage(IOS_PAGE, IOS.length);
+  const slice = IOS.slice((IOS_PAGE - 1) * PAGE_SIZE, IOS_PAGE * PAGE_SIZE);
+  slice.forEach(p => {
     const isMapped = mapped.has(p.udid);
+    const u = esc(p.udid || "");
+    const nm = esc(p.name || "—");
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>
-        <div class="cell-name">${esc(p.name || "—")}</div>
-        <div class="cell-sub">${esc(p.model || p.product_type || "—")}</div>
-        <div class="cell-sub mono">${esc((p.udid || "").slice(0, 8))}${p.udid ? "…" : ""}</div></td>
-      <td>
-        ${p.ios ? `<span class="pill ok">iOS ${esc(p.ios)}</span>` : "—"}
-        <div class="cell-sub mono" style="margin-top:3px">${esc(p.connection || "USB")}</div></td>
-      <td class="ta-r">${isMapped
-        ? `<span class="pill ok">đã gán</span>`
-        : `<span class="pill warn">chưa gán</span>`}</td>`;
+        <div class="cell-name">${nm}</div>
+        <div class="cell-sub">${isMapped
+          ? `<span class="pill ok">đã gán board</span>`
+          : `<span class="pill warn">chưa gán board</span>`}</div></td>
+      <td>${esc(p.model || p.product_type || "—")}</td>
+      <td>${p.ios ? `<span class="pill ok">iOS ${esc(p.ios)}</span>` : "—"}</td>
+      <td class="mono">${esc(p.connection || "USB")}</td>
+      <td class="mono">${u ? u.slice(0, 10) + "…" : "—"}</td>
+      <td class="ta-r">
+        <div class="row-actions-h">
+          <button class="btn btn-sm btn-primary"          data-iosact="check"   data-u="${u}" data-nm="${nm}">Kiểm tra</button>
+          <button class="btn btn-sm btn-label-secondary"  data-iosact="pair"    data-u="${u}">Ghép nối</button>
+          <button class="btn btn-sm btn-label-secondary"  data-iosact="devmode" data-u="${u}">Bật Dev</button>
+          <button class="btn btn-sm btn-label-secondary"  data-iosact="mount"   data-u="${u}">Mount</button>
+          ${isMapped ? "" : `<button class="btn btn-sm btn-label-secondary" data-iosact="assign" data-u="${u}" data-nm="${nm}">Gán board</button>`}
+        </div></td>`;
     tb.appendChild(tr);
   });
+  $$("[data-iosact]", tb).forEach(b => b.onclick = () => iosRowAction(b.dataset.iosact, b));
+  renderPager("ios-pager", IOS.length, IOS_PAGE, p => { IOS_PAGE = p; renderIOS(); });
+}
+
+async function iosRowAction(act, btn) {
+  const u = btn.dataset.u;
+  if (!u) { toast("iPhone này chưa đọc được UDID", "warn"); return; }
+  if (act === "check")  return openReadiness(u, btn.dataset.nm || "");
+  if (act === "assign") return assignBoard(u, btn.dataset.nm || "");
+  const map = {
+    pair:    { note: "Nhìn iPhone → bấm “Tin cậy” + nhập passcode." },
+    devmode: { confirm: "Bật Developer Mode sẽ KHỞI ĐỘNG LẠI iPhone. Tiếp tục?",
+               note: "Khởi động lại xong: mở khoá máy → xác nhận Developer Mode." },
+    mount:   { note: "Đang tải & mount DDI (lần đầu cần mạng)." },
+  }[act];
+  const fn = { pair: "ios_pair", devmode: "ios_enable_devmode", mount: "ios_mount" }[act];
+  if (!fn) return;
+  if (map.confirm && !confirmBox(map.confirm)) return;
+  busy(btn, true);
+  try {
+    const r = await API()[fn](u);
+    if (r && r.ok) { toast("Xong", "ok"); if (map.note) toast(map.note, ""); }
+    else toast("Lỗi: " + ((r && (r.log || r.error)) || "không rõ"), "bad");
+  } catch (e) { toast("Lỗi: " + e, "bad"); }
+  busy(btn, false);
+}
+
+async function assignBoard(udid, name) {
+  const boards = DEVICES.map(d => d.name);
+  if (!boards.length) { toast("Chưa có board nào. Quét board trước rồi gán.", "warn"); return; }
+  const r = await askForm("Gán iPhone vào board", `iPhone: ${name} · ${udid.slice(0, 12)}…`, [
+    { key: "board", label: "Tên board (đã quét)", value: boards[0], placeholder: "VD: iPhoneFarm-01" },
+    { key: "label", label: "Nhãn hiển thị", value: name, placeholder: "VD: Máy 01" },
+  ]);
+  if (!r || !r.board) return;
+  try {
+    const res = await API().set_udid(r.board.trim(), udid, r.label.trim());
+    if (res && res.ok === false) { toast("Lỗi: " + (res.error || "?"), "bad"); return; }
+    toast("Đã gán iPhone vào " + r.board, "ok");
+    await loadDevices();
+  } catch (e) { toast("Lỗi gán: " + e, "bad"); }
 }
 
 async function editDevice(name) {
@@ -979,6 +1068,7 @@ function init() {
   // devices
   $("#btn-refresh-dev").onclick = (e) => espScan(e.currentTarget);  // quét lại board + BLE (streaming)
   $("#btn-rescan").onclick = (e) => espScan(e.currentTarget);       // quét streaming (song song)
+  $$("#dev-tabs .seg-btn").forEach(b => b.onclick = () => setDevTab(b.dataset.dtab));
 
   // overview
   $("#btn-ov-refresh").onclick = () => loadOverview();

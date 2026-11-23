@@ -146,44 +146,53 @@
 
             <div class="dev-stats mb-3" id="dev-stats"></div>
 
-            <div class="row g-3">
-              <div class="col-lg-7">
-                <div class="card">
-                  <div class="card-header d-flex justify-content-between align-items-center py-3">
-                    <h5 class="mb-0">Danh sách board <span class="text-muted" style="font-size:.78rem" id="dev-count-lbl"></span></h5>
-                    <small class="text-muted">ESP32 · điều khiển qua Bluetooth</small>
-                  </div>
-                  <div class="table-responsive">
-                    <table class="table table-hover table-compact mb-0">
-                      <thead>
-                        <tr>
-                          <th>Trạng thái</th><th>Thiết bị</th><th>iPhone</th><th class="text-end">Thao tác</th>
-                        </tr>
-                      </thead>
-                      <tbody id="dev-tbody"></tbody>
-                    </table>
-                  </div>
-                  <div class="p-4 text-center text-muted" id="dev-empty" hidden>Chưa có board nào. Bấm “Quét board”.</div>
-                </div>
-              </div>
+            <!-- tab con: Tất cả / Board / iPhone -->
+            <div class="seg mb-3" id="dev-tabs">
+              <button class="seg-btn active" data-dtab="all">Tất cả</button>
+              <button class="seg-btn" data-dtab="board">Board <span class="seg-c" id="seg-board-c">0</span></button>
+              <button class="seg-btn" data-dtab="ios">iPhone <span class="seg-c" id="seg-ios-c">0</span></button>
+            </div>
 
-              <div class="col-lg-5">
-                <div class="card">
-                  <div class="card-header d-flex justify-content-between align-items-center py-3">
-                    <h5 class="mb-0">iPhone cắm USB</h5>
-                    <small class="text-muted">chụp màn hình</small>
-                  </div>
-                  <div class="table-responsive">
-                    <table class="table table-hover table-compact mb-0">
-                      <thead>
-                        <tr><th>Máy</th><th>iOS</th><th class="text-end">Gán board</th></tr>
-                      </thead>
-                      <tbody id="ios-tbody"></tbody>
-                    </table>
-                  </div>
-                  <div class="p-4 text-center text-muted" id="ios-empty" hidden>Không có iPhone nào đang cắm.</div>
-                </div>
+            <!-- Bảng BOARD -->
+            <div class="card mb-4" id="card-board">
+              <div class="card-header d-flex justify-content-between align-items-center py-3">
+                <h5 class="mb-0">Danh sách board <span class="text-muted" style="font-size:.78rem" id="dev-count-lbl"></span></h5>
+                <small class="text-muted">ESP32 · điều khiển qua Bluetooth</small>
               </div>
+              <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                  <thead>
+                    <tr>
+                      <th>Trạng thái</th><th>Tên / Nhãn</th><th>iPhone</th>
+                      <th>iOS</th><th>Cổng</th><th>UDID</th><th class="text-end">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dev-tbody"></tbody>
+                </table>
+              </div>
+              <div class="p-4 text-center text-muted" id="dev-empty" hidden>Chưa có board nào. Bấm “Quét board”.</div>
+              <div class="pager" id="dev-pager"></div>
+            </div>
+
+            <!-- Bảng IPHONE -->
+            <div class="card" id="card-ios">
+              <div class="card-header d-flex justify-content-between align-items-center py-3">
+                <h5 class="mb-0">iPhone cắm USB <span class="text-muted" style="font-size:.78rem" id="ios-count-lbl"></span></h5>
+                <small class="text-muted">qua cáp USB · dùng để chụp màn hình & chuẩn bị máy</small>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                  <thead>
+                    <tr>
+                      <th>Tên máy</th><th>Model</th><th>iOS</th>
+                      <th>Kết nối</th><th>UDID</th><th class="text-end">Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ios-tbody"></tbody>
+                </table>
+              </div>
+              <div class="p-4 text-center text-muted" id="ios-empty" hidden>Không có iPhone nào đang cắm.</div>
+              <div class="pager" id="ios-pager"></div>
             </div>
           </section>
 
