@@ -386,6 +386,20 @@
   </div>
 </div>
 
+<!-- probe modal (dò máy — nhận diện iPhone đang nối board) -->
+<div class="modal-overlay" id="probe-modal" hidden>
+  <div class="modal-box" style="max-width:480px">
+    <div class="d-flex justify-content-between align-items-start mb-1">
+      <div>
+        <h5 class="mb-1">Dò máy</h5>
+        <div class="text-muted small" id="probe-sub"></div>
+      </div>
+      <button class="btn btn-sm btn-label-secondary" id="probe-close">Đóng</button>
+    </div>
+    <div id="probe-body"></div>
+  </div>
+</div>
+
 <!-- Core JS -->
 <script src="vuexy/assets/vendor/libs/jquery/jquery.js"></script>
 <script src="vuexy/assets/vendor/libs/popper/popper.js"></script>

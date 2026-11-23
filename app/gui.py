@@ -14,8 +14,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 import cv2
 import webview
 
-import store, engine, fleet, esp, ios, iosdev, sysinfo
+import store, engine, fleet, esp, ios, iosdev, sysinfo, prober
 from nav import Nav
+from eyes import Eyes
 
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 
@@ -149,6 +150,50 @@ class Api:
         store.delete_device(name)
         MGR.sessions.pop(name, None)      # đóng phiên cũ nếu có
         return {"ok": True}
+
+    def probe_match(self, board_name):
+        """DÒ MÁY: xác định board này đang điều khiển iPhone nào (rung chuột + so màn),
+        rồi tự (re)gán board -> UDID. Xử lý được ca thay/đổi máy."""
+        try:
+            with MGR.lock:
+                MGR.close_all()                     # nhả cổng serial cho Hands dùng
+                port = MGR.board_map.get(board_name)
+            if not port:
+                return {"ok": False, "error": "Không thấy board (bấm Quét lại board)."}
+            try:
+                cands = [c for c in ios.list_connected() if c.get("udid")]
+            except Exception:
+                cands = []
+            if not cands:
+                return {"ok": False, "error": "Không có iPhone nào đang cắm USB để dò."}
+
+            best, ranked, note = prober.identify(port, cands)
+            ranked_out = [{"name": c.get("name"), "udid": c.get("udid"), "score": s} for c, s in ranked]
+            if not best:
+                return {"ok": False, "error": note or "Không xác định được máy.", "ranked": ranked_out}
+
+            udid = best["udid"]
+            # giữ nhãn người dùng đặt riêng; nếu chưa đặt thì dùng tên máy dò được
+            cur = next((d for d in store.get_devices() if d["name"] == board_name), None)
+            keep = cur.get("label") if cur else None
+            label = keep if keep not in (None, "", board_name) else (best.get("name") or board_name)
+            store.upsert_device(board_name, udid, label)
+
+            shot = None
+            try:
+                img = Eyes(udid).screenshot()
+                ok, buf = cv2.imencode(".png", img)
+                if ok:
+                    shot = "data:image/png;base64," + base64.b64encode(buf.tobytes()).decode()
+            except Exception:
+                pass
+
+            MGR.board_map = {}                      # buộc quét lại để mapping mới có hiệu lực
+            return {"ok": True, "board": board_name, "udid": udid, "label": label,
+                    "name": best.get("name"), "model": best.get("model"), "ios": best.get("ios"),
+                    "shot": shot, "ranked": ranked_out}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     # ---- kiểm tra & chuẩn bị iPhone cho việc chụp màn hình ----
     def ios_check(self, udid):

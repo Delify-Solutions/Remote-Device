@@ -75,6 +75,11 @@
     ios_enable_devmode: (u) => P({ ok: true, log: "Đã bật. Máy đang khởi động lại…" }),
     ios_reveal_devmode: (u) => P({ ok: true, log: "Đã hiện mục trong Cài đặt." }),
     ios_mount: (u) => P({ ok: true, log: "Đã mount DDI." }),
+    probe_match: (name) => new Promise((res) => setTimeout(() => res({
+      ok: true, board: name, udid: "babfe8c8261743b1eb722aa5b0c8b599e58b8c9c", label: "Máy 01",
+      name: "Hoành Anh eFootball", model: "iPhone 8", ios: "16.7.10", shot: SMALL_PNG,
+      ranked: [{ name: "Hoành Anh eFootball", udid: "babfe8c8…", score: 4210 }, { name: "XS Max", udid: "aaaa1111…", score: 60 }],
+    }), 1500)),
     screenshot: (n) => P({ ok: true, img: SMALL_PNG, w: 375, h: 667 }),
     ble_status: (n) => P({ ok: true, status: "OK ble=connected" }),
     run_step: (n, s) => P({ ok: true, msg: "test " + s.type + " OK" }),

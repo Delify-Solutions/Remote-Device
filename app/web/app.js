@@ -210,6 +210,7 @@ function wireCopyUdid(root) {
 /* ---- tab con (Tất cả / Board / iPhone) + phân trang + tìm kiếm ---- */
 const PAGE_SIZE = 8;
 let DEV_TAB = "all", DEV_PAGE = 1, IOS_PAGE = 1, DEV_Q = "";
+let PROBING = false;   // đang "dò máy" → tạm khoá quét ESP để không tranh cổng serial
 
 function matchDev(d) {
   if (!DEV_Q) return true;
@@ -308,6 +309,7 @@ function renderDevices() {
       <td>${udidCell(d.udid)}</td>
       <td class="ta-r">
         <div class="row-actions-h">
+          ${d.ble === true ? `<button class="btn btn-sm btn-primary" data-probe="${esc(d.name)}" title="Rung chuột để nhận diện iPhone đang nối board này">Dò máy</button>` : ""}
           ${d.udid ? `<button class="btn btn-sm btn-label-secondary" data-ready="${esc(d.udid)}" data-rname="${esc(d.label || d.name)}">Kiểm tra</button>` : ""}
           <button class="btn btn-sm btn-label-secondary" data-edit="${esc(d.name)}">Sửa</button>
           ${d.configured ? `<button class="btn btn-sm btn-label-danger" data-del="${esc(d.name)}">Xoá</button>` : ""}
@@ -317,6 +319,7 @@ function renderDevices() {
   $$("[data-edit]", tb).forEach(b => b.onclick = () => editDevice(b.dataset.edit));
   $$("[data-ready]", tb).forEach(b => b.onclick = () => openReadiness(b.dataset.ready, b.dataset.rname));
   $$("[data-del]", tb).forEach(b => b.onclick = () => deleteDevice(b.dataset.del));
+  $$("[data-probe]", tb).forEach(b => b.onclick = () => probeMatch(b.dataset.probe));
   wireCopyUdid(tb);
   renderPager("dev-pager", list.length, DEV_PAGE, p => { DEV_PAGE = p; renderDevices(); });
 }
@@ -329,6 +332,51 @@ async function deleteDevice(name) {
     toast("Đã xoá " + name, "ok");
     await loadDevices();
   } catch (e) { toast("Lỗi xoá: " + e, "bad"); }
+}
+
+/* =========================================================
+   DÒ MÁY — nhận diện iPhone đang nối board (rung chuột + so màn)
+   ========================================================= */
+async function probeMatch(name) {
+  if (PROBING) { toast("Đang dò máy khác, chờ chút…", "warn"); return; }
+  PROBING = true;
+  $("#probe-sub").textContent = `Board: ${name}`;
+  $("#probe-body").innerHTML = `<div class="py-4 text-center text-muted">
+    <span class="spinner"></span><br><br>
+    Đang rung chuột qua board &amp; so màn hình các iPhone…<br>
+    <span class="small">Đừng động vào máy. Cần iPhone bật AssistiveTouch (con trỏ hiện) + đã mount DDI.</span></div>`;
+  $("#probe-modal").hidden = false;
+  try {
+    const r = await API().probe_match(name);
+    renderProbe(name, r);
+    if (r && r.ok) await loadDevices();
+  } catch (e) {
+    $("#probe-body").innerHTML = `<div class="text-danger p-2">Lỗi: ${esc(e)}</div>`;
+  } finally {
+    PROBING = false;
+  }
+}
+
+function renderProbe(name, r) {
+  const body = $("#probe-body");
+  const rankHtml = (r && r.ranked && r.ranked.length)
+    ? `<div class="mt-3 small text-muted">Mức phản ứng từng máy: ${r.ranked.map(x => `${esc(x.name || "?")} = ${x.score}`).join(" · ")}</div>`
+    : "";
+  if (!r || !r.ok) {
+    body.innerHTML = `<div class="pill warn" style="padding:.45rem .75rem">${esc((r && r.error) || "Không xác định được máy")}</div>${rankHtml}
+      <div class="mt-3"><button class="btn btn-sm btn-primary" data-reprobe="${esc(name)}">Dò lại</button></div>`;
+  } else {
+    body.innerHTML = `
+      <div class="pill ok mb-3" style="padding:.45rem .75rem">✓ Đã nhận diện &amp; gán vào board ${esc(name)}</div>
+      <div class="ov-kv"><span>iPhone</span><span>${esc(r.name || "—")}</span></div>
+      <div class="ov-kv"><span>Model</span><span>${esc(r.model || "—")}</span></div>
+      <div class="ov-kv"><span>iOS</span><span>${esc(r.ios || "—")}</span></div>
+      <div class="ov-kv"><span>UDID</span><span class="mono">${esc((r.udid || "").slice(0, 18))}…</span></div>
+      ${r.shot ? `<img src="${r.shot}" alt="màn hình" style="width:100%;max-height:340px;object-fit:contain;margin-top:12px;border-radius:10px;border:1px solid var(--bs-border-color)">` : ""}
+      ${rankHtml}`;
+    toast(`Board ${name} → ${r.name || (r.udid || "").slice(0, 8)}`, "ok");
+  }
+  $$("[data-reprobe]", body).forEach(b => b.onclick = () => probeMatch(b.dataset.reprobe));
 }
 
 function renderIOS() {
@@ -576,10 +624,11 @@ async function copyText(t) {
 let AUTO_SECS = 0, AUTO_TIMER = null;
 
 function refreshCurrentView(manual = false) {
-  // bỏ qua khi đang quét hoặc đang mở hộp thoại để không gián đoạn thao tác
+  // bỏ qua khi đang quét/dò hoặc đang mở hộp thoại để không gián đoạn thao tác
+  if (PROBING) return;
   if (SCANNING && !manual) return;
-  const m1 = $("#modal"), m2 = $("#ready-modal");
-  if (!manual && ((m1 && !m1.hidden) || (m2 && !m2.hidden))) return;
+  const m1 = $("#modal"), m2 = $("#ready-modal"), m3 = $("#probe-modal");
+  if (!manual && ((m1 && !m1.hidden) || (m2 && !m2.hidden) || (m3 && !m3.hidden))) return;
   const active = $(".view.active");
   const id = active ? active.id : "";
   if (id === "view-overview") loadOverview();
@@ -721,6 +770,7 @@ async function readyAction(act, btn) {
    ESP32
    ========================================================= */
 async function espScan(btn) {
+  if (PROBING) { if (btn) toast("Đang dò máy, thử lại sau khi xong", "warn"); return; }
   busy(btn, true);
   SCANNING = true;
   $("#esp-summary").textContent = "Đang quét cổng USB…";
@@ -1200,6 +1250,9 @@ function init() {
   // readiness modal
   $("#ready-close").onclick = () => { $("#ready-modal").hidden = true; };
   $("#ready-recheck").onclick = () => checkReady();
+
+  // probe (dò máy) modal
+  const pc = $("#probe-close"); if (pc) pc.onclick = () => { if (!PROBING) $("#probe-modal").hidden = true; };
 
   // flows — screen
   $("#flow-device").onchange = (e) => { SEL = e.target.value || null; };
