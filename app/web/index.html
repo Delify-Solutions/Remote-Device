@@ -159,11 +159,18 @@
 
             <div class="dev-stats mb-3" id="dev-stats"></div>
 
-            <!-- tab con: Tất cả / Board / iPhone -->
-            <div class="seg mb-3" id="dev-tabs">
-              <button class="seg-btn active" data-dtab="all">Tất cả</button>
-              <button class="seg-btn" data-dtab="board">Board <span class="seg-c" id="seg-board-c">0</span></button>
-              <button class="seg-btn" data-dtab="ios">iPhone <span class="seg-c" id="seg-ios-c">0</span></button>
+            <!-- tab con + ô tìm kiếm -->
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+              <div class="seg" id="dev-tabs">
+                <button class="seg-btn active" data-dtab="all">Tất cả</button>
+                <button class="seg-btn" data-dtab="board">Board <span class="seg-c" id="seg-board-c">0</span></button>
+                <button class="seg-btn" data-dtab="ios">iPhone <span class="seg-c" id="seg-ios-c">0</span></button>
+              </div>
+              <div class="dev-search">
+                <i class="ti tabler-search"></i>
+                <input id="dev-q" type="text" placeholder="Tìm tên, nhãn, UDID, model…" autocomplete="off">
+                <button id="dev-q-clear" title="Xoá tìm kiếm" hidden>✕</button>
+              </div>
             </div>
 
             <!-- Bảng BOARD -->

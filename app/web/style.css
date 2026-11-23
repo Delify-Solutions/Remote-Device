@@ -65,6 +65,22 @@
   cursor: pointer; outline: none; }
 .auto-sel option { color: initial; }
 
+/* ---- ô tìm kiếm ---- */
+.dev-search { display: inline-flex; align-items: center; gap: .45rem; padding: .4rem .7rem;
+  border: 1px solid var(--bs-border-color); border-radius: 9px; background: var(--bs-body-bg);
+  min-width: 260px; color: var(--bs-secondary-color); }
+.dev-search input { border: 0; background: transparent; outline: none; color: var(--bs-body-color);
+  font-size: .86rem; flex: 1; }
+.dev-search button { border: 0; background: var(--bs-secondary-bg); color: var(--bs-secondary-color);
+  width: 20px; height: 20px; border-radius: 50%; cursor: pointer; font-size: .72rem; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; }
+.dev-search button:hover { background: var(--bs-danger); color: #fff; }
+
+/* ---- select trong modal (giống input) ---- */
+.modal-select { width: 100%; padding: .5rem .7rem; border: 1px solid var(--bs-border-color);
+  border-radius: 8px; background: var(--bs-body-bg); color: var(--bs-body-color); font-size: .9rem; }
+.modal-select:focus { outline: none; border-color: var(--bs-primary); }
+
 /* ---- compact table (two-up device/iphone layout) ---- */
 .table-compact > :not(caption) > * > * { padding: .7rem .75rem; vertical-align: top; }
 .table-compact thead th { font-size: .7rem; text-transform: uppercase; letter-spacing: .03em;

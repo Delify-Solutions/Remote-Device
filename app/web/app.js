@@ -62,12 +62,19 @@ function askForm(title, msg, fields) {
     box.innerHTML = "";
     fields.forEach((f, i) => {
       const wrap = document.createElement("div");
-      wrap.innerHTML = `<label>${esc(f.label)}</label>
-        <input data-k="${esc(f.key)}" value="${esc(f.value ?? "")}" placeholder="${esc(f.placeholder ?? "")}">`;
+      if (f.type === "select") {
+        const opts = (f.options || []).map(o =>
+          `<option value="${esc(o.value)}" ${String(o.value) === String(f.value) ? "selected" : ""}>${esc(o.label)}</option>`).join("");
+        wrap.innerHTML = `<label>${esc(f.label)}</label>
+          <select data-k="${esc(f.key)}" class="modal-select">${opts}</select>`;
+      } else {
+        wrap.innerHTML = `<label>${esc(f.label)}</label>
+          <input data-k="${esc(f.key)}" value="${esc(f.value ?? "")}" placeholder="${esc(f.placeholder ?? "")}">`;
+      }
       box.appendChild(wrap);
     });
     ov.hidden = false;
-    const first = box.querySelector("input"); if (first) { first.focus(); first.select(); }
+    const first = box.querySelector("input, select"); if (first) { first.focus(); if (first.select) first.select(); }
 
     const close = (val) => {
       ov.hidden = true;
@@ -77,7 +84,7 @@ function askForm(title, msg, fields) {
     };
     const collect = () => {
       const out = {};
-      $$("#modal-fields input").forEach(inp => out[inp.dataset.k] = inp.value);
+      $$("#modal-fields input, #modal-fields select").forEach(inp => out[inp.dataset.k] = inp.value);
       return out;
     };
     $("#modal-ok").onclick = () => close(collect());
@@ -200,9 +207,26 @@ function wireCopyUdid(root) {
   $$("[data-copyudid]", root).forEach(b => b.onclick = () => copyText(b.dataset.copyudid));
 }
 
-/* ---- tab con (Tất cả / Board / iPhone) + phân trang ---- */
+/* ---- tab con (Tất cả / Board / iPhone) + phân trang + tìm kiếm ---- */
 const PAGE_SIZE = 8;
-let DEV_TAB = "all", DEV_PAGE = 1, IOS_PAGE = 1;
+let DEV_TAB = "all", DEV_PAGE = 1, IOS_PAGE = 1, DEV_Q = "";
+
+function matchDev(d) {
+  if (!DEV_Q) return true;
+  return [d.name, d.label, d.udid, d.model, d.device_name, d.ios, d.port]
+    .join(" ").toLowerCase().includes(DEV_Q);
+}
+function matchIos(p) {
+  if (!DEV_Q) return true;
+  return [p.name, p.model, p.product_type, p.udid, p.ios]
+    .join(" ").toLowerCase().includes(DEV_Q);
+}
+function setSearch(q) {
+  DEV_Q = (q || "").trim().toLowerCase();
+  DEV_PAGE = 1; IOS_PAGE = 1;
+  const clr = $("#dev-q-clear"); if (clr) clr.hidden = !DEV_Q;
+  renderDevices(); renderIOS();
+}
 
 function setDevTab(t) {
   DEV_TAB = t;
@@ -237,17 +261,25 @@ function renderDevices() {
   const tb = $("#dev-tbody");
   tb.innerHTML = "";
   const cnt = $("#seg-board-c"); if (cnt) cnt.textContent = DEVICES.length;
-  if (!DEVICES.length) {
-    $("#dev-empty").hidden = SCANNING;
+  const list = DEVICES.filter(matchDev);
+  const emptyEl = $("#dev-empty");
+  if (!list.length) {
     renderPager("dev-pager", 0, 1, () => {});
-    if (SCANNING) tb.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-muted">
-      <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
-      &nbsp; Đang quét board…</td></tr>`;
+    if (!DEVICES.length) {
+      emptyEl.textContent = "Chưa có board nào. Bấm “Quét board”.";
+      emptyEl.hidden = SCANNING;
+      if (SCANNING) tb.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-muted">
+        <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
+        &nbsp; Đang quét board…</td></tr>`;
+    } else {
+      emptyEl.textContent = `Không board nào khớp “${DEV_Q}”.`;
+      emptyEl.hidden = false;
+    }
     return;
   }
-  $("#dev-empty").hidden = true;
-  DEV_PAGE = clampPage(DEV_PAGE, DEVICES.length);
-  const slice = DEVICES.slice((DEV_PAGE - 1) * PAGE_SIZE, DEV_PAGE * PAGE_SIZE);
+  emptyEl.hidden = true;
+  DEV_PAGE = clampPage(DEV_PAGE, list.length);
+  const slice = list.slice((DEV_PAGE - 1) * PAGE_SIZE, DEV_PAGE * PAGE_SIZE);
   slice.forEach(d => {
     const online = d.board_online;
     const model = d.model || "";
@@ -286,7 +318,7 @@ function renderDevices() {
   $$("[data-ready]", tb).forEach(b => b.onclick = () => openReadiness(b.dataset.ready, b.dataset.rname));
   $$("[data-del]", tb).forEach(b => b.onclick = () => deleteDevice(b.dataset.del));
   wireCopyUdid(tb);
-  renderPager("dev-pager", DEVICES.length, DEV_PAGE, p => { DEV_PAGE = p; renderDevices(); });
+  renderPager("dev-pager", list.length, DEV_PAGE, p => { DEV_PAGE = p; renderDevices(); });
 }
 
 async function deleteDevice(name) {
@@ -304,18 +336,26 @@ function renderIOS() {
   tb.innerHTML = "";
   const cnt = $("#seg-ios-c"); if (cnt) cnt.textContent = IOS.length;
   const lbl = $("#ios-count-lbl"); if (lbl) lbl.textContent = IOS.length ? `${IOS.length} máy` : "";
-  if (!IOS.length) {
-    $("#ios-empty").hidden = IOS_LOADING;
+  const list = IOS.filter(matchIos);
+  const emptyEl = $("#ios-empty");
+  if (!list.length) {
     renderPager("ios-pager", 0, 1, () => {});
-    if (IOS_LOADING) tb.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-muted">
-      <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
-      &nbsp; Đang tải iPhone…</td></tr>`;
+    if (!IOS.length) {
+      emptyEl.textContent = "Không có iPhone nào đang cắm.";
+      emptyEl.hidden = IOS_LOADING;
+      if (IOS_LOADING) tb.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-muted">
+        <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
+        &nbsp; Đang tải iPhone…</td></tr>`;
+    } else {
+      emptyEl.textContent = `Không iPhone nào khớp “${DEV_Q}”.`;
+      emptyEl.hidden = false;
+    }
     return;
   }
-  $("#ios-empty").hidden = true;
+  emptyEl.hidden = true;
   const mapped = new Set(DEVICES.filter(d => d.udid).map(d => d.udid));
-  IOS_PAGE = clampPage(IOS_PAGE, IOS.length);
-  const slice = IOS.slice((IOS_PAGE - 1) * PAGE_SIZE, IOS_PAGE * PAGE_SIZE);
+  IOS_PAGE = clampPage(IOS_PAGE, list.length);
+  const slice = list.slice((IOS_PAGE - 1) * PAGE_SIZE, IOS_PAGE * PAGE_SIZE);
   slice.forEach(p => {
     const isMapped = mapped.has(p.udid);
     const u = esc(p.udid || "");
@@ -343,7 +383,7 @@ function renderIOS() {
   });
   $$("[data-iosact]", tb).forEach(b => b.onclick = () => iosRowAction(b.dataset.iosact, b));
   wireCopyUdid(tb);
-  renderPager("ios-pager", IOS.length, IOS_PAGE, p => { IOS_PAGE = p; renderIOS(); });
+  renderPager("ios-pager", list.length, IOS_PAGE, p => { IOS_PAGE = p; renderIOS(); });
 }
 
 async function iosRowAction(act, btn) {
@@ -370,10 +410,19 @@ async function iosRowAction(act, btn) {
 }
 
 async function assignBoard(udid, name) {
-  const boards = DEVICES.map(d => d.name);
-  if (!boards.length) { toast("Chưa có board nào. Quét board trước rồi gán.", "warn"); return; }
-  const r = await askForm("Gán iPhone vào board", `iPhone: ${name} · ${udid.slice(0, 12)}…`, [
-    { key: "board", label: "Tên board (đã quét)", value: boards[0], placeholder: "VD: iPhoneFarm-01" },
+  if (!DEVICES.length) { toast("Chưa có board nào. Quét board trước rồi gán.", "warn"); return; }
+  const options = DEVICES.map(d => ({
+    value: d.name,
+    label: d.name
+      + (d.ble === true ? "  ·  ● Bluetooth đang nối" : d.ble === false ? "  ·  Bluetooth rớt" : "")
+      + (d.udid ? (d.udid === udid ? "  ·  (máy này)" : "  ·  (đã gán máy khác)") : "  ·  (trống)")
+  }));
+  // ưu tiên board ĐANG NỐI Bluetooth và chưa gán — nhiều khả năng là cái đang điều khiển máy này
+  const prefer = DEVICES.find(d => d.ble === true && !d.udid)
+              || DEVICES.find(d => d.ble === true) || DEVICES[0];
+  const r = await askForm("Gán iPhone vào board",
+    `iPhone: ${name} · ${udid.slice(0, 12)}…\nMẹo: chọn board đang “Bluetooth nối” — đó là board đang điều khiển máy này.`, [
+    { key: "board", label: "Chọn board", type: "select", value: prefer.name, options },
     { key: "label", label: "Nhãn hiển thị", value: name, placeholder: "VD: Máy 01" },
   ]);
   if (!r || !r.board) return;
@@ -388,10 +437,19 @@ async function assignBoard(udid, name) {
 async function editDevice(name) {
   const d = DEVICES.find(x => x.name === name);
   if (!d) return;
-  const r = await askForm("Gán iPhone cho board", `Board: ${name}`, [
-    { key: "udid", label: "UDID iPhone", value: d.udid || "", placeholder: "40 ký tự UDID" },
-    { key: "label", label: "Nhãn hiển thị", value: d.label || "", placeholder: "VD: Máy 01" },
-  ]);
+  const fields = [];
+  if (IOS.length || d.udid) {
+    const opts = [{ value: "", label: "— Bỏ trống (gỡ gán) —" }];
+    IOS.forEach(p => opts.push({ value: p.udid,
+      label: `${p.name || "iPhone"} · ${p.model || p.product_type || ""} · ${(p.udid || "").slice(0, 8)}…` }));
+    if (d.udid && !IOS.some(p => p.udid === d.udid))   // máy đã gán nhưng giờ không cắm USB
+      opts.push({ value: d.udid, label: `(đã gán, hiện không cắm) ${d.udid.slice(0, 8)}…` });
+    fields.push({ key: "udid", label: "iPhone (chọn máy đang cắm USB)", type: "select", value: d.udid || "", options: opts });
+  } else {
+    fields.push({ key: "udid", label: "UDID iPhone", value: d.udid || "", placeholder: "40 ký tự UDID" });
+  }
+  fields.push({ key: "label", label: "Nhãn hiển thị", value: d.label || "", placeholder: "VD: Máy 01" });
+  const r = await askForm("Gán iPhone cho board", `Board: ${name}`, fields);
   if (!r) return;
   try {
     const res = await API().set_udid(name, r.udid.trim(), r.label.trim());
@@ -1127,6 +1185,10 @@ function init() {
   $("#btn-refresh-dev").onclick = (e) => espScan(e.currentTarget);  // quét lại board + BLE (streaming)
   $("#btn-rescan").onclick = (e) => espScan(e.currentTarget);       // quét streaming (song song)
   $$("#dev-tabs .seg-btn").forEach(b => b.onclick = () => setDevTab(b.dataset.dtab));
+  const q = $("#dev-q");
+  if (q) q.oninput = (e) => setSearch(e.target.value);
+  const qc = $("#dev-q-clear");
+  if (qc) qc.onclick = () => { if (q) q.value = ""; setSearch(""); if (q) q.focus(); };
 
   // overview
   $("#btn-ov-refresh").onclick = () => loadOverview();
