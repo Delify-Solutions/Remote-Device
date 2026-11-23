@@ -217,8 +217,17 @@ class Api:
     def esp_flash(self, port, name):
         """Nạp firmware với tên chọn (dùng để nạp mới hoặc đổi tên)."""
         with MGR.lock:
+            # tên board đang nạp trên cổng này (để chuyển cấu hình khi đổi tên)
+            old_name = next((n for n, p in MGR.board_map.items() if p == port), None)
             MGR.close_all()
             r = esp.flash(port, name)
+        # đổi tên: chuyển gán iPhone + nhãn từ tên cũ -> tên mới, bỏ 'máy cũ tên cũ'
+        if r.get("ok") and old_name and old_name != name:
+            try:
+                store.rename_device(old_name, name)
+                MGR.sessions.pop(old_name, None)
+            except Exception:
+                pass
         MGR.board_map = {}       # buộc quét lại
         return r
 

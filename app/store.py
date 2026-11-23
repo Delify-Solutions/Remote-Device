@@ -63,6 +63,23 @@ def delete_device(name):
     return save_devices(devs)
 
 
+def rename_device(old_name, new_name):
+    """Đổi tên board: chuyển cấu hình (udid/label) từ tên cũ -> tên mới.
+    Dùng khi nạp lại firmware đổi tên BLE, để không để lại 'máy cũ tên cũ'."""
+    if not old_name or not new_name or old_name == new_name:
+        return get_devices()
+    devs = get_devices()
+    old = next((d for d in devs if d.get("name") == old_name), None)
+    if not old:
+        return devs
+    # bỏ entry trùng tên mới (nếu có) rồi gán tên cũ -> tên mới
+    devs = [d for d in devs if d.get("name") != new_name]
+    old["name"] = new_name
+    if old.get("label") in (None, "", old_name):   # nhãn mặc định theo tên -> cập nhật theo tên mới
+        old["label"] = new_name
+    return save_devices(devs)
+
+
 # ---- flows ----
 def get_flows():
     _ensure(); return _read(FLOWS_FILE)
