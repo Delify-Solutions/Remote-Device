@@ -69,7 +69,9 @@ def probe(port, timeout=3.0):
                 time.sleep(0.2)
                 line = ser.readline().decode("utf-8", "ignore").strip()
                 if "ble=" in line:
-                    ble = ("connected" in line); break
+                    # LƯU Ý: "disconnected" cũng chứa chuỗi con "connected",
+                    # nên phải so khớp đúng "ble=connected" / "ble=disconnected".
+                    ble = ("ble=connected" in line); break
         ser.close()
         return {"flashed": name is not None, "name": name, "ble": ble}
     except Exception as e:

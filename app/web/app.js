@@ -616,7 +616,7 @@ async function handleEsp(action, btn) {
     } catch (e) { espSpinner(card, "", false); toast("Lỗi: " + e, "bad"); }
 
   } else if (action === "erase") {
-    if (!confirmBox(`Xoá sạch flash của board ${port}?\nBoard sẽ về trạng thái chưa nạp.`)) return;
+    if (!confirmBox(`Xoá sạch flash của board ${port}?\n\n⚠️ CẢNH BÁO: Xoá sạch sẽ MẤT ghép nối Bluetooth với iPhone.\nSau đó iPhone sẽ KHÔNG tự thấy lại board — phải vào iPhone →\nBluetooth → "Quên thiết bị này" rồi ghép lại từ đầu.\n\n👉 Chỉ cần đổi tên / cập nhật? Hãy dùng "Đổi tên" hoặc "Nạp\nfirmware" (nạp đè) — giữ nguyên ghép nối, iPhone tự nối lại.\n\nVẫn muốn xoá sạch?`)) return;
     espSpinner(card, "Đang xoá flash… (~10s)", true);
     try {
       const r = await API().esp_erase(port);
