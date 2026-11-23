@@ -51,6 +51,7 @@
     sys_overview: () => P(OV),
     sys_install_pip: (n) => P({ ok: true, log: "Collecting pytesseract…\nSuccessfully installed pytesseract-0.3.13" }),
     sys_install_tool: (n) => P({ ok: true, log: "==> Pouring tesseract…\n🍺  tesseract installed" }),
+    restart_app: () => P({ ok: true }),
     rescan: () => P({ ok: true, boards: { "iPhoneFarm-01": "/dev/cu.usbserial-0001" } }),
     list_devices: () => P(DEVICES),
     set_udid: (n, u, l) => P({ ok: true }),

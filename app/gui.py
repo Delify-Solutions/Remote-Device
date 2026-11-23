@@ -103,6 +103,17 @@ class Api:
         except Exception as e:
             return {"ok": False, "log": str(e)}
 
+    def restart_app(self):
+        """Khởi động lại toàn bộ app (đóng cửa sổ, chạy lại tiến trình)."""
+        script = os.path.abspath(sys.argv[0])
+        def _do():
+            try:
+                os.execv(sys.executable, [sys.executable, script] + sys.argv[1:])
+            except Exception:
+                os._exit(1)
+        threading.Timer(0.4, _do).start()
+        return {"ok": True}
+
     # ---- thiết bị ----
     def rescan(self):
         try:

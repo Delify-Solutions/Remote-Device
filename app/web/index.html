@@ -101,8 +101,14 @@
               <span class="conn-dot" id="conn-dot"></span>
               <small id="conn-text">Đang kết nối…</small>
             </span>
-            <button class="btn btn-sm btn-label-secondary" id="btn-reload-all" title="Nạp lại ngay">
+            <button class="btn btn-sm btn-label-secondary" id="btn-reload-all" title="Nạp lại dữ liệu ngay">
               <i class="ti tabler-reload me-1"></i>Nạp lại
+            </button>
+            <button class="btn btn-icon btn-sm btn-label-secondary" id="btn-reload-ui" title="Tải lại giao diện (F5)">
+              <i class="ti tabler-refresh-dot"></i>
+            </button>
+            <button class="btn btn-icon btn-sm btn-label-secondary" id="btn-restart" title="Khởi động lại app">
+              <i class="ti tabler-power"></i>
             </button>
             <div class="auto-wrap" title="Tự động đọc lại">
               <i class="ti tabler-refresh"></i>
@@ -204,8 +210,7 @@
                 <table class="table table-hover table-compact mb-0">
                   <thead>
                     <tr>
-                      <th>Tên máy</th><th>Model</th>
-                      <th>Kết nối</th><th>UDID</th><th class="text-end">Thao tác</th>
+                      <th>Tên máy</th><th>iPhone</th><th class="text-end">Thao tác</th>
                     </tr>
                   </thead>
                   <tbody id="ios-tbody"></tbody>

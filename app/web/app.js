@@ -396,7 +396,7 @@ function renderIOS() {
     if (!IOS.length) {
       emptyEl.textContent = "Không có iPhone nào đang cắm.";
       emptyEl.hidden = IOS_LOADING;
-      if (IOS_LOADING) tb.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-muted">
+      if (IOS_LOADING) tb.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-muted">
         <span class="spinner" style="width:18px;height:18px;vertical-align:-4px"></span>
         &nbsp; Đang tải iPhone…</td></tr>`;
     } else {
@@ -417,14 +417,12 @@ function renderIOS() {
     tr.innerHTML = `
       <td>
         <div class="cell-name">${nm}</div>
-        <div class="cell-sub">${isMapped
+        <div class="cell-pills">${isMapped
           ? `<span class="pill ok">đã gán board</span>`
           : `<span class="pill warn">chưa gán board</span>`}</div></td>
       <td>
-        <div class="cell-name">${esc(p.model || p.product_type || "—")}</div>
-        <div class="cell-pills">${p.ios ? `<span class="pill ok">iOS ${esc(p.ios)}</span>` : `<span class="pill mut">—</span>`}</div></td>
-      <td class="mono">${esc(p.connection || "USB")}</td>
-      <td>${udidCell(p.udid, "—")}</td>
+        <div class="cell-name">${esc(p.model || p.product_type || "iPhone")}</div>
+        <div class="cell-pills">${p.ios ? `<span class="pill ok">iOS ${esc(p.ios)}</span>` : `<span class="pill mut">—</span>`} ${udidCell(p.udid, "—")}</div></td>
       <td class="ta-r">
         <div class="row-actions-h">
           <button class="btn btn-sm btn-primary"          data-iosact="check"   data-u="${u}" data-nm="${nm}">Kiểm tra</button>
@@ -1229,6 +1227,14 @@ function init() {
   // nạp lại + tự động đọc lại (toàn app)
   const reloadBtn = $("#btn-reload-all");
   if (reloadBtn) reloadBtn.onclick = (e) => { busy(e.currentTarget, true); refreshCurrentView(true); setTimeout(() => busy(e.currentTarget, false), 800); };
+  const reloadUiBtn = $("#btn-reload-ui");
+  if (reloadUiBtn) reloadUiBtn.onclick = () => location.reload();   // F5: tải lại toàn bộ giao diện
+  const restartBtn = $("#btn-restart");
+  if (restartBtn) restartBtn.onclick = async () => {
+    if (!confirmBox("Khởi động lại app? Cửa sổ sẽ đóng rồi mở lại (vài giây).")) return;
+    toast("Đang khởi động lại app…", "");
+    try { await API().restart_app(); } catch (e) {}
+  };
   const autoSel = $("#auto-sel");
   if (autoSel) {
     let saved = 0; try { saved = parseInt(localStorage.getItem("ipf-auto") || "0") || 0; } catch (e) {}
