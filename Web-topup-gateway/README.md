@@ -1,0 +1,118 @@
+# Topup Gateway — API trung gian nạp game
+
+Đứng giữa **website bán hàng** (shop) và **máy nạp** (tool, vd iPhone farm):
+
+```
+SHOP ──đẩy đơn đã thanh toán──▶ GATEWAY ◀──máy trống xin việc── TOOL
+SHOP ◀──webhook: cần OTP / xong──  GATEWAY ◀──xin OTP, gửi ảnh, báo kết quả── TOOL
+SHOP ──OTP khách nhập──────────▶ GATEWAY ──(tool tự lấy OTP về)──▶ TOOL
+```
+
+- **Trang quản trị** `/admin`: tạo *pool* (trường đăng nhập · OTP · luật nhận diện thành công/thất bại · các bước · gói nạp), khoá API + webhook, theo dõi/đối soát đơn, xem & tải ảnh kết quả.
+- **Tài liệu API 2 chiều** `/docs`: sơ đồ 3 bên, từng endpoint kèm ví dụ, webhook + cách kiểm chữ ký, lệnh curl chạy thử, giả mã vòng lặp của tool. Trang này dựng từ `src/spec.php` nên luôn khớp với mã.
+- **PHP 8.2 thuần, không framework**, MySQL/MariaDB (chạy thật) hoặc SQLite (dev/test).
+- **Giao diện Vuexy** (Bootstrap 5, menu dọc, sáng/tối) — cùng bộ với iPhone Farm Manager; mọi thứ nằm sẵn trong `public/assets/`, không gọi CDN ngoài.
+
+## Cài đặt
+
+```bash
+cp .env.example .env
+# sửa .env: APP_URL, APP_KEY (chuỗi ngẫu nhiên dài — KHÔNG đổi về sau), DB_DSN/DB_USER/DB_PASS, CRON_KEY
+php bin/setup.php            # tạo bảng + tạo admin (mật khẩu hiện MỘT lần)
+php bin/setup.php admin 'MatKhauMoi>=10kytu'   # đặt lại mật khẩu khi cần
+```
+
+Cần PHP ≥ 8.2 với `pdo_mysql` (hoặc `pdo_sqlite`), `sodium`, `gd`, `curl`, `mbstring`, `fileinfo`.
+
+**Web server**: trỏ document root vào `public/`.
+- Apache: đã có `public/.htaccess` (rewrite + chuyển header `Authorization`).
+- nginx:
+  ```nginx
+  root /duong/dan/Web-topup-gateway/public;
+  location / { try_files $uri /index.php$is_args$args; }
+  location ~ \.php$ { include fastcgi_params; fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; fastcgi_pass unix:/run/php/php8.2-fpm.sock; }
+  client_max_body_size 6m;      # ảnh bill tối đa 5 MB
+  ```
+- Chạy thử trên máy (từ thư mục `Web-topup-gateway/`): `PHP_CLI_SERVER_WORKERS=4 php -S 127.0.0.1:8765 -t public public/index.php`
+
+**Cron (mỗi phút)** — dọn đơn quá hạn + gửi lại webhook:
+```cron
+* * * * * php /duong/dan/Web-topup-gateway/bin/cron.php >> /var/log/topup-gateway-cron.log 2>&1
+```
+Hosting không có crontab CLI thì gọi `GET /cron/tick?key=<CRON_KEY>` mỗi phút.
+
+## Dùng thế nào (tóm tắt)
+
+1. `/admin/pools` → tạo pool cho từng game/cách đăng nhập (có sẵn mẫu: `php bin/seed-demo.php`).
+2. `/admin/keys` → tạo **khoá Shop** (kèm Webhook URL của shop) và **khoá Tool**.
+3. Đấu nối theo `/docs`:
+   - **Shop**: `POST /api/shop/jobs` khi đơn đã thanh toán → nhận webhook `job.need_otp` thì hiện ô nhập cho khách → `POST …/otp` → nhận `job.done` (có link ảnh) / `job.failed` / `job.review`.
+   - **Tool**: mỗi máy trống gọi `POST /api/tool/claim` → đăng nhập theo `login` → cần OTP thì `otp/request` rồi `GET …/otp?wait=20` → gửi ảnh `…/images` → `…/result`.
+
+## Nối với iPhone Farm Manager (thư mục `app/` cùng repo)
+
+Tool đã cài sẵn vòng lặp ở mục «Vòng lặp mẫu của tool» của `/docs`:
+
+1. Trong tool: **Nhóm & Kịch bản → ⚙ Gateway** → nhập địa chỉ gateway + **khoá Tool** (`gwt_…`).
+2. Tạo nhóm máy, chọn chế độ **«Nhận đơn từ Gateway (API)»**, chọn pool → bấm Chạy. Máy nào trống (Bluetooth nối, chụp được màn hình) sẽ tự xin việc.
+3. Các bước thao tác lấy từ mục ④ của pool, gồm 6 giai đoạn theo thứ tự chạy:
+
+   | Giai đoạn | Khi nào chạy |
+   |---|---|
+   | Đăng nhập (`login_steps`) | đầu mỗi đơn; xong thì tool đọc màn hình theo luật ở mục 3 |
+   | Nhập OTP (`otp_steps`) | mỗi lần khách gửi mã (để trống = gõ mã rồi Enter) |
+   | Vào danh sách gói (`nav_steps`) | 1 lần sau khi đăng nhập được |
+   | Mua 1 gói (`purchase_steps`) | lặp theo gói × số lượng; xong thì đọc màn hình theo luật |
+   | Sau mỗi lần mua (`after_purchase_steps`) | sau khi đã chụp ảnh bill |
+   | Kết thúc đơn (`finish_steps`) | đăng xuất — chạy trước khi máy nhận đơn kế tiếp, kể cả sau đơn lỗi (đơn phải đối soát: máy dừng, giữ nguyên màn hình; bấm Chạy lại mới đăng xuất) |
+
+   Bước nào đặt «Nếu lỗi → Bỏ qua, làm tiếp» thì không làm được cũng đi tiếp (vd đóng hộp thoại lúc có lúc không). Nhóm máy có thể **ghi đè riêng từng giai đoạn** ngay trong tool (máy khác cỡ màn hình / khác giao diện).
+4. Pool phải có **ba luật bắt buộc** ở mục 3 — «Màn hình CHƯA đăng nhập», «Đăng nhập THÀNH CÔNG», «Nạp gói THÀNH CÔNG» — và đủ bước đăng nhập / mua / kết thúc; thiếu thì máy không nhận đơn (trang Pool hiện nhãn «thiếu cấu hình»).
+5. Trước mỗi lần xin đơn, máy mở game và kiểm là **chưa ai đăng nhập** (còn thì tự đăng xuất). Tool tự dừng máy và chờ người khi: có đơn cần đối soát, không đăng xuất được, pool thiếu cấu hình, bàn phím iPhone đang ở Telex/VNI, hoặc 2 đơn liên tiếp lỗi do máy.
+
+## Nguyên tắc tiền (đã cài cứng trong mã, có test)
+
+1. Một `ref` của shop = đúng **một** đơn (gửi lại không tạo đơn mới).
+2. Một đơn chỉ giao cho máy **đúng một lần** (8 máy xin cùng lúc chỉ 1 máy nhận).
+3. `failed` = tool cam kết **chưa** gửi lệnh mua nào. Không chắc → `review` cho admin chốt.
+4. Gateway **không tự nạp lại, không tự hoàn tiền**.
+5. Tài khoản/mật khẩu/OTP: mã hoá khi lưu (libsodium), chỉ giao cho máy nhận đơn, **xoá ngay khi đơn kết thúc**; không bao giờ xuất hiện trong webhook, API shop, hay nhật ký.
+
+## Test
+
+```bash
+php bin/test-flow.php     # dựng gateway + máy nhận webhook giả trên SQLite tạm, đóng vai shop & tool qua HTTP
+```
+Kiểm: xác thực, cấu hình pool (6 danh sách bước, cờ bỏ qua nếu lỗi), tạo đơn/idempotent, chạy đua nhận việc, OTP (kể cả chờ long-poll, sai mã, hết lượt), ảnh, kết quả + xung đột 409, báo muộn, huỷ, đối soát, quá hạn, webhook có chữ ký, trang quản trị.
+
+Test **cả hai đầu** (tool thật ↔ gateway thật, iPhone giả lập) nằm ở phía tool — chạy từ gốc repo:
+
+```bash
+./.venv/bin/python app/tests/test_api_mode.py    # đơn thường, OTP sai/đúng, sai mật khẩu, mua 1 phần, treo sau khi bấm mua, tắt tool giữa chừng…
+./.venv/bin/python app/tests/test_nav.py         # định vị con trỏ + bấm vòng kín + kiểm bàn phím Telex/VNI (không cần iPhone)
+./.venv/bin/python app/tests/smoke_device.py <tên máy>   # thử trên iPhone THẬT bằng thao tác vô hại trong app Cài đặt (tắt app trước)
+```
+
+## Cấu trúc
+
+| Việc | Ở đâu |
+|---|---|
+| Lõi: env, DB, mã hoá, request/response, phiên admin, CSRF, giới hạn tần suất, lưu ảnh | `src/core.php` |
+| Bảng & migration (MySQL + SQLite) | `src/schema.php` |
+| Nghiệp vụ: pool/gói, khoá, máy, **vòng đời đơn**, OTP, webhook | `src/repo.php` |
+| API shop / tool, file ảnh, cron HTTP | `src/api.php` |
+| **Mô tả API cho /docs** (sửa API thì sửa ở đây cùng lúc) | `src/spec.php` |
+| Trang quản trị | `src/admin.php`, `views/` (khung trang: `views/layout.php`) |
+| Giao diện: bộ Vuexy (chỉ phần dùng tới) · phần riêng của gateway | `public/assets/vuexy/` · `public/assets/app.css`, `app.js`, `theme.js` |
+| Định tuyến | `public/index.php` |
+
+**Thêm icon mới vào giao diện**: dùng class `ti tabler-<tên>` trong view rồi chạy `php bin/build-icons.php` — script chỉ chép những icon đang dùng từ bộ Tabler đầy đủ của Vuexy (`app/web/vuexy/…`, ~2.6 MB) sang `public/assets/vuexy/vendor/fonts/iconify-icons.css` (~16 KB).
+
+## Lưu ý vận hành
+
+- `GET …/otp?wait=N` giữ một tiến trình PHP tối đa N giây (≤ 25). Với PHP-FPM hãy để `pm.max_children` lớn hơn số máy nạp có thể cùng chờ OTP, hoặc cho tool dùng `wait=0` và hỏi lại mỗi 2–3 giây.
+- Link ảnh `/files/<token>` là công khai nhưng không đoán được (128 bit) — dùng để đưa cho khách xem/tải.
+- Đặt gateway sau HTTPS. Chạy sau proxy/CDN thì bật `TRUST_PROXY=true` để giới hạn tần suất theo IP thật — gateway lấy địa chỉ **cuối cùng** trong `X-Forwarded-For` (cái do proxy của bạn ghi thêm), nên chỉ bật khi mọi kết nối đều đi qua proxy đó. Đăng nhập admin còn bị giới hạn theo tên đăng nhập (20 lần sai / 10 phút) bất kể IP.
+- **Webhook**: với PHP-FPM / LiteSpeed gateway gửi ngay sau khi trả lời request. Với máy chủ khác (mod_php…) nó chỉ gửi nhanh tối đa 2 cái × 2 giây rồi để phần còn lại cho cron — nên **bắt buộc đặt cron mỗi phút**, nếu không webhook «cần OTP» sẽ tới shop chậm.
+- **MySQL/MariaDB**: các bảng dùng collation `utf8mb4_bin` (mã đơn, tên máy, mã gói so khớp chính xác từng ký tự). Bản cài cũ được `php bin/setup.php` tự chuyển (migration 2).
+- Sao lưu: CSDL + thư mục `storage/files` (ảnh) + file `.env` (mất `APP_KEY` là không giải mã được đơn đang chạy).

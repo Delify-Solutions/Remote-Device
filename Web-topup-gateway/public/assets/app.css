@@ -1,0 +1,111 @@
+/* ======================================================================
+   Topup Gateway — phần RIÊNG của gateway, đặt trên Vuexy (Bootstrap 5).
+   Nạp SAU core.css. Chỉ dùng biến màu của Vuexy nên tự theo sáng/tối.
+   Thành phần chuẩn (thẻ, bảng, nút, nhãn, ô nhập…) dùng thẳng lớp của Vuexy
+   trong views/ — ở đây chỉ có những thứ Vuexy không có sẵn.
+   ====================================================================== */
+[hidden] { display: none !important; }
+.mono { font-family: var(--bs-font-monospace); font-size: .86em; }
+.badge.mono { font-size: .78em; }
+
+/* ---- đầu trang + trạng thái rỗng ---- */
+.page-head { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+.page-head > div:first-child { min-width: 0; flex: 1 1 320px; }
+.empty { padding: 2.5rem 1rem; text-align: center; color: var(--bs-secondary-color); }
+
+/* ---- chấm «còn sống» của máy / khoá ---- */
+.live-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--bs-secondary-color); opacity: .45; margin-right: .5rem; }
+.live-dot.on { background: var(--bs-success); opacity: 1; box-shadow: 0 0 0 3px rgba(var(--bs-success-rgb), .18); }
+
+/* ---- thẻ thống kê bấm được ---- */
+a.stat-card { color: inherit; transition: transform .15s ease; }
+a.stat-card:hover { transform: translateY(-2px); }
+
+/* ---- khoá API vừa tạo ---- */
+.secret { font-family: var(--bs-font-monospace); font-size: .9rem; background: var(--bs-body-bg); border: 1px dashed var(--bs-primary); border-radius: var(--bs-border-radius);
+  padding: .75rem 1rem; word-break: break-all; display: flex; gap: .75rem; align-items: center; justify-content: space-between; color: var(--bs-heading-color); }
+
+/* ---- form lặp (trường đăng nhập, luật, bước, gói) ---- */
+.rep { display: flex; flex-direction: column; gap: .5rem; }
+.rep:empty::after { content: "Chưa có dòng nào."; font-size: .8125rem; color: var(--bs-secondary-color); padding: .15rem; }
+.rep-row, .rep-head { display: grid; gap: .5rem; align-items: center; }
+.rep-head { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--bs-secondary-color); font-weight: 600; padding: 0 .15rem .4rem; }
+.cols-lf { grid-template-columns: 1.1fr 1.4fr .95fr .8fr .8fr 1.4fr 1.3fr 68px; }
+.cols-ru { grid-template-columns: 1.3fr 1.6fr 1.4fr 68px; }
+.cols-st { grid-template-columns: 1.1fr 1.8fr 1.2fr 10.5rem 68px; }
+.cols-pk { grid-template-columns: 1fr 1.5fr 1.4fr .9fr 1.15fr .6fr .75fr 68px; }
+.row-tools { display: inline-flex; gap: 2px; justify-content: flex-end; }
+.sec-no, .phase-no { display: inline-grid; place-items: center; flex: 0 0 auto; border-radius: 50%; font-weight: 600; background: var(--bs-primary-bg-subtle); color: var(--bs-primary); }
+.sec-no { width: 1.75rem; height: 1.75rem; font-size: .875rem; margin-right: .6rem; }
+.phase-no { width: 1.45rem; height: 1.45rem; font-size: .78rem; margin-right: .5rem; }
+.phase + .phase { border-top: 1px dashed var(--bs-border-color); margin-top: 1.5rem; padding-top: 1.5rem; }
+.sticky-bar { position: sticky; bottom: 1rem; z-index: 5; box-shadow: 0 -2px 24px rgba(0, 0, 0, .14) !important; }
+
+/* ---- chi tiết đơn ---- */
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: .65rem 1rem; margin: 0; }
+.kv dt { color: var(--bs-secondary-color); font-weight: 400; }
+.kv dd { margin: 0; min-width: 0; word-break: break-word; color: var(--bs-heading-color); }
+.events { list-style: none; margin: 0; padding: 0; }
+.events li { display: grid; grid-template-columns: 104px 78px 1fr; gap: .75rem; align-items: start; padding: .55rem 0; border-bottom: 1px dashed var(--bs-border-color); }
+.events li:last-child { border-bottom: 0; padding-bottom: 0; }
+.events li:first-child { padding-top: 0; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1rem; }
+.shot { border: 1px solid var(--bs-border-color); border-radius: var(--bs-border-radius); overflow: hidden; background: var(--bs-body-bg); }
+.shot img { display: block; width: 100%; height: 200px; object-fit: cover; }
+.shot div { padding: .45rem .65rem; display: flex; justify-content: space-between; align-items: center; font-size: .8125rem; }
+
+/* ---- đăng nhập ---- */
+.auth-wrap { min-height: 100vh; display: grid; place-items: center; padding: 1.5rem; }
+.auth-box { width: 100%; max-width: 420px; }
+
+/* ---- tài liệu API ---- */
+.docs-top { position: sticky; top: 0; z-index: 10; background: var(--bs-paper-bg); border-bottom: 1px solid var(--bs-border-color); padding: .7rem 1.5rem;
+  display: flex; gap: 1rem; align-items: center; justify-content: space-between; box-shadow: 0 2px 10px rgba(0, 0, 0, .05); }
+.docs-top .app-brand-link { display: flex; align-items: center; }
+.docs { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 2rem; padding-top: 1.75rem; padding-bottom: 3rem; }
+.toc { position: sticky; top: 4.6rem; align-self: start; max-height: calc(100vh - 5.6rem); overflow: auto; font-size: .875rem; }
+.toc a { display: block; padding: .28rem .6rem; border-radius: var(--bs-border-radius-sm); color: var(--bs-body-color); }
+.toc a:hover { background: var(--bs-primary-bg-subtle); color: var(--bs-primary); }
+.toc .grp { font-weight: 600; margin-top: 1rem; color: var(--bs-secondary-color); font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; padding: 0 .6rem .3rem; }
+.toc .grp:first-child { margin-top: 0; }
+.toc .m { font-family: var(--bs-font-monospace); font-size: .68rem; font-weight: 700; margin-right: .4rem; }
+.docs-main section { margin-bottom: 2.75rem; scroll-margin-top: 5rem; }
+.docs-main section > h4 { margin-bottom: .9rem; }
+.ep { scroll-margin-top: 5rem; }
+.path { font-family: var(--bs-font-monospace); font-weight: 600; font-size: .95rem; word-break: break-all; color: var(--bs-heading-color); }
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.two:empty { display: none; }
+.codebox { border: 1px solid var(--bs-border-color); border-radius: var(--bs-border-radius); overflow: hidden; background: var(--bs-body-bg); min-width: 0; }
+.codebox .cap { display: flex; justify-content: space-between; align-items: center; padding: .3rem .4rem .3rem .8rem; font-size: .72rem; font-weight: 600; color: var(--bs-secondary-color);
+  border-bottom: 1px solid var(--bs-border-color); text-transform: uppercase; letter-spacing: .04em; }
+.codebox pre { margin: 0; padding: .8rem .9rem; overflow: auto; font: .8rem/1.55 var(--bs-font-monospace); max-height: 430px; color: var(--bs-heading-color); background: transparent; }
+.params td:first-child { font-family: var(--bs-font-monospace); font-weight: 600; white-space: nowrap; color: var(--bs-heading-color); font-size: .86em; }
+.req { color: var(--bs-danger); font-family: var(--bs-font-sans-serif); font-size: .7rem; font-weight: 600; margin-left: .4rem; }
+.states { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: 0 0 1rem; }
+.arrow { color: var(--bs-secondary-color); }
+svg.seq { width: 100%; height: auto; display: block; }
+svg.seq text { font-family: var(--bs-font-sans-serif); fill: var(--bs-heading-color); }
+svg.seq .lane { stroke: var(--bs-border-color); stroke-width: 2; stroke-dasharray: 5 5; }
+svg.seq .box { fill: var(--bs-body-bg); stroke: var(--bs-border-color); }
+svg.seq .note { fill: var(--bs-secondary-color); font-size: 12px; }
+svg.seq .lbl { font-size: 13px; font-weight: 600; font-family: var(--bs-font-monospace); }
+svg.seq .a-shop { stroke: var(--bs-info); fill: var(--bs-info); }
+svg.seq .a-tool { stroke: var(--bs-success); fill: var(--bs-success); }
+svg.seq .a-gw { stroke: var(--bs-primary); fill: var(--bs-primary); }
+svg.seq .t-shop { fill: var(--bs-info); }
+svg.seq .t-tool { fill: var(--bs-success); }
+svg.seq .t-gw { fill: var(--bs-primary); }
+
+@media (max-width: 991.98px) {
+  .docs { grid-template-columns: 1fr; }
+  .toc { display: none; }
+  .two { grid-template-columns: 1fr; }
+  .rep-head { display: none; }
+  .rep-row { grid-template-columns: 1fr 1fr !important; padding: .75rem; border: 1px solid var(--bs-border-color); border-radius: var(--bs-border-radius); }
+  .kv { grid-template-columns: 1fr; gap: .1rem 0; }
+  .kv dd { margin-bottom: .6rem; }
+  .events li { grid-template-columns: 1fr; gap: .15rem; }
+}
+
+/* nhãn trạng thái đặt cạnh tiêu đề trang: giữ cỡ chữ thường của nhãn */
+.page-head h4 .badge { font-size: .8125rem; }
