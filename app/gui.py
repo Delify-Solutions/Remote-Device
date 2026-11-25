@@ -103,13 +103,103 @@ MGR = Manager()
 
 # Cửa sổ pywebview (đặt trong main) để đẩy cập nhật streaming về giao diện.
 WINDOW = None
+WEBDEV = None           # chế độ web (`--web`): máy chủ web thay cửa sổ pywebview (xem webdev.py)
 def _push(js):
     """Gọi 1 hàm JS trên giao diện (an toàn khi gọi từ thread nền)."""
     try:
-        if WINDOW is not None:
+        if WEBDEV is not None:
+            WEBDEV.push(js)
+        elif WINDOW is not None:
             WINDOW.evaluate_js(js)
     except Exception:
         pass
+
+
+def _customer_machines():
+    """Tên các máy đang làm đơn của KHÁCH (chế độ API đang chạy) hoặc vừa dừng giữa đơn và đang GIỮ nguyên màn hình chờ người kiểm tra —
+    màn hình các máy này có thể đang hiện tài khoản, mã OTP của khách."""
+    return [c["name"] for c in RUNNER.customers()]
+
+
+def _customer_conflict(name):
+    """`name` có phải (hoặc đang trỏ vào) một máy của khách không → tên máy của khách đó, hoặc None. So theo MÁY THẬT ghi lúc bắt đầu chạy:
+    cùng tên, cùng iPhone (UDID) hoặc cùng board (cổng) — nên gán lại UDID / đổi tên / xoá máy trong bảng cũng không lách được."""
+    try:
+        udid = MGR._udid(name)
+    except Exception:
+        udid = None
+    hit = RUNNER.conflict(name, udid, MGR.board_map.get(name))
+    if hit:
+        return hit
+    nav = MGR.sessions.get(name)                     # phiên đã mở sẵn cho tên này có thể đang trỏ vào iPhone / board KHÁC với bảng gán hiện tại
+    if nav is not None:
+        return RUNNER.conflict(None, getattr(getattr(nav, "e", None), "udid", None), getattr(getattr(nav, "h", None), "port", None))
+    return None
+
+
+def _web_privacy(name):
+    """Chế độ WEB (`--web`): trang có thể đang được AI điều khiển qua trình duyệt → áp CÙNG luật riêng tư với cầu nối AI (control.AppHost.eyes):
+    không chụp màn hình máy đang làm đơn của khách / đang giữ chờ kiểm tra. Trả câu từ chối, hoặc None nếu chụp được.
+    Cửa sổ app thật (không --web) không bị ảnh hưởng."""
+    if WEBDEV is None:
+        return None
+    hit = _customer_conflict(name)
+    if hit:
+        return ("Máy «%s» đang nhận đơn của khách (hoặc đang dừng chờ kiểm tra sau đơn của khách)%s — chế độ web không chụp màn hình lúc này "
+                "(tránh lộ thông tin của khách). Xem trực tiếp trên máy, hoặc mở app dạng cửa sổ."
+                % (name, "" if hit == name else " — cùng iPhone / board với máy «%s»" % hit))
+    return None
+
+
+def _web_hold(name):
+    """Chế độ WEB: giao diện web KHÔNG được bấm / gõ / thử bước lên máy của khách (đang làm đơn hoặc đang dừng chờ kiểm tra) — như AI / dòng
+    lệnh: màn hình phải giữ nguyên để đối soát, và «chờ chữ / kiểm chữ» sẽ thành cách dò nội dung màn hình. Trả câu từ chối hoặc None."""
+    if WEBDEV is None:
+        return None
+    hit = _customer_conflict(name)
+    if hit:
+        why = RUNNER.hold_reason(hit)
+        return ("Máy «%s» %s%s — chế độ web không điều khiển máy này cho tới khi người vận hành xử lý xong (ở app dạng cửa sổ)."
+                % (name, ("đang DỪNG CHỜ NGƯỜI KIỂM TRA (%s)" % why) if why else "đang làm đơn của khách",
+                   "" if hit == name else " (cùng iPhone / board với máy «%s»)" % hit))
+    return None
+
+
+# Chế độ WEB, khi đang có máy của khách: CHỈ các lệnh dưới đây được gọi (xem / chạy-dừng máy khác / sửa nhóm). Mọi lệnh khác — đổi bảng gán
+# iPhone, xoá máy, nạp / xoá board, dò máy, khởi động lại, xoá nhóm, đổi gateway / cầu nối AI, cài đặt… — bị từ chối cho tới khi xử lý xong,
+# vì chúng có thể làm mất dấu máy của khách hoặc gỡ trạng thái giữ. Lệnh mới thêm vào Api mặc định KHÔNG nằm trong danh sách này.
+WEB_SAFE_WITH_CUSTOMERS = frozenset((
+    "sys_overview", "reload_ui", "list_devices", "ios_list", "rescan", "esp_scan",
+    "screenshot", "ble_status", "run_step", "test_flow", "test_api_steps",            # tự kiểm theo máy thật (_web_privacy / _web_hold)
+    "get_flows", "groups_list", "group_save", "group_add_device", "group_remove_device",
+    "group_run", "group_stop", "machine_run", "machine_pause", "machine_resume", "machine_stop", "machine_ack", "stop_all",
+    "run_status", "run_log", "gateway_get", "gateway_test", "gateway_pools", "gateway_pool", "ai_info",
+))
+
+
+WEB_NO_ORDERS = ("Chế độ web là bản dev (trang có thể đang do AI điều khiển) nên KHÔNG chạy đơn của khách. Nhận đơn từ gateway chỉ chạy ở app dạng "
+                 "cửa sổ: tắt bản web rồi chạy `python app/gui.py` (không kèm --web).")
+
+
+def _web_gate(method):
+    """Cổng chặn của chế độ web (webdev gọi trước MỌI lệnh): None = cho qua, hoặc câu từ chối."""
+    if method in WEB_SAFE_WITH_CUSTOMERS:
+        return None
+    busy = _customer_machines()
+    if busy:
+        return ("Đang có máy làm đơn của khách / dừng chờ kiểm tra (%s) — chế độ web tạm khoá lệnh «%s» cho tới khi xử lý xong các máy đó "
+                "(đối soát ở app dạng cửa sổ)." % (", ".join(busy), method))
+    return None
+
+
+def _origin(url):
+    """«giao thức://máy chủ:cổng» của một địa chỉ (chữ thường) — để biết hai địa chỉ gateway có cùng MỘT máy chủ không."""
+    import urllib.parse
+    try:
+        u = urllib.parse.urlsplit((url or "").strip())
+        return ("%s://%s" % (u.scheme, u.netloc)).lower()
+    except ValueError:
+        return ""
 
 
 def _gateway():
@@ -121,6 +211,15 @@ def _gateway():
 # chạy kịch bản nhóm / nhận đơn từ gateway; mỗi máy một worker, dừng độc lập
 RUNNER = Runner(MGR.session, gateway_factory=_gateway, journal=apimode.Journal(store.DATA_DIR),
                 on_log=lambda entry: _push("window.__runLog && window.__runLog(%s)" % json.dumps(entry)))
+def _ident_now(name):
+    """iPhone + cổng board mà tên `name` sẽ DÙNG THẬT nếu chạy ngay bây giờ: phiên đã mở sẵn (nếu có), không thì theo bảng gán."""
+    nav = MGR.sessions.get(name)
+    udid = getattr(getattr(nav, "e", None), "udid", None) if nav is not None else None
+    port = getattr(getattr(nav, "h", None), "port", None) if nav is not None else None
+    return (udid or MGR._udid(name), port or MGR.board_map.get(name))
+
+
+RUNNER.ident = _ident_now       # máy thật (iPhone + cổng board) ghi lại lúc bắt đầu chạy
 
 
 # Máy chủ điều khiển cho AI (MCP) + dòng lệnh `farm` — tạo trong main() (cần đối tượng Api).
@@ -163,7 +262,7 @@ class _Using:
         self.name, self.why = name, None
 
     def __enter__(self):
-        self.why = CLAIMS.acquire(self.name, "ui")
+        self.why = _web_hold(self.name) or CLAIMS.acquire(self.name, "ui")
         return self.why
 
     def __exit__(self, *exc):
@@ -208,10 +307,17 @@ class Api:
 
     def restart_app(self):
         """Khởi động lại toàn bộ app (đóng cửa sổ, chạy lại tiến trình)."""
+        if WEBDEV is not None and _web_gate("restart_app"):
+            # Trạng thái «đang làm đơn / đang giữ chờ kiểm tra» chỉ nằm trong bộ nhớ: khởi động lại là mất, và luật riêng tư không còn gì để dựa vào.
+            return {"ok": False, "error": _web_gate("restart_app")}
         script = os.path.abspath(sys.argv[0])
+        env = dict(os.environ)
+        if WEBDEV is not None:                          # giữ phiên web qua lần khởi động lại — CHỈ đưa cho tiến trình mới, không để trong môi trường chung
+            import webdev
+            env[webdev.SESSION_ENV] = WEBDEV.session
         def _do():
             try:
-                os.execv(sys.executable, [sys.executable, script] + sys.argv[1:])
+                os.execve(sys.executable, [sys.executable, script] + sys.argv[1:], env)
             except Exception:
                 os._exit(1)
         threading.Timer(0.4, _do).start()
@@ -235,20 +341,30 @@ class Api:
             ios_by_udid = {d["udid"]: d for d in ios.list_connected()}
         except Exception:
             ios_by_udid = {}
-        grp_by_dev = {}
+        grp_by_dev = {}                                      # tên máy → danh sách nhóm (một máy có thể ở nhiều nhóm)
         for g in store.get_groups():
             for dn in g.get("devices", []):
-                grp_by_dev[dn] = {"id": g["id"], "name": g.get("name", g["id"])}
+                grp_by_dev.setdefault(dn, []).append({"id": g["id"], "name": g.get("name", g["id"])})
+        run_by_dev = RUNNER.status()
         def enrich(entry):
             info = ios_by_udid.get(entry.get("udid"))
             entry["ios_connected"] = info is not None
             entry["ios"] = info["ios"] if info else None
             entry["model"] = info["model"] if info else None
             entry["device_name"] = info["name"] if info else None
-            g = grp_by_dev.get(entry.get("name"))
-            entry["group_id"] = g["id"] if g else None
-            entry["group_name"] = g["name"] if g else None
+            gs = grp_by_dev.get(entry.get("name")) or []
+            entry["groups"] = gs
+            entry["group_id"] = gs[0]["id"] if gs else None                       # nhóm đầu tiên (chỗ cũ chỉ cần biết có nhóm hay không)
+            entry["group_name"] = ", ".join(x["name"] for x in gs) if gs else None
             entry["running"] = RUNNER.is_running(entry.get("name"))
+            run = run_by_dev.get(entry.get("name")) if entry["running"] else None
+            entry["run_group"] = (run or {}).get("group_name")                      # «đang chạy {nhóm} · {kịch bản}»
+            entry["run_script"] = (run or {}).get("script_name")
+            entry["paused"] = bool((run or {}).get("paused"))
+            entry["pause_requested"] = bool((run or {}).get("pause_requested"))
+            entry["run_mode"] = (run or {}).get("mode")
+            entry["stopping"] = bool((run or {}).get("stopping"))
+            entry["hold"] = RUNNER.hold_reason(entry.get("name"))                 # đang dừng chờ người kiểm tra (đơn của khách)
             return entry
         out = []
         for d in store.get_devices():
@@ -268,13 +384,27 @@ class Api:
         return out
 
     def set_udid(self, name, udid, label=None):
+        why = _busy(name)
+        if why:
+            return {"ok": False, "error": why}
+        hit = RUNNER.conflict(name, udid, MGR.board_map.get(name))
+        if hit:         # tên này đang là máy của khách, hoặc iPhone định gán chính là máy của khách (đang làm đơn / đang dừng chờ kiểm tra)
+            return {"ok": False, "error": "Máy «%s» đang làm đơn của khách / dừng chờ kiểm tra — chưa đổi bảng gán iPhone liên quan tới máy đó được." % hit}
         store.upsert_device(name, udid, label)
+        with MGR.lock:
+            nav = MGR.sessions.pop(name, None)      # phiên cũ đang trỏ vào iPhone CŨ → bỏ, lần sau mở theo bảng gán mới
+        if nav:
+            try: nav.close()
+            except Exception: pass
         return {"ok": True}
 
     def delete_device(self, name):
         why = _busy(name)
         if why:
             return {"ok": False, "error": why}
+        hit = _customer_conflict(name)
+        if hit:
+            return {"ok": False, "error": "Máy «%s» đang làm đơn của khách / dừng chờ kiểm tra — xử lý xong («Đã kiểm tra xong») rồi mới xoá." % hit}
         store.delete_device(name)
         with MGR.lock:
             nav = MGR.sessions.pop(name, None)      # đóng phiên cũ nếu có (trả cổng serial)
@@ -289,6 +419,8 @@ class Api:
         why = _busy()       # dò máy rung chuột + đóng mọi phiên → không làm khi có máy đang chạy
         if why:
             return {"ok": False, "error": why}
+        if WEBDEV is not None and _web_gate("probe_match"):     # dò = rung chuột + chụp MỌI iPhone, kể cả máy đang giữ màn hình của khách
+            return {"ok": False, "error": _web_gate("probe_match")}
         try:
             with MGR.lock:
                 MGR.close_all()                     # nhả cổng serial cho Hands dùng
@@ -420,6 +552,9 @@ class Api:
     def _port_guard(self, port):
         """Cổng này có đang do một máy ĐANG CÓ NGƯỜI DÙNG giữ không (đang chạy, hoặc AI / dòng lệnh / thao tác thử
         đang điều khiển) → trả câu báo lỗi, không thì None."""
+        held = RUNNER.conflict(None, None, port)
+        if held and RUNNER.hold_reason(held):       # nạp / xoá / đổi tên board của máy đang giữ sẽ làm mất dấu trạng thái giữ
+            return f"Board này thuộc máy «{held}» đang DỪNG CHỜ NGƯỜI KIỂM TRA — kiểm tra máy, bấm «Đã kiểm tra xong» rồi mới thao tác với board."
         running = set(RUNNER.running_names())
         for n in _in_use():
             if MGR.board_map.get(n) == port:
@@ -449,10 +584,7 @@ class Api:
         if r.get("ok") and old_name and old_name != name:
             try:
                 store.rename_device(old_name, name)
-                grp = store.group_of_device(old_name)       # máy đổi tên thì vẫn ở nhóm cũ
-                if grp:
-                    store.set_device_group(old_name, None)
-                    store.set_device_group(name, grp["id"])
+                store.rename_in_groups(old_name, name)      # máy đổi tên thì vẫn ở đủ các nhóm cũ
             except Exception:
                 pass
         with MGR.lock:                       # bỏ ánh xạ của riêng board này → lượt quét sau dò lại
@@ -479,6 +611,9 @@ class Api:
 
     def screenshot(self, name):
         try:
+            why = _web_privacy(name)
+            if why:
+                return {"ok": False, "error": why}
             udid = MGR._udid(name)              # chỉ CHỤP: đi qua USB, không mở / không đụng cổng serial của board
             if not udid:
                 return {"ok": False, "error": f"Board '{name}' chưa gán iPhone (UDID)"}
@@ -613,16 +748,24 @@ class Api:
     def group_delete(self, group_id):
         g = store.get_group(group_id)
         if g:
+            held = [c["name"] for c in RUNNER.customers() if c["hold"] and c["group_id"] == g.get("id")]
+            if held:        # xoá nhóm không phải lời xác nhận «đã đối soát»: còn máy đang giữ thì chưa xoá
+                return {"ok": False, "error": "Nhóm còn máy đang DỪNG CHỜ NGƯỜI KIỂM TRA (%s) — kiểm tra và bấm «Đã kiểm tra xong» trên các máy đó "
+                                              "rồi mới xoá nhóm." % ", ".join(held)}
             RUNNER.stop_group(g)
         store.delete_group(group_id)
         return {"ok": True}
 
-    def set_device_group(self, name, group_id):
-        store.set_device_group(name, group_id or None)
-        return {"ok": True}
+    def group_add_device(self, group_id, name):
+        """Thêm máy vào nhóm (máy có thể ở nhiều nhóm; các nhóm khác của máy giữ nguyên)."""
+        return {"ok": bool(store.add_device_to_group(name, group_id))}
 
-    def _runnable(self, g):
-        """Nhóm đủ điều kiện chạy chưa → None, hoặc câu báo thiếu gì."""
+    def group_remove_device(self, group_id, name):
+        """Bỏ máy khỏi MỘT nhóm."""
+        return {"ok": bool(store.remove_device_from_group(name, group_id))}
+
+    def _runnable(self, g, script=None):
+        """Nhóm (và kịch bản `script`) đủ điều kiện chạy chưa → None, hoặc câu báo thiếu gì."""
         if g.get("mode") == "api":
             api = store.api_defaults(g.get("api"))
             if not api["pool"]:
@@ -636,46 +779,146 @@ class Api:
             if not steps["purchase"]:
                 return "Chưa có «các bước mua 1 gói» (cấu hình trên gateway hoặc trong nhóm)."
             return None
-        if not g.get("steps"):
-            return "Nhóm chưa có bước nào trong kịch bản."
+        scripts = g.get("scripts") or []
+        if not scripts:
+            return "Nhóm chưa có kịch bản nào."
+        sc = store.pick_script(g, script)
+        if sc is None:
+            if script:
+                return "Nhóm không có kịch bản «%s» (hoặc tên trùng nhau). Các kịch bản: %s." % (script, ", ".join(s["name"] for s in scripts))
+            return "Nhóm có %d kịch bản — nói rõ chạy kịch bản nào (%s)." % (len(scripts), ", ".join(s["name"] for s in scripts))
+        if not sc["steps"]:
+            return "Kịch bản «%s» chưa có bước nào." % sc["name"]
         return None
 
-    def group_run(self, group_id, names=None):
+    def _running_what(self, names):
+        """{tên máy: «nhóm · kịch bản»} cho các máy trong `names` ĐANG CHẠY việc gì đó (một máy chỉ chạy một kịch bản một lúc)."""
+        out = {}
+        st = RUNNER.status()
+        for n in names:
+            w = st.get(n) or {}
+            if w.get("running"):
+                what = " · ".join(x for x in (w.get("group_name"), w.get("script_name")) if x)
+                out[n] = what or "việc khác"
+        return out
+
+    def _held_what(self, g, names):
+        """{tên máy: lý do} cho các máy trong `names` đang DỪNG CHỜ NGƯỜI KIỂM TRA mà nhóm `g` không được phép chạy đè lên (chỉ chính nhóm nhận đơn
+        đã gây ra trạng thái đó mới «Chạy lại» được — và ở chế độ web thì không ai được: gỡ giữ là lời xác nhận của người vận hành)."""
+        out = {}
+        st = RUNNER.status()
+        for n in names:
+            hold = RUNNER.hold_reason(n)
+            same_api_group = g.get("mode") == "api" and (st.get(n) or {}).get("group_id") == g.get("id")
+            if hold and (WEBDEV is not None or not same_api_group):       # chế độ web: «Chạy lại» cũng là gỡ giữ → chỉ làm ở app cửa sổ
+                out[n] = hold
+            elif not (st.get(n) or {}).get("running"):
+                hit = _customer_conflict(n)                               # tên khác nhưng CÙNG iPhone / board với một máy của khách
+                if hit and hit != n:
+                    out[n] = "cùng iPhone / board với máy «%s» đang làm đơn của khách / dừng chờ kiểm tra" % hit
+        return out
+
+    def group_run(self, group_id, names=None, script=None):
+        """Chạy một kịch bản của nhóm trên các máy (mặc định: mọi máy của nhóm) — máy nào đang bận việc khác thì bỏ qua và báo trong `busy`.
+        Nhóm nhận đơn API không cần `script`."""
         g = store.get_group(group_id)
         if not g:
             return {"ok": False, "error": "nhóm không tồn tại"}
-        why = self._runnable(g)
+        if g.get("mode") == "api" and not RUNNER.allow_api:
+            return {"ok": False, "error": WEB_NO_ORDERS}
+        why = self._runnable(g, script)
         if why:
             return {"ok": False, "error": why}
+        sc = None if g.get("mode") == "api" else store.pick_script(g, script)
         targets = list(names) if names is not None else list(g.get("devices") or [])
-        started, why = CLAIMS.start(targets, lambda: RUNNER.start_group(g, names))
+        stray = [n for n in targets if n not in (g.get("devices") or [])]
+        if stray:
+            return {"ok": False, "error": "Máy không thuộc nhóm «%s»: %s." % (g.get("name"), ", ".join(map(str, stray)))}
+        held = self._held_what(g, targets)                # máy đang giữ chờ kiểm tra: KHÔNG khởi động (kể cả cố ý), báo lại cho người bấm
+        go = [n for n in targets if n not in held]
+        started, why = CLAIMS.start(go, lambda: RUNNER.start_group(g, go, sc))
         if why:
             return {"ok": False, "error": why}
-        return {"ok": True, "started": started}
+        return {"ok": True, "started": started, "busy": self._running_what([n for n in go if n not in (started or [])]), "held": held}
 
-    def group_stop(self, group_id, force=False):
+    def group_stop(self, group_id, force=False, script=None):
+        """Dừng các máy đang chạy việc của nhóm này. Có `script` → chỉ những máy đang chạy ĐÚNG kịch bản đó; không nêu → mọi việc của nhóm
+        (kể cả máy đang chạy một kịch bản đã bị xoá khỏi nhóm)."""
         g = store.get_group(group_id)
         if g:
-            RUNNER.stop_group(g, bool(force))
+            sid = None
+            if script and g.get("mode") != "api":
+                sc = store.pick_script(g, script)
+                if sc is None:
+                    return {"ok": False, "error": "Nhóm không có kịch bản «%s»." % script}
+                sid = sc["id"]
+            RUNNER.stop_group(g, bool(force), sid)          # không bao giờ gỡ «dừng chờ kiểm tra» (xem machine_ack)
         return {"ok": True}
 
-    def machine_run(self, group_id, name):
+    def machine_run(self, group_id, name, script=None):
         g = store.get_group(group_id)
         if not g:
             return {"ok": False, "error": "nhóm không tồn tại"}
-        why = self._runnable(g)
+        if g.get("mode") == "api" and not RUNNER.allow_api:
+            return {"ok": False, "error": WEB_NO_ORDERS}
+        why = self._runnable(g, script)
         if why:
             return {"ok": False, "error": why}
-        ok, why = CLAIMS.start([name], lambda: RUNNER.start_machine(name, g))
+        sc = None if g.get("mode") == "api" else store.pick_script(g, script)
+        if name not in (g.get("devices") or []):
+            return {"ok": False, "error": "Máy «%s» không thuộc nhóm «%s»." % (name, g.get("name"))}
+        held = self._held_what(g, [name]).get(name)
+        if held:
+            return {"ok": False, "error": "Máy đang DỪNG CHỜ NGƯỜI KIỂM TRA (%s) — kiểm tra máy và xác nhận «Đã kiểm tra xong»%s rồi mới chạy việc khác trên máy này."
+                                          % (held, " ở app dạng cửa sổ" if WEBDEV is not None else "")}
+        ok, why = CLAIMS.start([name], lambda: RUNNER.start_machine(name, g, sc))
         if why:
             return {"ok": False, "error": why}
+        if not ok:
+            busy = self._running_what([name]).get(name)
+            if busy:
+                return {"ok": False, "error": "Máy đang chạy %s — một máy chỉ chạy một kịch bản một lúc, dừng bên đó rồi mới chạy ở đây." % busy}
+            return {"ok": False, "error": "Máy không chạy được lúc này."}
         return {"ok": True, "started": ok}
+
+    def machine_pause(self, name):
+        """Tạm dừng một máy đang chạy để xử lý tay (không kết thúc việc đang chạy)."""
+        if RUNNER.pause_machine(name):
+            return {"ok": True}
+        return {"ok": False, "error": "Máy không đang chạy."}
+
+    def machine_resume(self, name):
+        """Tiếp tục máy đang tạm dừng."""
+        if RUNNER.resume_machine(name):
+            return {"ok": True}
+        return {"ok": False, "error": "Máy không đang chạy."}
+
+    def stop_all(self, force=False):
+        """DỪNG TẤT CẢ máy đang chạy (nhóm nhận đơn: làm nốt đơn dở rồi dừng; force: bỏ dở ngay). Không gỡ trạng thái «dừng chờ kiểm tra» —
+        việc đó chỉ người vận hành làm từng máy."""
+        n = len(RUNNER.running_names())
+        RUNNER.stop_all(bool(force))
+        return {"ok": True, "stopped": n}
 
     def machine_stop(self, name, force=False):
         """force=False: (chế độ API) không nhận đơn mới, làm nốt đơn đang dở rồi dừng.
         force=True: bỏ dở ngay — chưa chạm luồng mua thì báo failed, đã chạm thì báo review."""
+        hold = RUNNER.hold_reason(name)
+        if hold:            # máy đã dừng và đang giữ: «Dừng» không làm gì và KHÔNG phải lời xác nhận — dùng «Đã kiểm tra xong» (machine_ack)
+            return {"ok": False, "error": "Máy «%s» đã dừng và đang CHỜ NGƯỜI KIỂM TRA (%s). Kiểm tra máy rồi bấm «Đã kiểm tra xong»." % (name, hold)}
         RUNNER.stop_machine(name, bool(force))
         return {"ok": True}
+
+    def machine_ack(self, name):
+        """«Đã kiểm tra xong»: người vận hành xác nhận đã kiểm tra / đối soát máy đang dừng chờ → gỡ trạng thái giữ. Chỉ nhận ở app dạng CỬA SỔ:
+        trang web có thể đang do AI điều khiển, mà lời xác nhận này phải là của người."""
+        hold = RUNNER.hold_reason(name)
+        if not hold:
+            return {"ok": False, "error": "Máy «%s» không ở trạng thái chờ kiểm tra." % name}
+        if WEBDEV is not None:
+            return {"ok": False, "error": "Máy «%s» đang DỪNG CHỜ NGƯỜI KIỂM TRA (%s). Xác nhận «đã kiểm tra xong» chỉ làm được ở app dạng cửa sổ "
+                                          "(chạy `python app/gui.py` không kèm --web)." % (name, hold)}
+        return {"ok": bool(RUNNER.ack_hold(name))}
 
     def run_status(self):
         return RUNNER.status()
@@ -728,12 +971,20 @@ class Api:
         return {"url": s.get("gateway_url") or "", "has_key": bool(key), "key_hint": (key[:8] + "…") if key else ""}
 
     def gateway_save(self, url, key=None):
+        if WEBDEV is not None:
+            # Khoá gateway là chìa vào đơn của khách; bản web (có thể đang do AI điều khiển) không chạy đơn nên cũng không được đổi nơi gửi khoá tới.
+            return {"ok": False, "error": "Cấu hình gateway chỉ đổi được ở app dạng cửa sổ (chạy `python app/gui.py` không kèm --web)."}
         url = (url or "").strip().rstrip("/")
         if url and not re.match(r"^https?://[^\s/]+", url):
             return {"ok": False, "error": "Địa chỉ gateway phải bắt đầu bằng http:// hoặc https://"}
         patch = {"gateway_url": url}
-        if key and str(key).strip():        # để trống = giữ khoá đang lưu
-            patch["gateway_key"] = str(key).strip()
+        new_key = str(key).strip() if key else ""
+        if new_key:
+            patch["gateway_key"] = new_key
+        else:               # để trống = giữ khoá đang lưu — CHỈ khi vẫn là máy chủ cũ; đổi máy chủ mà giữ khoá cũ là gửi khoá cho máy chủ mới
+            old = store.get_settings()
+            if old.get("gateway_key") and _origin(old.get("gateway_url")) != _origin(url):
+                return {"ok": False, "error": "Đổi địa chỉ gateway sang máy chủ khác thì phải NHẬP LẠI khoá Tool (khoá cũ không tự gửi sang máy chủ mới)."}
         store.save_settings(patch)
         return self.gateway_test()
 
@@ -794,8 +1045,22 @@ class Api:
             return {"ok": False, "error": "Cấu hình bước trên gateway sai: %s" % e}
 
 
-def main():
-    global WINDOW, CONTROL
+def main(argv=None):
+    """`python app/gui.py` mở cửa sổ app. `--web [--web-port N]` chạy giao diện như một trang WEB trên máy này (dev; xem webdev.py)."""
+    global WINDOW, CONTROL, WEBDEV
+    argv = sys.argv[1:] if argv is None else argv
+    web_port = 47822
+    if "--web" in argv and "--web-port" in argv:      # kiểm tham số TRƯỚC khi mở bất cứ cổng nào
+        i = argv.index("--web-port")
+        raw = argv[i + 1] if i + 1 < len(argv) else ""
+        if not (raw.isascii() and raw.isdigit()) or not (1024 <= int(raw) <= 65515):          # start() có thể dời tối đa 20 cổng
+            print("--web-port cần một số cổng từ 1024 tới 65515 (vd: --web-port 47822).", file=sys.stderr, flush=True)
+            return 2
+        web_port = int(raw)
+    if "--web" in argv:
+        # Chế độ web KHÔNG chạy đơn của khách → trong tiến trình này không bao giờ có «máy của khách». Đặt TRƯỚC khi mở bất cứ cổng nào
+        # (cầu nối AI mở ngay dưới đây cũng gọi được «chạy nhóm»).
+        RUNNER.allow_api = False
     api = Api()
     # Máy chủ điều khiển cho AI (MCP) + lệnh `farm`: chỉ nghe trên máy này (127.0.0.1), cần khoá.
     CONTROL = control.AppServer(control.AppHost(MGR, RUNNER, api, CLAIMS))
@@ -806,6 +1071,19 @@ def main():
         CONTROL.token = control.token()
     import atexit
     atexit.register(CONTROL.stop)               # tắt app → CLI / `farm mcp` biết app không còn nghe
+    if "--web" in argv:
+        import webdev
+        port = web_port
+        token = webdev.load_or_create_token(os.path.join(store.DATA_DIR, "webdev.json"))
+        WEBDEV = webdev.WebDev(api, WEB_DIR, token, port, gate=_web_gate)
+        WEBDEV.start()
+        atexit.register(WEBDEV.stop)
+        print("Giao diện WEB (dev, chỉ máy này): %s" % WEBDEV.url(), file=sys.stderr, flush=True)
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            return
     WINDOW = webview.create_window(
         "iPhone Farm Manager",
         os.path.join(WEB_DIR, "index.html"),
@@ -815,4 +1093,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -53,6 +53,11 @@ class Runner:
         self.on_log = on_log                    # (entry dict) -> None
         self.lock = threading.Lock()
         self.workers = {}                       # name -> dict
+        # name -> (udid iPhone, cổng board) lúc BẮT ĐẦU chạy. Luật «không đụng máy của khách» so theo máy THẬT này chứ không theo tên / bảng gán
+        # hiện tại — tên và bảng gán có thể bị đổi (gán lại UDID, xoá máy, nạp lại board) trong lúc máy đang làm đơn.
+        self.ident = None
+        # False = tiến trình này KHÔNG được chạy đơn của khách (chế độ web dev: trang có thể đang do AI điều khiển). Nhận đơn chỉ chạy ở app cửa sổ.
+        self.allow_api = True
         self.logs = deque(maxlen=400)
         self._hb = None
         self._hb_wake = threading.Event()
@@ -86,7 +91,9 @@ class Runner:
         alive = w["thread"].is_alive()
         return {
             "name": name, "running": alive, "stopping": alive and w["stop"].is_set(),
-            "group_id": w["group_id"], "mode": w["mode"],
+            "group_id": w["group_id"], "group_name": w.get("group_name"), "script_id": w.get("script_id"), "script_name": w.get("script_name"),
+            "mode": w["mode"],
+            "pause_requested": alive and w["pause"].is_set(), "paused": alive and bool(w.get("paused")),     # tạm dừng để người xử lý tay
             "iter": w["iter"], "status": w["status"],
             "last_ok": w.get("last_ok"), "last_msg": w.get("last_msg"), "hold": (w.get("hold") if not alive else None),
             "job": w.get("job_ref"), "counts": dict(w["counts"]),
@@ -115,20 +122,100 @@ class Runner:
             say("Board ESP32 %s: %s" % ("NẶNG" if health["level"] == "bad" else "cảnh báo", "; ".join(f["text"] for f in health["findings"])), "warn")
         return (True, "") if rec["ok"] else (False, "board ESP32 không dùng được (%s)" % ((health or {}).get("summary") or "không trả lời"))
 
+    @staticmethod
+    def canon_udid(udid):
+        """UDID ở dạng chuẩn để SO SÁNH: bỏ dấu gạch, chữ hoa (thư viện chụp màn hình coi «0000-ABC» và «0000abc» là một máy)."""
+        return str(udid).replace("-", "").strip().upper() if udid else None
+
+    def _ident(self, name):
+        try:
+            udid, port = self.ident(name) if self.ident else (None, None)
+        except Exception:
+            udid, port = None, None
+        return self.canon_udid(udid), port or None
+
+    def _seen_nav(self, w, nav):
+        """Ghi lại iPhone + cổng board của PHIÊN ĐANG DÙNG THẬT (không phải theo bảng gán — bảng có thể đã bị đổi sau khi phiên được mở)."""
+        udid = self.canon_udid(getattr(getattr(nav, "e", None), "udid", None))
+        port = getattr(getattr(nav, "h", None), "port", None)
+        if udid:
+            w["udid"] = udid
+        if port:
+            w["port"] = port
+
+    def customers(self):
+        """Các máy đang làm đơn của KHÁCH (chế độ API còn chạy) hoặc đang DỪNG CHỜ NGƯỜI KIỂM TRA — kèm iPhone + cổng board ghi lúc bắt đầu."""
+        out = []
+        for n, w in list(self.workers.items()):
+            alive = w["thread"].is_alive()
+            hold = (w.get("hold") or None) if not alive else None
+            if (w.get("mode") == "api" and alive) or hold:
+                out.append({"name": n, "udid": w.get("udid"), "port": w.get("port"), "running": alive, "hold": hold, "group_id": w.get("group_id")})
+        return out
+
+    def conflict(self, name, udid=None, port=None):
+        """Tên máy của khách mà (`name` / iPhone `udid` / cổng `port`) trùng vào — None nếu không trùng máy nào. Trùng theo MÁY THẬT:
+        cùng iPhone hoặc cùng board với một máy đang làm đơn / đang giữ thì coi là chính máy đó, dù đang mang tên khác."""
+        udid = self.canon_udid(udid)
+        for c in self.customers():
+            if c["name"] == name or (udid and self.canon_udid(c["udid"]) == udid) or (port and c["port"] == port):
+                return c["name"]
+        return None
+
+    def ack_hold(self, name):
+        """Người vận hành XÁC NHẬN đã kiểm tra / đối soát xong máy đang giữ → gỡ giữ. Đây là cách DUY NHẤT gỡ trạng thái giữ mà không chạy lại
+        (Dừng, Dừng nhóm, Dừng tất cả, xoá nhóm đều KHÔNG gỡ). True nếu vừa gỡ."""
+        with self.lock:
+            w = self.workers.get(name)
+            if w and not w["thread"].is_alive() and w.get("hold"):
+                w["hold"] = None
+                w["carry_hold"] = None
+                self._log(name, "Người vận hành xác nhận đã kiểm tra xong — gỡ trạng thái chờ kiểm tra")
+                return True
+        return False
+
     def hold_reason(self, name):
         """Lý do máy đang DỪNG CHỜ NGƯỜI KIỂM TRA (None = không). Máy nhận đơn tự dừng giữa chừng (đơn cần đối soát,
         không đăng xuất được, không nhận ra màn hình…) thì màn hình được GIỮ NGUYÊN để người vận hành xem — cho tới
-        khi họ bấm Dừng (xác nhận đã xử lý) hoặc Chạy lại, không ai khác (AI, dòng lệnh) được điều khiển máy đó."""
+        khi họ bấm «Đã kiểm tra xong» (ack_hold) hoặc Chạy lại, không ai khác (AI, dòng lệnh) được điều khiển máy đó."""
         w = self.workers.get(name)
         return (w.get("hold") or None) if (w and not w["thread"].is_alive()) else None
 
     # ====================== điều khiển ======================
-    def start_machine(self, name, group):
+    def start_machine(self, name, group, script=None):
+        """Cho máy `name` chạy: nhóm nhận đơn API → chạy chế độ API; còn lại chạy KỊCH BẢN `script` của nhóm (cách chạy 1 lần / lặp N vòng
+        nằm trong kịch bản). Máy đang chạy việc gì (kể cả của nhóm / kịch bản khác) → False: một máy chỉ chạy MỘT kịch bản một lúc."""
         with self.lock:
             if self.is_running(name):
                 return False
+            held = self.workers.get(name)
+            if group.get("mode") == "api" and not self.allow_api:
+                return False                              # tiến trình này không chạy đơn của khách (chế độ web dev)
+            udid, port = self._ident(name)
+            other = self.conflict(name, udid, port)
+            if other and other != name:
+                # Tên này đang trỏ vào CÙNG iPhone / board với một máy của khách (đang làm đơn / đang dừng chờ kiểm tra) dưới tên khác:
+                # chạy gì lên nó cũng là đọc / bấm lên máy của khách → không chạy.
+                return False
+            same_api_group = group.get("mode") == "api" and group.get("id") is not None and held is not None and held.get("group_id") == group.get("id")
+            if held is not None and held.get("hold") and not same_api_group:
+                # Máy đang DỪNG CHỜ NGƯỜI KIỂM TRA sau đơn của khách (màn hình giữ nguyên, game có thể còn đăng nhập tài khoản của khách).
+                # Chỉ «Chạy lại» của CHÍNH nhóm nhận đơn đó mới được chạy tiếp (đường đó tự đăng xuất + kiểm game sạch trước). Nhóm / kịch bản
+                # khác không được chạy đè lên: người vận hành phải xác nhận «Đã kiểm tra xong» (ack_hold) trước.
+                return False
+            if group.get("mode") != "api":
+                if script:        # cách chạy của kịch bản chỉ có «1 lần» / «lặp» — không bao giờ thành chế độ nhận đơn
+                    group = dict(group, steps=list(script.get("steps") or []), mode="loop" if script.get("mode") == "loop" else "once", loops=script.get("loops", 0))
+                elif not group.get("steps"):
+                    return False                      # không có kịch bản nào để chạy (nhóm thật luôn truyền `script`; `steps` trần chỉ còn ở dữ liệu thử)
             mode = group.get("mode", "loop")
-            w = {"stop": threading.Event(), "abort": threading.Event(), "group_id": group.get("id"), "mode": mode,
+            w = {"stop": threading.Event(), "abort": threading.Event(), "pause": threading.Event(), "paused": False,
+                 "udid": udid, "port": port,
+                 # «Chạy lại» máy đang giữ: lý do giữ được MANG THEO cho tới khi lần chạy mới kiểm xong «game đã đăng xuất» (clean). Lần chạy mới
+                 # mà dừng sớm (không mở được máy, cấu hình sai, bị bấm Dừng…) thì máy VẪN đang giữ — chưa ai kiểm tra gì cả.
+                 "carry_hold": (held.get("hold") if held is not None else None),
+                 "group_id": group.get("id"), "mode": mode,
+                 "group_name": group.get("name"), "script_id": (script or {}).get("id"), "script_name": (script or {}).get("name"),
                  "iter": 0, "status": "chuẩn bị", "last_ok": None, "last_msg": None,
                  "job_id": None, "job_ref": None, "pool": None, "counts": {"done": 0, "failed": 0, "review": 0}}
             target = self._run_api if mode == "api" else self._run
@@ -147,16 +234,39 @@ class Runner:
                 w["stop"].set()
                 if force:
                     w["abort"].set()
-                if not w["thread"].is_alive():
-                    w["hold"] = None            # máy đã dừng từ trước: bấm Dừng = xác nhận đã kiểm tra xong
-        return True
+        return True          # KHÔNG gỡ trạng thái giữ: gỡ giữ chỉ qua ack_hold (lời xác nhận rõ ràng) hoặc «Chạy lại» của chính nhóm nhận đơn
 
-    def start_group(self, group, names=None):
+    def pause_machine(self, name):
+        """Yêu cầu máy TẠM DỪNG để người xử lý tay (không kết thúc việc đang chạy). Kịch bản: dừng trước bước kế tiếp (bước đang làm dở
+        làm nốt). Nhận đơn API: không nhận đơn mới, đơn đang làm vẫn làm nốt rồi mới dừng. False nếu máy không đang chạy."""
+        with self.lock:
+            w = self.workers.get(name)
+            if not (w and w["thread"].is_alive()):
+                return False
+            w["pause"].set()
+            return True
+
+    def resume_machine(self, name):
+        """Tiếp tục sau khi tạm dừng (hoặc huỷ yêu cầu tạm dừng chưa kịp thực hiện). False nếu máy không đang chạy."""
+        with self.lock:
+            w = self.workers.get(name)
+            if not (w and w["thread"].is_alive()):
+                return False
+            w["pause"].clear()
+            return True
+
+    def start_group(self, group, names=None, script=None):
         targets = names if names is not None else list(group.get("devices", []))
-        return [n for n in targets if self.start_machine(n, group)]
+        return [n for n in targets if self.start_machine(n, group, script)]
 
-    def stop_group(self, group, force=False):
-        for n in list(group.get("devices", [])):
+    def stop_group(self, group, force=False, script_id=None):
+        """Dừng các máy ĐANG CHẠY THEO NHÓM NÀY (nếu có `script_id`: chỉ những máy đang chạy kịch bản đó). Máy có thể ở nhiều nhóm:
+        máy đang chạy việc của nhóm / kịch bản khác thì KHÔNG đụng tới (dừng nhầm giữa đơn nạp thật là mất tiền).
+        Không gỡ trạng thái «dừng chờ kiểm tra» của máy nào (xem ack_hold)."""
+        gid = group.get("id")
+        for n, w in list(self.workers.items()):          # theo VIỆC ĐANG CHẠY, không theo danh sách máy hiện tại của nhóm (máy có thể đã bị bỏ khỏi nhóm)
+            if w.get("group_id") != gid or (script_id and w.get("script_id") != script_id):
+                continue
             self.stop_machine(n, force)
         return True
 
@@ -178,6 +288,9 @@ class Runner:
             self._log(name, "Worker dừng vì lỗi không mong đợi: %s" % e, "bad")
         finally:
             w["job_id"] = w["job_ref"] = None
+            if w.get("carry_hold") and not w.get("hold"):
+                # «Chạy lại» máy đang giữ nhưng lần chạy này kết thúc TRƯỚC khi kiểm xong game đã đăng xuất → máy vẫn đang giữ như cũ
+                w["hold"] = w["carry_hold"]
 
     # ====================== chế độ loop / once ======================
     def _run(self, name, group, w):
@@ -193,13 +306,29 @@ class Runner:
         except Exception as e:
             w["status"] = "lỗi mở máy: " + str(e)
             return
+        self._seen_nav(w, nav)
         count = 0
+
+        def gate():
+            """Gọi trước mỗi bước: đang yêu cầu tạm dừng thì đứng đây (không chạm vào máy) cho tới khi tiếp tục hoặc bị dừng."""
+            if not w["pause"].is_set():
+                return
+            w["paused"] = True
+            w["status"] = "TẠM DỪNG · xử lý tay rồi bấm Tiếp tục"
+            self._log(name, "Tạm dừng — chờ xử lý tay", "warn")
+            while w["pause"].is_set() and not stop.is_set():
+                stop.wait(0.25)
+            w["paused"] = False
+            if not stop.is_set():
+                w["status"] = f"đang chạy · vòng {count}"
+                self._log(name, "Tiếp tục chạy")
+
         while not stop.is_set():
             count += 1
             w["iter"] = count
             w["status"] = f"đang chạy · vòng {count}"
             try:
-                res = engine.run_flow(nav, steps, stop_check=lambda: stop.is_set())
+                res = engine.run_flow(nav, steps, stop_check=lambda: stop.is_set(), pause_gate=gate)
                 oks = sum(1 for r in res if r.get("ok"))
                 w["last_ok"] = (oks == len(res)) if res else True
                 w["last_msg"] = f"{oks}/{len(res)} bước OK"
@@ -245,6 +374,7 @@ class Runner:
             nav = self._session(name)
         except Exception as e:
             return halt("không mở được máy — %s" % e)
+        self._seen_nav(w, nav)
 
         say("Bắt đầu nhận đơn từ pool «%s»" % pool_code)
         pool, steps, pool_at = None, None, 0.0
@@ -271,6 +401,20 @@ class Runner:
                     status("Chưa gửi được kết quả đơn trước — đang thử lại")
                     stop.wait(self.NOT_READY_WAIT)
                     continue
+
+            # --- người vận hành bấm «Tạm dừng»: KHÔNG chạm vào máy / không nhận đơn mới (đơn đang làm đã làm nốt ở vòng trước;
+            #     kết quả đơn trước còn nợ đã được gửi ở trên — việc đó chỉ dùng mạng, không đụng máy) ---
+            if w["pause"].is_set():
+                if not w["paused"]:
+                    w["paused"] = True
+                    clean = False                       # sau khi xử lý tay, game có thể đã khác → kiểm lại «đã đăng xuất chưa» trước khi nhận đơn
+                    say("Tạm dừng nhận đơn — xử lý tay rồi bấm Tiếp tục", "warn")
+                status("TẠM DỪNG · không nhận đơn — xử lý tay rồi bấm Tiếp tục")
+                stop.wait(0.5)
+                continue
+            if w["paused"]:
+                w["paused"] = False
+                say("Tiếp tục nhận đơn")
 
             # --- cấu hình pool (làm mới định kỳ để ăn thay đổi trên gateway) ---
             if pool is None or time.time() - pool_at > self.POOL_REFRESH:
@@ -354,6 +498,7 @@ class Runner:
                     return halt("không nhận ra màn hình game (không thấy chữ của luật «Màn hình CHƯA đăng nhập» "
                                 "lẫn «Đăng nhập THÀNH CÔNG») — kiểm tra game và luật của pool rồi bấm Chạy lại", hold=True)
                 clean = True
+                w["carry_hold"] = None        # đã THẤY game ở trạng thái chưa đăng nhập → trạng thái giữ cũ (nếu có) hết hiệu lực
                 if stop.is_set():
                     break
 
@@ -373,7 +518,9 @@ class Runner:
                 if stop.is_set():
                     break
 
-            # --- máy trống → xin việc ---
+            # --- máy trống → xin việc (bấm «Tạm dừng» trong lúc đang kiểm tra ở trên thì KHÔNG xin nữa: quay lại đầu vòng để tạm dừng) ---
+            if w["pause"].is_set():
+                continue
             try:
                 r = gw.claim(name, pool_code)
             except GatewayError as e:
@@ -409,6 +556,10 @@ class Runner:
             if outcome.halt:
                 return halt("%s — kiểm tra máy rồi bấm Chạy lại" % outcome.message, hold=True)
             if abort.is_set():
+                if outcome.session != "none":
+                    # «Dừng ngay» giữa đơn: không chạy bước đăng xuất, nên game có thể CÒN ĐĂNG NHẬP tài khoản của khách → giữ máy cho người kiểm tra
+                    return halt("dừng ngay giữa đơn %s — game có thể còn đăng nhập tài khoản của khách; kiểm tra / đăng xuất rồi bấm Chạy lại"
+                                % (job.get("ref") or job["id"]), hold=True)
                 break
             # đưa máy về trạng thái sạch cho đơn sau (đăng xuất…)
             if not self._finish(nav, steps, say, status, strict=outcome.session != "none"):

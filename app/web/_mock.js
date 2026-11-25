@@ -49,11 +49,12 @@
     login_fields: [{ key: "username" }, { key: "password" }], otp: { enabled: true },
     missing_rules: ["Nạp gói THÀNH CÔNG"], required_phases: ["login", "purchase", "finish"] };
   let RUN = {};   // name -> {running, stopping, status, iter, last_ok, last_msg, group_id, mode, job, counts}
-  function mockRun(g) {
+  function mockRun(g, sc) {
+    const who = { group_name: g && g.name, script_id: sc && sc.id, script_name: sc && sc.name };
     return g && g.mode === "api"
-      ? { running: true, stopping: false, mode: "api", group_id: g.id, iter: 2, status: "NG261124A008 · Đang mua 1050 eFootball Coins (1/1)",
+      ? { ...who, running: true, stopping: false, mode: "api", group_id: g.id, iter: 2, status: "NG261124A008 · Đang mua 1050 eFootball Coins (1/1)",
           job: "NG261124A008", last_ok: true, last_msg: "NG261124A007: HOÀN TẤT", counts: { done: 2, failed: 1, review: 0 } }
-      : { running: true, stopping: false, mode: (g && g.mode) || "loop", group_id: g && g.id, iter: 1, status: "đang chạy · vòng 1",
+      : { ...who, running: true, stopping: false, mode: (sc && sc.mode) || "once", group_id: g && g.id, iter: 1, status: "đang chạy · vòng 1",
           last_ok: true, last_msg: "2/2 bước OK", counts: { done: 0, failed: 0, review: 0 } };
   }
   function mockStop(n, force) {
@@ -62,8 +63,9 @@
     r.running = false; r.stopping = false; r.status = "đã dừng";
   }
   function syncGroupFields() {
-    DEVICES.forEach(d => { d.group_id = null; d.group_name = null; d.running = !!(RUN[d.name] && RUN[d.name].running); });
-    GROUPS.forEach(g => (g.devices || []).forEach(dn => { const d = DEVICES.find(x => x.name === dn); if (d) { d.group_id = g.id; d.group_name = g.name; } }));
+    DEVICES.forEach(d => { d.groups = []; d.group_id = null; d.group_name = null; d.running = !!(RUN[d.name] && RUN[d.name].running); });
+    GROUPS.forEach(g => (g.devices || []).forEach(dn => { const d = DEVICES.find(x => x.name === dn); if (d) { d.groups.push({ id: g.id, name: g.name }); } }));
+    DEVICES.forEach(d => { if (d.groups.length) { d.group_id = d.groups[0].id; d.group_name = d.groups.map(x => x.name).join(", "); } });
   }
   syncGroupFields();
 
@@ -145,14 +147,20 @@
     groups_list: () => P(JSON.parse(JSON.stringify(GROUPS))),
     group_save: (g) => { g = JSON.parse(JSON.stringify(g)); if (!g.id) g.id = "g" + Date.now(); const i = GROUPS.findIndex(x => x.id === g.id); if (i >= 0) GROUPS[i] = g; else GROUPS.push(g); syncGroupFields(); return P(JSON.parse(JSON.stringify(g))); },
     group_delete: (id) => { GROUPS = GROUPS.filter(x => x.id !== id); syncGroupFields(); return P({ ok: true }); },
-    set_device_group: (name, gid) => {
-      GROUPS.forEach(g => { if (g.id !== gid) g.devices = (g.devices || []).filter(d => d !== name); });
-      if (gid) { const g = GROUPS.find(x => x.id === gid); if (g && !(g.devices || []).includes(name)) (g.devices = g.devices || []).push(name); }
-      syncGroupFields(); return P({ ok: true });
+    group_add_device: (gid, name) => { const g = GROUPS.find(x => x.id === gid); if (g && !g.devices.includes(name)) g.devices.push(name); syncGroupFields(); return P({ ok: !!g }); },
+    group_remove_device: (gid, name) => { const g = GROUPS.find(x => x.id === gid); if (g) g.devices = g.devices.filter(n => n !== name); syncGroupFields(); return P({ ok: !!g }); },
+    group_run: (gid, names, script) => {
+      const g = GROUPS.find(x => x.id === gid); const sc = g && (g.scripts || []).find(x => x.id === script || x.name === script);
+      const targets = (names || (g ? g.devices : [])), busy = {}, started = [];
+      targets.forEach(n => { if (RUN[n] && RUN[n].running) busy[n] = [RUN[n].group_name, RUN[n].script_name].filter(Boolean).join(" · "); else { RUN[n] = mockRun(g, sc); started.push(n); } });
+      syncGroupFields(); return P({ ok: true, started, busy });
     },
-    group_run: (gid) => { const g = GROUPS.find(x => x.id === gid); (g ? g.devices : []).forEach(n => RUN[n] = mockRun(g)); syncGroupFields(); return P({ ok: true, started: g ? g.devices : [] }); },
-    group_stop: (gid, force) => { const g = GROUPS.find(x => x.id === gid); (g ? g.devices : []).forEach(n => mockStop(n, force)); syncGroupFields(); return P({ ok: true }); },
-    machine_run: (gid, name) => { const g = GROUPS.find(x => x.id === gid); RUN[name] = mockRun(g); syncGroupFields(); return P({ ok: true, started: true }); },
+    group_stop: (gid, force, script) => { const g = GROUPS.find(x => x.id === gid); (g ? g.devices : []).forEach(n => { const r = RUN[n]; if (r && r.group_id === gid && (!script || r.script_id === script)) mockStop(n, force); }); syncGroupFields(); return P({ ok: true }); },
+    machine_run: (gid, name, script) => { const g = GROUPS.find(x => x.id === gid); const sc = g && (g.scripts || []).find(x => x.id === script || x.name === script) || (g && (g.scripts || [])[0]); RUN[name] = mockRun(g, sc); syncGroupFields(); return P({ ok: true, started: true }); },
+    machine_ack: (name) => { const r = RUN[name]; if (!(r && !r.running && r.hold)) return P({ ok: false, error: "Máy không ở trạng thái chờ kiểm tra." }); r.hold = null; return P({ ok: true }); },
+    machine_pause: (name) => { const r = RUN[name]; if (!(r && r.running)) return P({ ok: false, error: "Máy không đang chạy." }); r.pause_requested = true; r.paused = true; r.status = "TẠM DỪNG · xử lý tay rồi bấm Tiếp tục"; return P({ ok: true }); },
+    machine_resume: (name) => { const r = RUN[name]; if (!(r && r.running)) return P({ ok: false, error: "Máy không đang chạy." }); r.pause_requested = false; r.paused = false; r.status = "đang chạy · vòng 1"; return P({ ok: true }); },
+    stop_all: (force) => { const on = Object.keys(RUN).filter(n => RUN[n].running); on.forEach(n => mockStop(n, true)); syncGroupFields(); return P({ ok: true, stopped: on.length }); },
     machine_stop: (name, force) => { mockStop(name, force); syncGroupFields(); return P({ ok: true }); },
     run_status: () => P(JSON.parse(JSON.stringify(RUN))),
     run_log: () => P([{ t: "10:02:11", name: "iPhoneFarm-02", text: "Bắt đầu nhận đơn từ pool «efootball-ios»", kind: "" },

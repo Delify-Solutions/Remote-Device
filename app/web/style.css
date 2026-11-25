@@ -432,3 +432,38 @@
 .esp-health.warn { color: var(--bs-warning); }
 .esp-health.bad  { color: var(--bs-danger); font-weight: 600; }
 .esp-health > div { margin-top: 2px; }
+
+
+/* ---- Tab Nhóm & Kịch bản: danh sách nhóm dạng thẻ ---- */
+.group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 1rem; }
+.group-card { cursor: pointer; transition: border-color .15s, transform .15s, box-shadow .15s; border: 1px solid var(--bs-border-color); }
+.group-card:hover, .group-card:focus-visible { border-color: var(--bs-primary); transform: translateY(-2px); outline: 0;
+  box-shadow: 0 .25rem .9rem rgba(var(--bs-primary-rgb), .22); }
+.group-card-name { overflow-wrap: anywhere; }
+.group-meta { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .85rem; margin-bottom: .6rem; }
+.group-devs { display: flex; gap: .35rem; flex-wrap: wrap; }
+.group-dev { font-size: .74rem; padding: .12rem .5rem; border-radius: 30px; background: var(--bs-secondary-bg-subtle); color: var(--bs-secondary-color); }
+.script-row { cursor: pointer; border-radius: .4rem; padding-inline: .5rem; }
+.script-row:hover, .script-row:focus-visible { background: var(--bs-secondary-bg-subtle); outline: 0; }
+.script-machines { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; }
+.script-machine { display: flex; align-items: center; gap: .4rem; margin: 0; cursor: pointer; font-size: .85rem; }
+.script-machine.busy { cursor: default; opacity: .9; }
+.script-machine input { margin: 0; }
+.script-machine-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.script-machine-acts, .cell-run { display: inline-flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+.cell-run { margin-top: 6px; }
+.script-machines { flex-direction: column; }
+
+/* ---- Thanh trên cùng: không xuống dòng; cửa sổ hẹp thì các nút phụ chỉ còn biểu tượng (rê chuột xem tên), «Dừng tất cả» luôn có chữ ---- */
+#navbar-collapse .btn, #navbar-collapse small { white-space: nowrap; }
+#page-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; margin-inline-end: .75rem; }
+@media (max-width: 1180px) {
+  #navbar-collapse .nb-txt { display: none; }
+  #navbar-collapse .btn:has(.nb-txt) .ti { margin-inline-end: 0 !important; }
+}
+
+/* ---- Nút ☰ ở thanh trên cùng: ẩn / hiện menu bên trái (tự làm, không dùng cơ chế trượt của Vuexy vốn hay hỏng trong webview) ---- */
+html.ipf-menu-off #layout-menu.layout-menu { display: none !important; }
+html.ipf-menu-off .layout-page { padding-inline-start: 0 !important; }
+html.ipf-menu-off.layout-navbar-fixed .layout-navbar { inset-inline-start: 0 !important; }
+html.ipf-menu-off.layout-navbar-fixed .layout-navbar.navbar-detached { inline-size: calc(100% - 1.5rem * 2) !important; }

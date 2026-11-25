@@ -387,14 +387,9 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
             _sleep(1.0, abort)
 
     if t == "type":
-        raw = str(tmpl.get("text") or "")
-        text = subst(raw, vars)
+        text = typable(str(tmpl.get("text") or ""), vars)
         if text == "":
             return True, "", False
-        if any(not (32 <= ord(c) <= 126) for c in text):
-            raise InputError("«%s» có ký tự tool không gõ được (chỉ gõ được chữ không dấu, số, ký hiệu thường)" % show(raw, vars))
-        if text != text.rstrip():
-            raise InputError("«%s» kết thúc bằng khoảng trắng — tool không gõ được" % show(raw, vars))
         return _keyed(hid(nav, "type " + text, wait=0.8 + 0.08 * len(text)), abort)
 
     if t == "key":
@@ -466,6 +461,24 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
         return False, "không thấy chữ «%s» trên màn hình" % show(raw, vars), False
 
     raise ConfigError("loại bước lạ: %s" % t)
+
+
+def typable(raw: str, vars: dict) -> str:
+    """Chữ sẽ gõ của một bước «gõ chữ» (đã thế {{biến}}); ném InputError nếu tool không gõ được (ký tự có dấu, khoảng trắng cuối…)."""
+    text = subst(raw, vars)
+    if any(not (32 <= ord(c) <= 126) for c in text):
+        raise InputError("«%s» có ký tự tool không gõ được (chỉ gõ được chữ không dấu, số, ký hiệu thường)" % show(raw, vars))
+    if text != text.rstrip():
+        raise InputError("«%s» kết thúc bằng khoảng trắng — tool không gõ được" % show(raw, vars))
+    return text
+
+
+def check_typable(steps: list, vars: dict):
+    """Kiểm TRƯỚC khi chạy: mọi bước «gõ chữ» trong `steps` đều gõ được với dữ liệu này (không thì ném InputError) — để một tài khoản /
+    mật khẩu tool không gõ được bị từ chối NGAY, khi chưa đụng gì vào game (không gõ dở nửa chừng)."""
+    for st in steps or []:
+        if st.get("type") == "type":
+            typable(str(st.get("text") or ""), vars)
 
 
 def run_steps(nav, steps: list, vars: dict, abort=None, on_step=None):
@@ -769,7 +782,11 @@ class JobFlow:
                 raise StaleSession()
             if w != "logged_out":
                 raise NotAtLogin()
+            # Từ ĐÂY tool bắt đầu gõ tài khoản của khách. Nếu bị dừng ngang giữa các bước đăng nhập (Dừng ngay, lỗi…) thì không còn chắc
+            # «chưa ai đăng nhập» nữa — game có thể đã vào tài khoản của khách. Đánh dấu ngay bây giờ, không đợi các bước đăng nhập chạy xong.
+            self.session = "unknown"
 
+        check_typable(login, vars)        # tài khoản / mật khẩu không gõ được → từ chối ngay, khi phiên còn chắc chắn «chưa đăng nhập»
         try:
             ok, why, idx, _ = run_steps(self.nav, login, vars, self.abort, on_step=before_step)
         except StaleSession:

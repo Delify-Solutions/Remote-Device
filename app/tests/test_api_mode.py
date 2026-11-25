@@ -614,6 +614,44 @@ def run_all(gw, rigs):
     ok(r.status()["counts"] == {"done": 1, "failed": 0, "review": 0}, "bộ đếm của máy đúng", r.status())
     dev = gw.sql("SELECT state, pool_code FROM devices WHERE name=?", (r.name,))
     ok(dev == [("free", "game-test")], "gateway thấy máy đang TRỐNG (nhịp tim/claim)", dev)
+
+    print("\n== 1b. Tạm dừng / Tiếp tục (người xử lý tay): lúc tạm dừng KHÔNG nhận đơn mới ==")
+    ok(r.runner.pause_machine(r.name) is True and wait_until(lambda: r.status().get("paused") is True, 5), "bấm Tạm dừng lúc đang chờ đơn → máy tạm dừng", r.status())
+    ok(r.status()["status"].startswith("TẠM DỪNG") and r.running(), "trạng thái ghi rõ TẠM DỪNG, máy vẫn giữ chỗ (không ai chạy chồng lên được)", r.status())
+    buys0, keys0 = len(g.purchases), len(g.keylog)
+    purchases_before, keylog_before = list(g.purchases), list(g.keylog)     # các phần sau đếm chính xác số lần mua / gõ của game giả này
+    jp = gw.new_job("T-PAUSE", "a@test.vn", "PassA#1", [{"code": "coin_1050", "qty": 1}])
+    time.sleep(2.0)
+    held_status = gw.job(jp)["status"]
+    ok(held_status not in ("done", "failed", "review", "running") and len(g.purchases) == buys0 and len(g.keylog) == keys0,
+       "có đơn mới nhưng máy đang tạm dừng → KHÔNG nhận đơn, không gõ / không mua gì", (held_status, len(g.purchases) - buys0, len(g.keylog) - keys0))
+    # Tiếp tục → máy phải KIỂM LẠI «game đã đăng xuất chưa» (sau khi xử lý tay game có thể đã khác). Và nếu người vận hành bấm Tạm dừng
+    # đúng lúc máy đang kiểm tra đó thì máy KHÔNG được xin thêm đơn nào nữa.
+    checks = {"n": 0, "pause_once": True}
+    real_elo = r.runner._ensure_logged_out
+
+    def elo_spy(*a, **k):
+        checks["n"] += 1
+        out = real_elo(*a, **k)
+        if checks["pause_once"]:
+            checks["pause_once"] = False
+            r.runner.pause_machine(r.name)              # bấm «Tạm dừng» ngay trong lúc đang kiểm tra trước khi xin đơn
+        return out
+    r.runner._ensure_logged_out = elo_spy
+    ok(r.runner.resume_machine(r.name) is True, "bấm Tiếp tục")
+    ok(wait_until(lambda: checks["n"] >= 1, 5), "tiếp tục → kiểm lại «game đã đăng xuất chưa» trước khi nhận đơn", checks)
+    ok(wait_until(lambda: r.status().get("paused") is True, 5), "bấm Tạm dừng giữa lúc đang kiểm tra → máy tạm dừng lại", r.status())
+    time.sleep(1.5)
+    mid_status = gw.job(jp)["status"]
+    ok(mid_status == held_status and len(g.purchases) == buys0 and g.user is None,
+       "…và KHÔNG xin thêm đơn nào sau khi đã bấm Tạm dừng (đơn vẫn nằm chờ, không đăng nhập tài khoản nào)", (mid_status, len(g.purchases) - buys0, g.user))
+    r.runner._ensure_logged_out = real_elo
+    ok(r.runner.resume_machine(r.name) is True, "bấm Tiếp tục lần nữa")
+    jobp = gw.wait_job(jp, ("done", "failed", "review"))
+    ok(jobp["status"] == "done" and len(g.purchases) == buys0 + 1 and r.status().get("paused") is False, "tiếp tục → máy nhận và làm xong đơn đang chờ", (jobp["status"], r.status()))
+    ok(wait_until(lambda: r.status().get("status") == "Chờ đơn", 8) and r.running(), "rồi quay lại chờ đơn như thường", r.status())
+    ok(r.status()["counts"] == {"done": 2, "failed": 0, "review": 0}, "bộ đếm của máy đúng (2 đơn xong)", r.status())
+    g.purchases[:] = purchases_before; g.keylog[:] = keylog_before          # trả game giả về như trước phần 1b
     ok(gw.sql("SELECT login_enc, otp_enc FROM jobs WHERE pid=?", (j1,)) == [(None, None)], "gateway đã xoá thông tin đăng nhập của đơn")
 
     print("\n== 2. OTP: khách nhập SAI lần đầu, đúng lần hai ==")
@@ -701,6 +739,65 @@ def run_all(gw, rigs):
     job = gw.wait_job(j10, ("done", "failed", "review"), 10)
     ok(job["status"] == "failed" and "dừng" in (job["message"] or "").lower(), "dừng ngay trước bước mua → failed", job["message"])
     ok(g10.purchases == [] and not r10.running(), "không mua gì, máy đã dừng")
+    hold10 = r10.runner.hold_reason(r10.name)
+    ok(bool(hold10) and "còn đăng nhập" in hold10 and r10.runner.customers()[0]["name"] == r10.name,
+       "dừng ngay GIỮA đơn (đã bắt đầu đăng nhập, không chạy bước đăng xuất) → máy được GIỮ chờ người kiểm tra: game có thể còn đăng nhập tài khoản khách", hold10)
+    r10.runner.stop_machine(r10.name); r10.runner.stop_all(force=True)
+    ok(r10.runner.hold_reason(r10.name) == hold10, "…bấm Dừng / Dừng tất cả sau đó KHÔNG gỡ giữ")
+    ok(r10.runner.start_machine(r10.name, {"id": "khac", "name": "Nhóm khác", "mode": "once", "devices": [r10.name]},
+                                {"id": "s", "name": "S", "steps": [{"type": "home"}], "mode": "once", "loops": 1}) is False,
+       "…và kịch bản của nhóm khác không chạy đè lên được")
+    ok(r10.runner.ack_hold(r10.name) is True and r10.runner.hold_reason(r10.name) is None, "người vận hành xác nhận «Đã kiểm tra xong» → hết giữ")
+
+    print("\n== 10b. Dừng NGAY đúng lúc đang gõ tài khoản (giữa các bước đăng nhập) → máy phải được GIỮ ==")
+    g10b = FakeGame(accounts())
+    r10b = rig(g10b)
+    real_type = g10b.type
+
+    def type_then_stop(s):
+        real_type(s)
+        if s == "a@test.vn":                       # vừa gõ xong tài khoản của khách → người vận hành bấm «Dừng ngay»
+            r10b.runner.stop_machine(r10b.name, True)
+    g10b.type = type_then_stop
+    r10b.nav.e.udid, r10b.nav.h.port = "ab-12-cd", "/dev/cu.gia-10b"        # iPhone + cổng của PHIÊN đang dùng thật
+    j10b = gw.new_job("T-010b", "a@test.vn", "PassA#1", [{"code": "coin_1050", "qty": 1}])
+    r10b.start()
+    job = gw.wait_job(j10b, ("done", "failed", "review"), 15)
+    ok(wait_until(lambda: not r10b.running(), 8) and job["status"] == "failed" and g10b.purchases == [], "dừng ngay lúc đang gõ tài khoản → đơn failed (chưa nạp), máy dừng", (job["status"], job["message"]))
+    hold10b = r10b.runner.hold_reason(r10b.name)
+    ok(bool(hold10b) and [c["name"] for c in r10b.runner.customers()] == [r10b.name],
+       "…và máy được GIỮ chờ người kiểm tra: tài khoản của khách đã được gõ vào game, không còn chắc «chưa đăng nhập» (trước đây máy KHÔNG được giữ)", hold10b)
+    ok(r10b.runner.start_machine(r10b.name, {"id": "khac", "name": "Nhóm khác", "mode": "once", "devices": [r10b.name]},
+                                 {"id": "s", "name": "S", "steps": [{"type": "home"}], "mode": "once", "loops": 1}) is False,
+       "…nên kịch bản của nhóm khác không chạy đè lên được")
+    c10b = r10b.runner.customers()[0]
+    ok(c10b["udid"] == "AB12CD" and c10b["port"] == "/dev/cu.gia-10b" and r10b.runner.conflict("ten-khac", "AB-12-cd", None) == r10b.name,
+       "máy của khách được ghi theo iPhone + cổng của phiên đang dùng thật (bộ chạy thật), UDID ở dạng chuẩn", c10b)
+    # «Chạy lại» của CHÍNH nhóm đó: tự kiểm game đã đăng xuất; kiểm xong (sạch) thì mới hết giữ
+    g10b.type = real_type
+    r10b.start()
+    ok(wait_until(lambda: r10b.status().get("status") == "Chờ đơn", 10) and r10b.running(), "«Chạy lại» của chính nhóm nhận đơn: máy tự đưa game về chưa đăng nhập rồi chờ đơn", r10b.status())
+    r10b.stop()
+    ok(r10b.runner.hold_reason(r10b.name) is None and r10b.runner.customers() == [],
+       "lần chạy lại ĐÃ kiểm xong game sạch → trạng thái giữ cũ hết hiệu lực (dừng sau đó không giữ lại)", r10b.runner.hold_reason(r10b.name))
+
+    print("\n== 10c. Tài khoản / mật khẩu tool KHÔNG gõ được → từ chối ngay, không đụng game, máy KHÔNG bị giữ ==")
+    g10c = FakeGame(accounts())
+    r10c = rig(g10c)
+    r10c.start()
+    ok(wait_until(lambda: r10c.status().get("status") == "Chờ đơn", 8), "máy đang chờ đơn")
+    keys_c = len(g10c.keylog)
+    j10c = gw.new_job("T-010c", "khách có dấu@test.vn", "PassA#1", [{"code": "coin_1050", "qty": 1}])
+    job = gw.wait_job(j10c, ("done", "failed", "review"), 15)
+    ok(job["status"] == "failed" and "không gõ được" in (job["message"] or "") and g10c.purchases == [] and "PassA#1" not in g10c.keylog[keys_c:],
+       "tài khoản có ký tự tool không gõ được → đơn failed với lý do rõ ràng, KHÔNG gõ gì của khách vào game", (job["status"], job["message"], g10c.keylog[keys_c:]))
+    j10c2 = gw.new_job("T-010c2", "a@test.vn", "mật khẩu có dấu", [{"code": "coin_1050", "qty": 1}])
+    job2 = gw.wait_job(j10c2, ("done", "failed", "review"), 15)
+    ok(job2["status"] == "failed" and "a@test.vn" not in g10c.keylog[keys_c:],
+       "MẬT KHẨU không gõ được cũng bị phát hiện TRƯỚC khi gõ tài khoản (không gõ dở nửa chừng rồi bỏ)", (job2["status"], g10c.keylog[keys_c:]))
+    ok(wait_until(lambda: r10c.status().get("status") == "Chờ đơn", 10) and r10c.running() and r10c.runner.hold_reason(r10c.name) is None and r10c.runner.customers()[0]["hold"] is None,
+       "lỗi do dữ liệu của khách → máy KHÔNG bị dừng / giữ, chờ đơn tiếp như thường", r10c.status())
+    r10c.stop()
 
     print("\n== 11. Tool tắt giữa chừng ==")
     # 11a: tắt TRƯỚC khi chạm bước mua → lần sau làm lại từ đầu

@@ -248,9 +248,29 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
 ./farm swipe iPhoneFarm-01 left              # lật trang; up/down = cuộn
 ./farm hold iPhoneFarm-01 636 468 --seconds 1.5
 ./farm run iPhoneFarm-01 @steps.json         # chạy một chuỗi bước (cùng dạng bước với kịch bản của app)
-./farm status ; ./farm groups ; ./farm start "Tên nhóm" ; ./farm stop iPhoneFarm-01
+./farm status ; ./farm groups ; ./farm start "Tên nhóm" --script "Tên kịch bản" ; ./farm stop iPhoneFarm-01
 ./farm --help                                # mọi lệnh;  thêm --json để lấy kết quả cho script
 ```
+
+### Nhóm, máy và kịch bản (mô hình)
+- **Nhóm** gom các máy cùng loại. Một máy có thể ở **nhiều nhóm** (thêm / bớt máy ngay trang của từng nhóm). Trang **Thiết bị** chỉ để xem
+  thống kê (nhóm của máy, máy đang chạy gì) — không gán nhóm ở đó.
+- Trong nhóm có **danh sách kịch bản**. **Cách chạy nằm trong từng kịch bản**: «Chạy 1 lần» hoặc «Lặp lại» (số vòng, 0 = vô hạn), và chạy trên
+  những máy nào (ô «Chạy trên máy» + nút Chạy / Dừng trong trình sửa kịch bản). Nhóm không còn «chế độ chạy» / «số vòng» riêng.
+- **Một máy chỉ chạy MỘT kịch bản một lúc**: máy hiện «đang chạy {nhóm} · {kịch bản}» (trang Nhóm, trang Thiết bị, `farm status`); chạy thêm kịch bản
+  trên máy đang bận bị từ chối và nói rõ máy đang chạy gì. Dừng một nhóm / kịch bản chỉ dừng máy đang chạy đúng việc đó — không đụng việc của nhóm khác.
+- **Tạm dừng / Tiếp tục / Dừng từng máy** (trang Thiết bị, trang nhóm, trong kịch bản — cùng một bộ nút): «⏸ Tạm dừng» cho máy đứng yên để
+  **xử lý tay** mà không kết thúc việc đang chạy (kịch bản: dừng trước bước kế tiếp; máy nhận đơn: làm nốt đơn dở, không nhận đơn mới, và khi
+  tiếp tục sẽ kiểm lại «game đã đăng xuất chưa»); máy đang tạm dừng vẫn giữ chỗ nên không ai chạy chồng lên được. «▶ Tiếp tục» chạy tiếp,
+  «Dừng» kết thúc hẳn. Nút **«Dừng tất cả»** ở thanh trên cùng dừng mọi máy đang chạy (có hỏi lại; không gỡ trạng thái «dừng chờ kiểm tra»).
+- **Máy đang «dừng chờ kiểm tra» sau đơn của khách** (màn hình giữ nguyên, game có thể còn đăng nhập tài khoản khách): nhóm / kịch bản KHÁC không chạy đè lên được
+  — bị bỏ qua và báo rõ; ô «Chạy trên máy» hiện «⚠ dừng chờ kiểm tra» và không tích được. Chỉ «Chạy lại» của chính nhóm nhận đơn đó (tự đăng xuất + kiểm game
+  sạch trước; nếu lần chạy lại dừng sớm trước khi kiểm xong thì máy vẫn đang giữ), hoặc người vận hành bấm **«Đã kiểm tra xong»** trên máy đó, mới gỡ được.
+  **Bấm Dừng không còn là lời xác nhận** (trước đây Dừng trên máy đã dừng = xác nhận); xoá nhóm còn máy đang giữ bị từ chối.
+- Nhóm ở chế độ **nhận đơn API** (cũ, nhận đơn từ gateway) vẫn hoạt động như trước; giao diện hiện chưa có chỗ tạo loại nhóm này.
+- MCP / CLI: `list_groups` liệt kê kịch bản (tên, số bước, cách chạy — không lộ nội dung bước); `start_run` nhận `script` (bỏ trống được khi nhóm
+  chỉ có 1 kịch bản; nhóm nhiều kịch bản mà không nêu thì bị từ chối).
+- Kiểm bằng `./.venv/bin/python app/tests/test_groups.py` (91 mục: lưu / chuẩn hoá kịch bản, máy nhiều nhóm, một máy một kịch bản, tạm dừng / tiếp tục, dừng đúng việc, dừng tất cả, máy đang giữ chờ kiểm tra).
 
 ### Cách hoạt động
 - **App đang mở** → mọi lệnh của AI/CLI được chuyển cho app thực hiện (app là nơi DUY NHẤT giữ cổng serial của board).
@@ -265,8 +285,11 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   AI/CLI **không xem được màn hình** (ảnh + chữ có thể lộ tài khoản / OTP của khách) — chỉ xem tiến độ bằng `farm status`.
   Máy chạy kịch bản thường của chủ thì vẫn xem được.
 - **Máy dừng chờ người kiểm tra** (đơn gián đoạn giữa lúc mua, đơn cần đối soát, lỗi phiên đăng nhập, lỗi lặp lại…): màn hình được
-  GIỮ NGUYÊN — AI/CLI không điều khiển, không chạy lại nhóm có máy đó, và **`stop_run` cũng bị từ chối** (Dừng trong app là lời xác
-  nhận «đã đối soát xong», chỉ người vận hành đưa ra được). Trạng thái này chỉ gỡ bằng nút Dừng / Chạy lại trong app.
+  GIỮ NGUYÊN — AI/CLI không điều khiển, không chạy lại nhóm có máy đó, và **`stop_run` cũng bị từ chối**. Trạng thái này chỉ gỡ bằng nút **«Đã kiểm tra xong»**
+  (lời xác nhận «đã đối soát xong» của người vận hành) hoặc «Chạy lại» của chính nhóm nhận đơn đó, trong app dạng cửa sổ. Bấm Dừng, Dừng nhóm, Dừng tất cả
+  hay xoá nhóm đều KHÔNG gỡ; không nạp / xoá / đổi tên board, không gán lại hay xoá máy đó được khi đang giữ. «Dừng ngay» giữa một đơn — tính từ lúc tool bắt đầu
+  gõ tài khoản của khách — cũng đưa máy vào trạng thái này, vì game có thể đã / còn đăng nhập tài khoản khách.
+  **Giới hạn đã biết:** trạng thái giữ chỉ nằm trong bộ nhớ của app — tắt hoặc khởi động lại app là mất. Hãy đối soát và bấm «Đã kiểm tra xong» TRƯỚC khi tắt app.
 - Mọi cú bấm đều ĐO vị trí con trỏ trên ảnh chụp rồi mới bấm; không đo được thì không bấm. Con trỏ chỉ được nhận bằng **bằng chứng
   chuyển động**: vệt duy nhất vừa dời đi đúng hướng, đúng quãng theo lệnh di, ở hai nhịp liền nhau. Đến đích rồi vẫn chưa bấm: tool làm
   **phép thử «đi – đứng yên – về»** (nhích con trỏ ra một chỗ TRỐNG của màn hình, hướng chọn ngẫu nhiên; nhìn thêm một lần không ra lệnh
@@ -311,6 +334,40 @@ uv run --python 3.12 --with mcp app/tests/interop_sdk.py     # kiểm chéo vớ
 Soak qua đường `farm` → app → board → iPhone: 8 vòng (mở Cài đặt, về home, lật trang, lật lại) trên từng máy, 0 lỗi.
 
 Nhịp của **bàn phím** (gõ, phím, mở app qua Spotlight) được giữ như cũ có chủ đích: nhấn Enter sớm thì Spotlight chưa kịp chọn app.
+
+### Chạy giao diện dạng WEB (dev) — để thao tác / chụp màn hình từ trình duyệt (kể cả trình duyệt nhúng của Orca)
+```bash
+./.venv/bin/python app/gui.py --web [--web-port 47822]     # thay cho `python app/gui.py` — KHÔNG chạy cùng lúc với app cửa sổ
+```
+Cùng một tiến trình, cùng cổng serial, cùng cầu nối MCP; chỉ khác là giao diện chạy trong trình duyệt thay vì cửa sổ pywebview. Địa chỉ + khoá in ra **stderr** một lần:
+`http://127.0.0.1:47822/?t=<khoá>` (khoá lưu ở `app/data/webdev.json`, 0600, ngoài git). Mở địa chỉ đó một lần để nhận cookie, từ đó dùng `http://127.0.0.1:47822/`.
+Với Orca: `orca goto --url "http://127.0.0.1:47822/?t=<khoá>"`, rồi `orca eval` / `orca screenshot`.
+**Không chạy bản web cùng lúc với app cửa sổ**: hai tiến trình cùng giành cổng serial của board, và bản web không biết gì về máy đang làm đơn / đang giữ
+ở tiến trình kia (các luật «không đụng máy của khách» chỉ có tác dụng trong cùng một tiến trình).
+An toàn (giao diện điều khiển được iPhone thật, nạp / xoá board, chạy kịch bản — **trừ** chạy đơn của khách và đổi cấu hình gateway — nên **đừng** mở cổng
+này ra mạng / đường hầm):
+- chỉ nghe **127.0.0.1**; chặn Host lạ (DNS rebinding); POST phải cùng trang (Origin trùng, không phải yêu cầu chéo trang, `Content-Type: application/json`);
+- **cookie là mã phiên ngẫu nhiên, không phải khoá** (HttpOnly, SameSite=Strict): đổi mỗi lần mở app, nên lộ cookie cũng không lộ khoá và hết hạn khi tắt app.
+  Nút «Khởi động lại» trong app giữ nguyên phiên (trang không bị văng; mã phiên chỉ trao cho tiến trình mới, không nằm trong môi trường của tiến trình con);
+  tắt hẳn rồi chạy lại thì mở lại địa chỉ có `?t=<khoá>`. Tệp khoá được tạo sẵn quyền 0600; tệp khoá cũ mà người khác đọc được thì bị thay khoá mới;
+- chỉ gọi được hàm công khai của lớp `Api`; tệp tĩnh chỉ trong `app/web` (bỏ mọi tệp / thư mục bắt đầu bằng `_` hoặc `.`, và liên kết trỏ ra ngoài);
+- yêu cầu bị từ chối thì đóng kết nối; không nhận `Transfer-Encoding` hay tiêu đề lặp (Host / Origin / Content-Length); kết nối im quá 30 giây bị đóng; trang không cho nhúng vào khung;
+- **chế độ web KHÔNG chạy đơn của khách.** Nhóm nhận đơn từ gateway (chế độ API) bị từ chối ở bản web — cả từ giao diện, từ cầu nối AI, lẫn trong bộ chạy
+  (`Runner.allow_api = False`) — vì trình duyệt có thể đang do AI điều khiển. Nhận đơn thật chỉ chạy ở app dạng cửa sổ (`python app/gui.py`, không `--web`).
+  Nhờ vậy trong bản web không bao giờ có «máy đang làm đơn của khách» hay «máy đang dừng chờ đối soát»;
+- phòng thủ thêm, phòng khi quy tắc trên bị nới sau này: nếu trong tiến trình có máy của khách thì (a) máy đó được nhận ra theo **máy thật** — iPhone + cổng board
+  của phiên đang dùng, UDID so ở dạng chuẩn (bỏ dấu gạch, không phân biệt hoa-thường), kể cả qua một phiên đã mở sẵn dưới tên khác — và không chụp / không thử bước
+  / không chạy kịch bản lên nó; (b) trang web chỉ gọi được một **danh sách lệnh an toàn** (`WEB_SAFE_WITH_CUSTOMERS` trong `app/gui.py`), mọi lệnh khác — kể cả
+  lệnh thêm mới sau này — bị khoá; (c) không nhận lời xác nhận «Đã kiểm tra xong», không «Chạy lại» máy đang giữ. Đây là lớp chặn dự phòng, không phải bảo đảm
+  tuyệt đối trước một trang web cố tình chuẩn bị bảng gán từ trước — bảo đảm chính là «bản web không chạy đơn».
+- **cấu hình gateway không đổi được ở bản web** (khoá Tool là chìa vào đơn của khách). Ở app cửa sổ, đổi sang máy chủ khác thì phải nhập lại khoá —
+  khoá đang lưu không tự gửi sang máy chủ mới;
+- `pip install` từ trang Tổng quan chỉ nhận các gói app cần.
+- Còn lại đã biết: cookie của `127.0.0.1` được trình duyệt gửi cho MỌI cổng trên máy này (trình duyệt không tách theo cổng) — đừng chạy dịch vụ lạ trên máy khi mở chế độ web;
+  khoá nằm trong địa chỉ `?t=` lúc đăng nhập (lịch sử trình duyệt, `ps`); trang «Kết nối AI» vẫn hiện khoá MCP như cửa sổ thật.
+
+Phần xử lý đẩy cập nhật về trang qua luồng SSE (`/events`); «Tải lại GD» là tải lại trang; «Khởi động lại» chạy lại tiến trình với đúng các cờ (giữ `--web`).
+`--web-port` nhận 1024–65515. Kiểm thử: `app/tests/test_webdev.py` (102 mục).
 
 ### Board ESP32: sức khoẻ, tự reset, nút Khởi động lại / Huỷ kết nối BT, kiểm thử (firmware v3)
 Firmware (`app/firmware/esp32_hid/esp32_hid.ino`, `FW_VERSION 3`) nay báo được và tự bảo vệ:

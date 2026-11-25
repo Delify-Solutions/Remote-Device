@@ -24,6 +24,8 @@
 
   <!-- Apply saved theme BEFORE Vuexy initializes the menu -->
   <script>try{var _t=localStorage.getItem('ipf-theme');if(_t)document.documentElement.setAttribute('data-bs-theme',_t);}catch(e){}</script>
+  <!-- Nhớ trạng thái ẩn / hiện menu bên trái (nút ☰ ở thanh trên cùng) — áp ngay để không nháy -->
+  <script>try{if(localStorage.getItem('ipf-menu')==='off')document.documentElement.classList.add('ipf-menu-off');}catch(e){}</script>
 
   <!-- Helpers + config (before body) -->
   <script src="vuexy/assets/vendor/js/helpers.js"></script>
@@ -103,14 +105,19 @@
           </a>
         </div>
         <div class="navbar-nav-right d-flex align-items-center justify-content-between w-100" id="navbar-collapse">
-          <span class="fw-medium" id="page-title">Tổng quan</span>
+          <div class="d-flex align-items-center gap-2" style="min-width:0">
+            <button class="btn btn-icon btn-sm btn-label-secondary" id="btn-menu" title="Ẩn / hiện menu bên trái" aria-label="Ẩn / hiện menu bên trái" aria-expanded="true">
+              <i class="ti tabler-menu-2 icon-md"></i>
+            </button>
+            <span class="fw-medium" id="page-title">Tổng quan</span>
+          </div>
           <div class="d-flex align-items-center gap-2">
             <span class="d-flex align-items-center gap-2 me-1">
               <span class="conn-dot" id="conn-dot"></span>
               <small id="conn-text">Đang kết nối…</small>
             </span>
             <button class="btn btn-sm btn-label-secondary" id="btn-reload-all" title="Nạp lại dữ liệu ngay">
-              <i class="ti tabler-reload me-1"></i>Nạp lại
+              <i class="ti tabler-reload me-1"></i><span class="nb-txt">Nạp lại</span>
             </button>
             <div class="auto-wrap" title="Tự động đọc lại">
               <i class="ti tabler-refresh"></i>
@@ -125,11 +132,14 @@
             <a href="javascript:void(0)" class="btn btn-icon btn-sm btn-label-secondary" id="btn-theme" title="Sáng/Tối">
               <i class="ti tabler-sun icon-md"></i>
             </a>
+            <button class="btn btn-sm btn-label-danger" id="btn-stop-all" title="Dừng mọi máy đang chạy (kịch bản: kết thúc sau bước đang làm; máy nhận đơn: làm nốt đơn dở rồi dừng)">
+              <i class="ti tabler-player-stop me-1"></i>Dừng tất cả
+            </button>
             <button class="btn btn-sm btn-label-secondary" id="btn-reload-ui" title="Tải lại giao diện (như F5)">
-              <i class="ti tabler-refresh-dot me-1"></i>Tải lại GD
+              <i class="ti tabler-refresh-dot me-1"></i><span class="nb-txt">Tải lại GD</span>
             </button>
             <button class="btn btn-sm btn-label-secondary" id="btn-restart" title="Khởi động lại toàn bộ app">
-              <i class="ti tabler-power me-1"></i>Khởi động lại
+              <i class="ti tabler-power me-1"></i><span class="nb-txt">Khởi động lại</span>
             </button>
           </div>
         </div>
@@ -264,34 +274,51 @@
 
           <!-- ---------- VIEW: NHÓM & KỊCH BẢN ---------- -->
           <section class="view" id="view-flows">
-            <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
-              <div>
-                <h4 class="mb-1">Nhóm &amp; Kịch bản</h4>
-                <small class="text-muted">Mỗi nhóm gom máy cùng loại + 1 kịch bản riêng. Chạy/dừng từng máy độc lập.</small>
-              </div>
-              <div class="d-flex gap-2 align-items-end flex-wrap">
+            <!-- TRANG 1: danh sách nhóm (bấm vào 1 nhóm → trang quản lý kịch bản của nhóm đó) -->
+            <div id="groups-page">
+              <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
                 <div>
-                  <label class="form-label small mb-1">Nhóm</label>
-                  <select id="group-select" class="form-select form-select-sm" style="min-width:200px"></select>
+                  <h4 class="mb-1">Nhóm &amp; Kịch bản</h4>
+                  <small class="text-muted">Mỗi nhóm gom máy cùng loại + 1 kịch bản riêng. Bấm vào một nhóm để quản lý máy và kịch bản của nhóm đó.</small>
                 </div>
-                <button class="btn btn-sm btn-primary" id="btn-group-new"><i class="ti tabler-plus me-1"></i>Tạo nhóm</button>
-                <button class="btn btn-sm btn-label-danger" id="btn-group-del"><i class="ti tabler-trash me-1"></i>Xoá nhóm</button>
-                <button class="btn btn-sm btn-label-secondary" id="btn-gw-settings" title="Địa chỉ + khoá của Topup Gateway (để nhóm nhận đơn qua API)"><i class="ti tabler-plug-connected me-1"></i>Gateway <span class="gw-dot" id="gw-dot"></span></button>
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                  <button class="btn btn-sm btn-primary" id="btn-group-new"><i class="ti tabler-plus me-1"></i>Tạo nhóm</button>
+                  <button class="btn btn-sm btn-label-secondary" id="btn-gw-settings" title="Địa chỉ + khoá của Topup Gateway (để nhóm nhận đơn qua API)"><i class="ti tabler-plug-connected me-1"></i>Gateway <span class="gw-dot" id="gw-dot"></span></button>
+                </div>
               </div>
+
+              <div id="group-empty" class="card" hidden><div class="card-body text-center text-muted py-5">
+                Chưa có nhóm nào. Bấm <b>“Tạo nhóm”</b> để gom máy cùng loại và viết kịch bản cho chúng.</div></div>
+
+              <div id="group-cards" class="group-grid"></div>
             </div>
 
-            <div id="group-empty" class="card"><div class="card-body text-center text-muted py-5">
-              Chưa có nhóm nào. Bấm <b>“Tạo nhóm”</b> để gom máy cùng loại và viết kịch bản cho chúng.</div></div>
+            <!-- TRANG 2: quản lý kịch bản + máy của MỘT nhóm -->
+            <div id="group-detail" hidden>
+              <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+                <div class="d-flex align-items-center gap-3">
+                  <button class="btn btn-sm btn-label-secondary" id="btn-group-back" title="Về danh sách nhóm"><i class="ti tabler-arrow-left me-1"></i>Danh sách nhóm</button>
+                  <div>
+                    <h4 class="mb-0" id="group-title">—</h4>
+                    <small class="text-muted" id="group-sub"></small>
+                  </div>
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-sm btn-primary" id="btn-group-save"><i class="ti tabler-device-floppy me-1"></i>Lưu nhóm</button>
+  <button class="btn btn-sm btn-label-danger" id="btn-group-del"><i class="ti tabler-trash me-1"></i>Xoá nhóm</button>
+                </div>
+              </div>
 
-            <div id="group-panel" hidden>
+            <div id="group-panel">
               <!-- cấu hình nhóm -->
-              <div class="card mb-3"><div class="card-body">
+              <div class="card mb-3" id="group-config"><div class="card-body">
                 <div class="row g-3 align-items-end">
                   <div class="col-md-4">
                     <label class="form-label small mb-1">Tên nhóm</label>
                     <input id="group-name" class="form-control form-control-sm" placeholder="VD: iPhone 8 · iOS 16.7">
                   </div>
-                  <div class="col-md-3">
+                  <!-- «Chế độ chạy» + «Số vòng»: tạm ẨN (nhóm mặc định chạy kịch bản đang dùng 1 lần trên mỗi máy). Dữ liệu cũ vẫn giữ. -->
+                  <div class="col-md-3" hidden>
                     <label class="form-label small mb-1">Chế độ chạy</label>
                     <select id="group-mode" class="form-select form-select-sm">
                       <option value="loop">Lặp lại kịch bản</option>
@@ -299,7 +326,7 @@
                       <option value="api">Nhận đơn từ Gateway (API)</option>
                     </select>
                   </div>
-                  <div class="col-md-2" id="group-loops-wrap">
+                  <div class="col-md-2" id="group-loops-wrap" hidden>
                     <label class="form-label small mb-1">Số vòng (0 = ∞)</label>
                     <input id="group-loops" type="number" min="0" value="0" class="form-control form-control-sm">
                   </div>
@@ -328,8 +355,9 @@
                 </div>
               </div></div>
 
-              <div class="row g-4">
-                <!-- trái: thành viên + màn hình thử -->
+              <!-- Trang của nhóm: máy + danh sách kịch bản -->
+              <div id="group-home">
+                <div class="row g-4">
                 <div class="col-lg-5">
                   <div class="card mb-4">
                     <div class="card-header d-flex justify-content-between align-items-center">
@@ -340,7 +368,63 @@
                     </div>
                     <div class="card-body"><div id="group-members"></div></div>
                   </div>
+                </div>
+                <div class="col-lg-7">
+                  <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                      <h5 class="mb-0">Kịch bản <span class="text-muted" style="font-size:.8rem" id="script-count"></span></h5>
+                      <button class="btn btn-sm btn-primary" id="btn-script-new"><i class="ti tabler-plus me-1"></i>Thêm kịch bản</button>
+                    </div>
+                    <div class="card-body">
+                      <div class="text-muted small mb-2" id="script-hint"></div>
+                      <div id="script-list"></div>
+                    </div>
+                  </div>
+                </div>
+                </div>
+              </div>
 
+              <!-- Trình sửa 1 kịch bản (các bước + màn hình thử) -->
+              <div id="script-editor" hidden>
+                <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+                  <div class="d-flex align-items-center gap-3 flex-grow-1">
+                    <button class="btn btn-sm btn-label-secondary" id="btn-script-back" title="Về trang của nhóm"><i class="ti tabler-arrow-left me-1"></i>Về nhóm</button>
+                    <div class="flex-grow-1" style="max-width:420px">
+                      <label class="form-label small mb-1" id="script-name-label">Tên kịch bản</label>
+                      <input id="script-name" class="form-control form-control-sm" placeholder="VD: Đăng nhập + mua gói" maxlength="80">
+                    </div>
+                    <div id="script-phase-title" class="fw-medium" hidden></div>
+                  </div>
+                </div>
+                <!-- Cách chạy của KỊCH BẢN này: 1 lần / lặp, chạy trên những máy nào, Chạy / Dừng. Một máy chỉ chạy một kịch bản một lúc. -->
+                <div class="card mb-4" id="script-run-card">
+                  <div class="card-body">
+                    <div class="row g-3 align-items-start">
+                      <div class="col-md-2">
+                        <label class="form-label small mb-1">Cách chạy</label>
+                        <select id="script-mode" class="form-select form-select-sm">
+                          <option value="once">Chạy 1 lần</option>
+                          <option value="loop">Lặp lại</option>
+                        </select>
+                      </div>
+                      <div class="col-md-2" id="script-loops-wrap" hidden>
+                        <label class="form-label small mb-1">Số vòng (0 = ∞)</label>
+                        <input id="script-loops" type="number" min="0" max="100000" value="0" class="form-control form-control-sm">
+                      </div>
+                      <div class="col-md">
+                        <label class="form-label small mb-1">Chạy trên máy</label>
+                        <div id="script-machines" class="script-machines"></div>
+                      </div>
+                      <div class="col-md-auto d-flex gap-2 pt-md-4">
+                        <button class="btn btn-sm btn-success" id="btn-script-run"><i class="ti tabler-player-play me-1"></i>Chạy</button>
+                        <button class="btn btn-sm btn-label-danger" id="btn-script-stop"><i class="ti tabler-player-stop me-1"></i>Dừng</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="row g-4">
+                <div class="col-lg-5">
                   <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                       <h5 class="mb-0">Màn hình thử</h5>
@@ -370,12 +454,10 @@
                     </div>
                   </div>
                 </div>
-
-                <!-- phải: trình dựng kịch bản + log -->
                 <div class="col-lg-7">
                   <div class="card mb-4">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                      <h5 class="mb-0">Kịch bản của nhóm <span class="text-muted" id="step-count"></span></h5>
+                      <h5 class="mb-0">Các bước <span class="text-muted" id="step-count"></span></h5>
                       <button class="btn btn-sm btn-label-secondary" id="btn-flow-test"><i class="ti tabler-player-play me-1"></i>Chạy thử (máy đang chọn)</button>
                     </div>
                     <div class="card-body">
@@ -410,8 +492,12 @@
                       </div>
                     </div>
                   </div>
+                </div>
+                </div>
+              </div>
 
-                  <div class="card">
+              <!-- Nhật ký chung (chạy thử + các máy đang chạy) -->
+                  <div class="card mt-4">
                     <div class="card-header d-flex justify-content-between align-items-center">
                       <h5 class="mb-0">Nhật ký</h5>
                       <button class="btn btn-sm btn-label-secondary" id="btn-clear-log">Xoá log</button>
@@ -420,9 +506,8 @@
                       <pre id="log" class="mb-0"></pre>
                     </div>
                   </div>
-                </div>
-              </div>
             </div>
+            </div><!-- /group-detail -->
           </section>
 
         </div>

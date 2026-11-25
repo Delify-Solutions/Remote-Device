@@ -120,6 +120,12 @@ def pip_install(names):
         names = [names]
     if not names:
         return {"ok": True, "log": "Không có gói nào thiếu."}
+    # Chỉ cài các gói app CẦN (danh sách PACKAGES): tên khác — kể cả tuỳ chọn của pip như «--index-url …» hay địa chỉ git — bị từ chối,
+    # vì `pip install <thứ bất kỳ>` là chạy mã bất kỳ trên máy này.
+    known = {p[1] for p in PACKAGES}
+    bad = [n for n in names if not isinstance(n, str) or n not in known]
+    if bad:
+        return {"ok": False, "log": "Chỉ cài được các gói app cần: %s. Bị từ chối: %s" % (", ".join(sorted(known)), ", ".join(map(str, bad)))}
     rc, log = _run([VENV_PY, "-m", "pip", "install", "--upgrade", *names], timeout=900)
     return {"ok": rc == 0, "log": log[-4000:]}
 

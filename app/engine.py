@@ -100,11 +100,14 @@ def run_step(nav, step, log=print):
         return False, f"lỗi {t}: {e}"
 
 
-def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None):
+def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None, pause_gate=None):
     """Chạy cả flow. Trả list kết quả [{i, type, ok, msg}].
-    stop_check: hàm trả True để DỪNG giữa chừng (dùng khi dừng 1 máy)."""
+    stop_check: hàm trả True để DỪNG giữa chừng (dùng khi dừng 1 máy).
+    pause_gate: hàm được gọi TRƯỚC mỗi bước; đang «tạm dừng» thì nó chặn ở đó (người xử lý tay) cho tới khi tiếp tục hoặc bị dừng."""
     results = []
     for i, step in enumerate(steps):
+        if pause_gate:
+            pause_gate()
         if stop_check and stop_check():
             log("  ⟂ đã dừng theo yêu cầu")
             break

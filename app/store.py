@@ -150,9 +150,11 @@ def save_settings(patch):
     return s
 
 
-# ---- groups (nhóm máy + 1 kịch bản riêng) ----
-# group = {id, name, steps:[...], devices:[board_name...], mode:"loop"|"once"|"api",
-#          loops:int (0=vô hạn), created, updated,
+# ---- groups (nhóm máy + danh sách kịch bản) ----
+# group = {id, name, devices:[board_name...] (một máy có thể ở NHIỀU nhóm), mode:"loop"|"once"|"api" (giao diện nhóm hiện chỉ dùng "once"),
+#          scripts:[{id, name, steps:[...], mode:"once"|"loop", loops:int}] — cách chạy (1 lần / lặp N vòng) nằm TRONG kịch bản;
+#          một máy chỉ chạy một kịch bản một lúc (runner giữ chỗ theo tên máy),
+#          created, updated,
 #          api:{pool, steps:{login:[],otp:[],nav:[],purchase:[],finish:[]},
 #               login_wait, purchase_wait, check_keyboard}}
 # mode "api": máy trống tự xin đơn ở gateway; `api.steps` để TRỐNG giai đoạn nào thì giai
@@ -175,8 +177,51 @@ def api_defaults(api=None):
     return api
 
 
+def norm_scripts(group):
+    """Chuẩn hoá danh sách kịch bản của nhóm. MỖI kịch bản tự mang cách chạy của nó:
+         {id, name, steps:[...], mode:"once"|"loop", loops:int (chỉ khi lặp; 0 = vô hạn)}.
+    Nhóm cũ (chỉ có `steps`, chưa có khoá `scripts`) → thành 1 kịch bản «Kịch bản 1» (id cố định «k1»; chạy theo `mode`/`loops` cũ của nhóm).
+    Có khoá `scripts` (kể cả rỗng) thì danh sách đó là chuẩn — không dựng lại từ `steps` cũ. Nhóm không còn `steps` / `active_script`."""
+    raw = group.get("scripts")
+    if raw is None:
+        old_mode = "loop" if group.get("mode") == "loop" else "once"
+        raw = [{"id": "k1", "name": "Kịch bản 1", "steps": group.get("steps") or [], "mode": old_mode,
+                "loops": group.get("loops", 0 if old_mode == "loop" else 1)}] if group.get("steps") else []
+    scripts, seen = [], set()
+    for s in raw if isinstance(raw, list) else []:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("id") or "")
+        while not sid or sid in seen:
+            sid = uuid.uuid4().hex[:6]
+        seen.add(sid)
+        name = str(s.get("name") or "").strip()[:80] or "Kịch bản %d" % (len(scripts) + 1)
+        steps = s.get("steps")
+        mode = "loop" if s.get("mode") == "loop" else "once"
+        try:
+            loops = max(0, min(100000, int(s.get("loops", 0 if mode == "loop" else 1))))
+        except (TypeError, ValueError):
+            loops = 0 if mode == "loop" else 1
+        scripts.append({"id": sid, "name": name, "steps": list(steps) if isinstance(steps, list) else [], "mode": mode, "loops": loops})
+    group["scripts"] = scripts
+    group.pop("steps", None)
+    group.pop("active_script", None)
+    return group
+
+
+def pick_script(group, ref=None):
+    """Kịch bản của nhóm theo id hoặc tên (không phân biệt hoa thường / dấu cách thừa); `ref` rỗng → chỉ khi nhóm có ĐÚNG 1 kịch bản.
+    Không tìm ra / mơ hồ → None."""
+    scripts = group.get("scripts") or []
+    if not ref:
+        return scripts[0] if len(scripts) == 1 else None
+    want = " ".join(str(ref).split()).lower()
+    hits = [s for s in scripts if s["id"] == ref] or [s for s in scripts if " ".join(s["name"].split()).lower() == want]
+    return hits[0] if len(hits) == 1 else None
+
+
 def get_groups():
-    _ensure(); return _read(GROUPS_FILE)
+    _ensure(); return [norm_scripts(g) for g in _read(GROUPS_FILE)]
 
 
 def get_group(group_id):
@@ -192,11 +237,14 @@ def save_group(group):
     if not group.get("id"):
         group["id"] = uuid.uuid4().hex[:8]
         group["created"] = time.time()
-    group.setdefault("steps", [])
+    norm_scripts(group)
     group.setdefault("devices", [])
     if group.get("mode") not in ("loop", "once", "api"):
-        group["mode"] = "loop"
-    group.setdefault("loops", 0)
+        group["mode"] = "once"                       # «api» = nhóm nhận đơn từ gateway; còn lại nhóm chạy các kịch bản của nó
+    try:
+        group["loops"] = max(0, min(100000, int(group.get("loops", 1))))
+    except (TypeError, ValueError):
+        group["loops"] = 1
     group["api"] = api_defaults(group.get("api"))
     group["updated"] = time.time()
     for i, g in enumerate(groups):
@@ -215,24 +263,56 @@ def delete_group(group_id):
     return True
 
 
+def groups_of_device(name):
+    """Mọi nhóm (list dict) có máy `name` — một máy có thể ở NHIỀU nhóm."""
+    return [g for g in get_groups() if name in g.get("devices", [])]
+
+
 def group_of_device(name):
-    """Trả group (dict) chứa máy `name`, hoặc None."""
-    for g in get_groups():
-        if name in g.get("devices", []):
-            return g
-    return None
+    """Nhóm đầu tiên chứa máy `name`, hoặc None (giữ cho chỗ cũ chỉ cần biết «có ở nhóm nào không»)."""
+    gs = groups_of_device(name)
+    return gs[0] if gs else None
 
 
-def set_device_group(name, group_id):
-    """Gán máy vào 1 nhóm (gỡ khỏi nhóm cũ). group_id=None/"" = bỏ khỏi mọi nhóm."""
+def add_device_to_group(name, group_id):
+    """Thêm máy vào nhóm `group_id` (giữ nguyên các nhóm khác của máy). False nếu nhóm không tồn tại."""
     groups = get_groups()
+    g = next((x for x in groups if x["id"] == group_id), None)
+    if g is None:
+        return False
+    if name not in g.setdefault("devices", []):
+        g["devices"].append(name)
+        _write(GROUPS_FILE, groups)
+    return True
+
+
+def remove_device_from_group(name, group_id):
+    """Bỏ máy khỏi MỘT nhóm (các nhóm khác của máy giữ nguyên). False nếu nhóm không tồn tại."""
+    groups = get_groups()
+    g = next((x for x in groups if x["id"] == group_id), None)
+    if g is None:
+        return False
+    if name in g.get("devices", []):
+        g["devices"] = [d for d in g["devices"] if d != name]
+        _write(GROUPS_FILE, groups)
+    return True
+
+
+def rename_in_groups(old_name, new_name):
+    """Máy đổi tên (nạp lại firmware) → đổi tên trong MỌI nhóm chứa nó, giữ vị trí."""
+    if not old_name or not new_name or old_name == new_name:
+        return
+    groups = get_groups()
+    changed = False
     for g in groups:
         devs = g.get("devices", [])
-        if name in devs and g["id"] != group_id:
-            g["devices"] = [d for d in devs if d != name]
-    if group_id:
-        for g in groups:
-            if g["id"] == group_id and name not in g.get("devices", []):
-                g.setdefault("devices", []).append(name)
-    _write(GROUPS_FILE, groups)
-    return True
+        if old_name in devs:
+            out = []
+            for d in devs:
+                d = new_name if d == old_name else d
+                if d not in out:
+                    out.append(d)
+            g["devices"] = out
+            changed = True
+    if changed:
+        _write(GROUPS_FILE, groups)
