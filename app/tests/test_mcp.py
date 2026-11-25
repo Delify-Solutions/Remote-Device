@@ -388,7 +388,7 @@ def run_all(tmp, real_ocr):
     nav1.h = TB.FakeBoard([TB.GOOD])
     r = call(server, "board_health", {"device": "iPhoneFarm-01"})
     sc = r["result"].get("structuredContent") or {}
-    ok(r["result"]["isError"] is False and "KHOẺ" in body(r) and sc.get("level") == "ok" and sc.get("heap") == 152000 and "temp_c" in sc and nav1.h.soft == 0,
+    ok(r["result"]["isError"] is False and "KHOẺ" in body(r) and sc.get("level") == "ok" and sc.get("heap") == 152000 and sc.get("tot") == 330000 and "temp_c" not in sc and nav1.h.soft == 0,
        "board_health: board khoẻ → báo KHOẺ kèm RAM / thời gian chạy / lý do reset, không reset gì", body(r))
     nav1.h = TB.FakeBoard([TB.line(heap=18000, min=9000), TB.GOOD])
     r = call(server, "board_health", {"device": "iPhoneFarm-01"})
@@ -799,6 +799,46 @@ def run_all(tmp, real_ocr):
         with gui._Using("A") as why:
             ok(why is None and "giao diện app" in (gui.CLAIMS.acquire("A", "ai") or ""), "giao diện đang chạy thử trên máy A → AI xin máy bị từ chối")
         ok(gui.CLAIMS.names() == [] and api2.esp_chip("/dev/cu.A").get("ok") is True, "chạy thử xong thì máy được nhả")
+
+        # --- nút «Khởi động lại» / «Huỷ kết nối BT» của thẻ board ---
+        import test_board as TB
+        board_a = TB.FakeBoard([TB.line(up=5000), TB.line(up=2)])
+        gui.MGR.sessions = {"A": types.SimpleNamespace(h=board_a, close=lambda: None)}
+        saved_running = gui.RUNNER.is_running
+        gui.RUNNER.is_running = lambda n: n == "A"
+        r1, r2 = api2.board_restart("A"), api2.board_disconnect_bt("A", 30)
+        gui.RUNNER.is_running = saved_running
+        ok(r1["ok"] is False and r2["ok"] is False and "đang chạy" in r1["error"] and board_a.soft == 0 and board_a.disc == [],
+           "máy ĐANG CHẠY → «Khởi động lại» và «Huỷ kết nối BT» đều bị từ chối, board không nhận lệnh nào", (r1, r2, board_a.soft, board_a.disc))
+        ok(gui.CLAIMS.acquire("A", "ai") is None, "(AI đang điều khiển máy A)")
+        r1, r2 = api2.board_restart("A"), api2.board_disconnect_bt("A", 30)
+        gui.CLAIMS.release("A", "ai")
+        ok(r1["ok"] is False and r2["ok"] is False and "AI" in r1["error"] and board_a.soft == 0 and board_a.disc == [],
+           "máy đang được AI / dòng lệnh điều khiển → cả hai nút bị từ chối", (r1, r2))
+        r = api2.board_restart("A")
+        ok(r["ok"] is True and "reset mềm" in r["msg"] and board_a.soft == 1 and gui.CLAIMS.names() == [], "máy rảnh → khởi động lại được, nêu rõ kiểu reset, xong thì nhả máy", r)
+        board_a = TB.FakeBoard([TB.line(up=5000), TB.line(up=2)]); board_a.ignore_reset = True
+        gui.MGR.sessions = {"A": types.SimpleNamespace(h=board_a, close=lambda: None)}
+        r = api2.board_restart("A")
+        ok(r["ok"] is True and "reset cứng" in r["msg"] and board_a.hard == 1, "board đơ (không nghe lệnh reset) → nút vẫn khởi động lại được bằng reset cứng", r)
+        board_a = TB.FakeBoard([TB.GOOD, TB.line(ble="disconnected")])
+        gui.MGR.sessions = {"A": types.SimpleNamespace(h=board_a, close=lambda: None)}
+        r = api2.board_disconnect_bt("A", 30)
+        ok(r["ok"] is True and board_a.disc == ["disconnect 30"] and "30 giây" in r["msg"], "«Huỷ kết nối BT» → gửi disconnect 30, báo sau 30 giây iPhone tự nối lại", r)
+        # board CHƯA gán iPhone (không có phiên Nav): vẫn dùng được, mở tay riêng rồi đóng
+        board_c = TB.FakeBoard([TB.line(up=5000), TB.line(up=2)])
+        gui.MGR.sessions = {}
+        gui.MGR.board_map = {"C": "/dev/cu.C"}
+        real_hands = gui.Hands
+        gui.Hands = lambda port: board_c if port == "/dev/cu.C" else None
+        try:
+            r = api2.board_restart("C")
+        finally:
+            gui.Hands = real_hands
+        ok(r["ok"] is True and board_c.soft == 1 and board_c.ser.closed is True, "board chưa gán iPhone / chưa có phiên → vẫn khởi động lại được, KHÔNG đòi UDID, và đóng cổng sau khi xong", (r, board_c.ser.closed))
+        gui.MGR.board_map = {}
+        r = api2.board_restart("Z")
+        ok(r["ok"] is False and "Quét board" in r["error"], "board không có trong lượt quét → báo rõ, không treo")
     finally:
         (gui.MGR.board_map, gui.MGR.sessions, gui.esp.list_boards, gui.esp.probe, gui.esp.chip_info, gui.store.get_devices, gui._push, gui.store.get_group, gui.Api._runnable) = saved
 

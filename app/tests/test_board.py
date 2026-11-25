@@ -34,18 +34,19 @@ def ok(cond, name, ctx=None):
         FAIL += 1; print("  ✗", name, "→", ctx if ctx is not None else "")
 
 
-GOOD = "OK ble=connected fw=2 up=7300 heap=152000 min=118000 blk=110000 rst=poweron rxerr=0 ovf=0 drop=0 cmds=412 temp=47.2"
+GOOD = "OK ble=connected fw=3 up=7300 heap=152000 tot=330000 min=118000 blk=110000 rst=poweron rxerr=0 ovf=0 drop=0 cmds=412"
 
 
 def line(**kw):
-    d = dict(ble="connected", fw=2, up=7300, heap=152000, min=118000, blk=110000, rst="poweron", rxerr=0, ovf=0, drop=0, cmds=412, temp=47.2)
+    d = dict(ble="connected", fw=3, up=7300, heap=152000, tot=330000, min=118000, blk=110000, rst="poweron", rxerr=0, ovf=0, drop=0, cmds=412)
     d.update(kw)
     return "OK ble=%s " % d.pop("ble") + " ".join("%s=%s" % kv for kv in d.items())
 
 
 class FakeSer:
-    def __init__(self): self.dtr, self.rts, self.log = False, False, []
+    def __init__(self): self.dtr, self.rts, self.log, self.closed = False, False, [], False
     def reset_input_buffer(self): self.log.append("flush")
+    def close(self): self.closed = True
 
 
 class FakeBoard:
@@ -54,6 +55,7 @@ class FakeBoard:
         self.dead = dead                      # chết hẳn: reset xong vẫn im
         self.states, self.i, self.silent, self.sent, self.ser, self._rx = states, 0, silent_first, [], FakeSer(), b""
         self.hard = 0; self.soft = 0; self.ble_waits = 0
+        self.disc, self.disc_reply = [], None         # các lệnh disconnect đã nhận / câu trả lời ép sẵn (None = trả lời như firmware v3)
         outer = self
         class RtsWatch:
             def __init__(s): s._rts = False
@@ -66,7 +68,10 @@ class FakeBoard:
                 s._rts = v
             dtr = False
             def reset_input_buffer(s): pass
+            closed = False
+            def close(s): s.closed = True
         self.ser = RtsWatch()
+        self.ignore_reset = False                     # board «đơ»: nhận lệnh reset nhưng KHÔNG khởi động lại
 
     def send(self, cmd, wait=0.5):
         self.sent.append(cmd)
@@ -77,8 +82,20 @@ class FakeBoard:
         if cmd == "ping": return "pong"
         if cmd == "status": return st
         if cmd == "reset":
-            self.soft += 1; self.i = min(self.i + 1, len(self.states) - 1); return "OK reset"
+            self.soft += 1
+            if not self.ignore_reset:
+                self.i = min(self.i + 1, len(self.states) - 1)
+            return "OK reset"
+        if cmd.startswith("disconnect"):
+            self.disc.append(cmd)
+            if self.disc_reply is not None:
+                return self.disc_reply
+            self.i = min(self.i + 1, len(self.states) - 1)          # sau lệnh: trạng thái kế (iPhone đã rớt)
+            return "OK disconnect hold=%s" % (cmd.split()[1] if len(cmd.split()) > 1 else "30")
         return "OK " + cmd
+
+    def status(self):                                 # như Hands.status()
+        return self.send("status")
 
     def wait_connected(self, timeout=15.0):
         self.ble_waits += 1
@@ -88,12 +105,12 @@ class FakeBoard:
 def main():
     print("== 1. Đọc dòng status ==")
     h = bh.parse_status(GOOD)
-    ok(h and h["connected"] and h["fw"] == 2 and h["heap"] == 152000 and h["min"] == 118000 and h["rst"] == "poweron" and h["temp"] == 47.2 and h["cmds"] == 412,
-       "firmware v2: đọc đủ RAM, đáy RAM, lý do reset, nhiệt độ, số lệnh", h)
+    ok(h and h["connected"] and h["fw"] == 3 and h["heap"] == 152000 and h["tot"] == 330000 and h["min"] == 118000 and h["rst"] == "poweron" and h["cmds"] == 412,
+       "firmware v3: đọc đủ RAM trống, TỔNG RAM, đáy RAM, lý do reset, số lệnh", h)
     old = bh.parse_status("OK ble=disconnected")
     ok(old and old["connected"] is False and old["fw"] == 1, "firmware cũ (chỉ có ble=…) vẫn đọc được, coi là fw=1", old)
     ok(bh.parse_status("pong") is None and bh.parse_status("") is None and bh.parse_status("ERR cmd?") is None and bh.parse_status("OK click") is None, "dòng khác không bị nhận nhầm là status")
-    ok(bh.parse_status("OK ble=connected fw=2 up=abc heap=1 temp=x")["heap"] == 1, "giá trị hỏng chỉ bị bỏ qua, không làm đổ cả dòng")
+    ok(bh.parse_status("OK ble=connected fw=3 up=abc heap=1 tot=zz")["heap"] == 1, "giá trị hỏng chỉ bị bỏ qua, không làm đổ cả dòng")
     inf = bh.parse_info("OK info chip=ESP32-D0WD-V3 rev=3 cores=2 mhz=240 flash=4096k sdk=v4.4.7")
     ok(inf and inf["chip"] == "ESP32-D0WD-V3" and inf["cores"] == 2 and inf["mhz"] == 240 and inf["flash"] == "4096k", "dòng info: chip, số lõi, xung nhịp, flash", inf)
 
@@ -108,9 +125,8 @@ def main():
     ok(c["heap_floor"]["level"] == "warn" and c["heap_floor"]["reset"] is False, "RAM trống bình thường nhưng từng chạm đáy 15 KB → chỉ ghi nhận, không cần reset")
     c = codes(line(blk=8000))
     ok(c["heap_frag"]["reset"] is True, "mảng RAM liền lớn nhất nhỏ → phân mảnh, reset giúp được")
-    ok(bh.temp_of(bh.parse_status(line(temp=53.3))) is None and "hot" not in codes(line(temp=53.3)) and "không có cảm biến" in bh.summary(bh.parse_status(line(temp=53.3))),
-       "ESP32 gốc luôn báo đúng 53.3 °C (không có cảm biến thật) → bỏ qua, không dùng để đánh giá, nói rõ trong tóm tắt")
-    ok(codes(line(temp=85.0))["hot"]["level"] == "warn" and codes(line(temp=99.0))["hot"]["level"] == "bad" and "hot" not in codes(line(temp=60.0)), "nhiệt độ thô: ≥80 cảnh báo, ≥95 nặng, 60 thì bình thường")
+    ok(not hasattr(bh, "temp_of") and "°C" not in bh.summary(bh.parse_status(GOOD)),
+       "nhiệt độ ĐÃ BỎ (ESP32 gốc luôn báo 53,3 °C = không có cảm biến thật): không còn trong tóm tắt / dữ liệu giao diện")
     c = codes(line(up=120, rst="brownout"))
     ok(c["brownout"]["level"] == "bad" and c["brownout"]["reset"] is False and "USB" in c["brownout"]["text"], "vừa tự reset vì SỤT NGUỒN → nặng, chỉ dẫn đổi cáp/hub (reset không giúp)")
     ok("brownout" not in codes(line(up=50000, rst="brownout")), "…nhưng đã chạy ổn từ lâu thì lý do reset cũ không còn đáng báo")
@@ -118,12 +134,54 @@ def main():
     ok(codes(line(rxerr=3))["rxerr"]["level"] == "warn", "serial từng tràn / lỗi khung → cảnh báo")
     ok(codes(line(up=1800, drop=5))["ble_drops"]["level"] == "warn" and "ble_drops" not in codes(line(up=36000, drop=5)) and "ble_drops" not in codes(line(up=600, drop=2)),
        "BLE rớt liên tục (≥3 lần và >6 lần/giờ) → cảnh báo; thỉnh thoảng thì không")
-    f = bh.assess(bh.parse_status(line(heap=20000, temp=85.0, rxerr=1)))
+    f = bh.assess(bh.parse_status(line(heap=20000, rxerr=1)))
     ok([x["level"] for x in f] == sorted([x["level"] for x in f], key=lambda l: -bh._ORDER[l]) and bh.level_of(f) == "bad", "nhiều phát hiện: nặng nhất đứng đầu, mức chung = nặng nhất")
     ok(bh.assess(None)[0]["code"] == "silent" and bh.level_of(bh.assess(None)) == "bad", "board im → nặng")
     ok(bh.assess(bh.parse_status("OK ble=connected"))[0]["code"] == "old_fw", "firmware cũ → chỉ gợi ý nạp lại (không bắt lỗi)")
     s = bh.summary(bh.parse_status(GOOD))
-    ok("152" not in s and "148 KB" in s and "2 giờ" in s and "poweron" in s and "47 °C" in s, "tóm tắt một dòng cho người đọc", s)
+    ok("RAM dùng 173 / 322 KB (54%)" in s and "2 giờ" in s and "poweron" in s and "BLE rớt 0" in s, "tóm tắt một dòng: RAM ĐÃ DÙNG / TỔNG, thời gian chạy, lý do reset", s)
+    ok(bh.ram_of(bh.parse_status(GOOD)) == (178000, 330000, 54) and bh.ram_of(bh.parse_status("OK ble=connected fw=2 up=5 heap=100000")) == (None, None, None)
+       and "RAM trống 97 KB" in bh.summary(bh.parse_status("OK ble=connected fw=2 up=5 heap=100000 min=90000 blk=80000 rst=poweron drop=0")),
+       "RAM dùng/tổng tính đúng từ heap & tot; firmware v2 (chưa báo tổng) → chỉ nói «RAM trống», không bịa số tổng")
+    v = bh.view(GOOD)
+    ok(v["ram_used"] == 178000 and v["ram_total"] == 330000 and v["ram_pct"] == 54 and v["connected"] is True and v["level"] == "ok", "dữ liệu cho giao diện có ram_used / ram_total / ram_pct / connected", v)
+
+    print("\n== 2b. Huỷ kết nối Bluetooth (lệnh disconnect) ==")
+    b = FakeBoard([GOOD, line(ble="disconnected")])
+    r = bh.disconnect_bt(b, 30)
+    ok(r["ok"] is True and not r.get("none") and r["hold"] == 30 and b.disc == ["disconnect 30"], "iPhone đang nối → gửi «disconnect 30», chờ thấy ble=disconnected rồi báo xong", (r, b.disc))
+    b = FakeBoard([line(ble="disconnected")]); b.disc_reply = "OK disconnect none"
+    r = bh.disconnect_bt(b)
+    ok(r["ok"] is True and r["none"] is True, "không có iPhone nào đang nối → báo «không có gì để huỷ», không lỗi", r)
+    for rep in ("ERR cmd?", "ERR not-connected"):
+        b = FakeBoard([GOOD]); b.disc_reply = rep
+        r = bh.disconnect_bt(b)
+        ok(r["ok"] is False and "firmware cũ" in r["error"], "firmware v2 (không có lệnh) trả «%s» → báo rõ cần nạp lại firmware" % rep, r)
+    b = FakeBoard([GOOD]); b.disc_reply = ""
+    r = bh.disconnect_bt(b)
+    ok(r["ok"] is False and "không trả lời" in r["error"] and "firmware cũ" not in r["error"], "board IM (không phải firmware cũ) → nói «không trả lời», đừng bảo nạp lại firmware oan", r)
+    b = FakeBoard([GOOD]); b.disc_reply = "ERR no-peer"
+    r = bh.disconnect_bt(b)
+    ok(r["ok"] is False and "không tìm thấy kết nối" in r["error"], "ERR no-peer → câu tiếng Việt dễ hiểu, không hiện mã thô", r)
+    ok("đang giữ huỷ BT (còn 12 s)" in bh.summary(bh.parse_status(line(bthold=12))) and "đang giữ" not in bh.summary(bh.parse_status(GOOD)),
+       "đang trong thời gian giữ huỷ BT thì tóm tắt nói rõ còn bao nhiêu giây (người vận hành / AI không tưởng BT hỏng)")
+    b = FakeBoard([GOOD]); b.disc_reply = "OK disconnect hold=30"
+    r = bh.disconnect_bt(b, 30, wait=2.0)
+    ok(r["ok"] is False and "chưa rớt" in r["error"], "lệnh nhận rồi mà iPhone vẫn nối → báo thất bại (không giả vờ thành công)", r)
+
+    print("\n== 2c. Khởi động lại có KIỂM CHỨNG (nút «Khởi động lại») ==")
+    b = FakeBoard([line(up=5000), line(up=2)])
+    r = bh.restart(b)
+    ok(r == {"ok": True, "how": "mềm"} and b.soft == 1 and b.hard == 0, "board nhận lệnh reset và uptime về nhỏ → xong bằng reset mềm", (r, b.soft, b.hard))
+    b = FakeBoard([line(up=5000), line(up=2)]); b.ignore_reset = True
+    r = bh.restart(b)
+    ok(r == {"ok": True, "how": "cứng"} and b.soft == 1 and b.hard == 1, "board «đơ»: trả OK reset mà KHÔNG khởi động lại (uptime vẫn lớn) → tự chuyển sang reset CỨNG (chân EN)", (r, b.soft, b.hard))
+    b = FakeBoard([line(up=5000)], silent_first=10 ** 12, dead=True)
+    r = bh.restart(b)
+    ok(r["ok"] is False and r["how"] == "cứng" and b.hard == 1, "board chết hẳn → thử reset cứng MỘT lần rồi báo hỏng (không lặp vô hạn)", (r, b.hard))
+    b = FakeBoard(["OK ble=connected"])
+    r = bh.restart(b)
+    ok(r["how"] == "cứng" and b.hard == 1, "firmware v1 (không có `up`, không có lệnh reset) → không kiểm chứng được → reset cứng", (r, b.hard))
 
     print("\n== 3. Tự phục hồi (lúc rảnh) ==")
     b = FakeBoard([GOOD])

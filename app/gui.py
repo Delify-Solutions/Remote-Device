@@ -16,6 +16,7 @@ import webview
 
 import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth
 from nav import Nav
+from hands import Hands
 from eyes import Eyes
 from runner import Runner
 from gateway import Gateway, GatewayError
@@ -58,6 +59,24 @@ class Manager:
             if d["name"] == name:
                 return d.get("udid")
         return None
+
+    def hands(self, name):
+        """Tay (cổng serial) của board `name` cho thao tác lẻ KHÔNG cần iPhone (khởi động lại, huỷ kết nối BT): dùng lại phiên đang mở nếu có;
+        chưa có thì mở riêng một Hands (không đòi gán UDID, không chờ BLE). Trả (hands, hàm_đóng)."""
+        with self.lock:
+            nav = self.sessions.get(name)
+            if nav is not None:
+                return nav.h, (lambda: None)
+        self.scan_idle.wait(20)
+        with self.lock:
+            nav = self.sessions.get(name)
+            if nav is not None:
+                return nav.h, (lambda: None)
+            port = self.board_map.get(name)
+        if not port:
+            raise RuntimeError(f"Không thấy board '{name}' (bấm Quét board)")
+        h = Hands(port)
+        return h, (lambda: h.ser.close())
 
     def session(self, name):
         with self.lock:
@@ -483,6 +502,48 @@ class Api:
                 return {"ok": True, "status": st, "health": boardhealth.view(st)}
             except Exception as e:
                 return {"ok": False, "error": str(e)}
+
+    def _board_op(self, name, fn):
+        """Thao tác lẻ trên board của máy `name` (khởi động lại / huỷ kết nối BT): không chen vào máy đang chạy hay đang được điều khiển."""
+        if RUNNER.is_running(name):
+            return {"ok": False, "error": "Máy đang chạy — dừng máy (tab Nhóm & Kịch bản) rồi mới làm được."}
+        with _Using(name) as why:
+            if why:
+                return {"ok": False, "error": why}
+            try:
+                hands, close = MGR.hands(name)
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+            try:
+                return fn(hands)
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+            finally:
+                close()
+
+    def board_restart(self, name):
+        """KHỞI ĐỘNG LẠI board ESP32 (lệnh `reset`); Bluetooth rớt vài giây rồi iPhone đã ghép tự nối lại."""
+        def run(hands):
+            r = boardhealth.restart(hands)
+            if not r["ok"]:
+                return {"ok": False, "error": "Board không khởi động lại được (đã thử cả reset cứng) — kiểm tra cáp USB / nguồn."}
+            back = hands.wait_connected(20)
+            health = boardhealth.view(hands.status())
+            return {"ok": True, "msg": "Đã khởi động lại board %s (reset %s) — %s." % (name, r["how"], "iPhone đã nối lại Bluetooth" if back else "iPhone chưa nối lại Bluetooth (đợi thêm vài giây rồi bấm «Dò lại»)"),
+                    "health": health}
+        return self._board_op(name, run)
+
+    def board_disconnect_bt(self, name, hold=30):
+        """HUỶ kết nối Bluetooth với iPhone đang nối; board ngừng quảng bá `hold` giây rồi iPhone đã ghép tự nối lại."""
+        def run(hands):
+            r = boardhealth.disconnect_bt(hands, int(hold))
+            if not r["ok"]:
+                return {"ok": False, "error": r.get("error") or "không huỷ được kết nối"}
+            if r.get("none"):
+                return {"ok": True, "msg": "Board %s hiện không nối với iPhone nào." % name, "health": boardhealth.view(hands.status())}
+            return {"ok": True, "msg": "Đã huỷ kết nối Bluetooth của board %s; %s." % (
+                name, ("sau %d giây iPhone sẽ tự nối lại" % int(hold)) if int(hold) > 0 else "iPhone sẽ tự nối lại ngay"), "health": boardhealth.view(hands.status())}
+        return self._board_op(name, run)
 
     # ---- điều khiển lẻ (dùng trong trình dựng bước) ----
     def run_step(self, name, step):

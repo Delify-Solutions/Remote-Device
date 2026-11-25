@@ -312,17 +312,24 @@ Soak qua đường `farm` → app → board → iPhone: 8 vòng (mở Cài đặ
 
 Nhịp của **bàn phím** (gõ, phím, mở app qua Spotlight) được giữ như cũ có chủ đích: nhấn Enter sớm thì Spotlight chưa kịp chọn app.
 
-### Board ESP32: sức khoẻ, tự reset, kiểm thử (firmware v2)
-Firmware (`app/firmware/esp32_hid/esp32_hid.ino`, `FW_VERSION 2`) nay báo được và tự bảo vệ:
-- `status` → `OK ble=… fw=2 up=<giây> heap=<RAM trống> min=<đáy RAM> blk=<mảng liền lớn nhất> rst=<lý do reset lần trước> rxerr=… ovf=… drop=<số lần BLE rớt> cmds=… temp=…`;
-  `info` → chip, lõi, xung nhịp, flash; `reset` → khởi động lại (chạy được cả khi chưa nối BLE).
+### Board ESP32: sức khoẻ, tự reset, nút Khởi động lại / Huỷ kết nối BT, kiểm thử (firmware v3)
+Firmware (`app/firmware/esp32_hid/esp32_hid.ino`, `FW_VERSION 3`) nay báo được và tự bảo vệ:
+- `status` → `OK ble=… fw=3 up=<giây> heap=<RAM trống> tot=<TỔNG RAM heap> min=<đáy RAM> blk=<mảng liền lớn nhất> rst=<lý do reset lần trước> rxerr=… ovf=… drop=<số lần BLE rớt> cmds=… [bthold=<giây còn lại>]`;
+  `info` → chip, lõi, xung nhịp, flash; `reset` → khởi động lại (chạy được cả khi chưa nối BLE);
+  `disconnect [giây]` → **huỷ kết nối Bluetooth** với iPhone đang nối và NGỪNG quảng bá `giây` giây (mặc định 30; 0 = quảng bá lại ngay) — nếu không giữ thì
+  iPhone đã ghép nối lại trong <1 s. Hết hạn giữ, iPhone tự nối lại. (Làm bằng cách ghi đè `onDisconnect`: tắt quảng bá ngay trong cùng callback với lúc thư viện bật lại.)
 - Chống tràn: dòng lệnh đọc vào bộ đệm CỐ ĐỊNH 512 byte (dài hơn → `ERR line-too-long`, không ăn dần RAM như `String` nối cũ), bộ đệm nhận serial
   2048 byte (mặc định 256 → gửi dồn nhiều lệnh khi board đang bận thì rớt lệnh), watchdog (`loop()` kẹt quá ~5 s → tự reset, lý do báo là `panic` hoặc `task_wdt` tuỳ cấu hình core),
   RAM < 24 KB lúc rảnh → tự khởi động lại sớm.
-- **Nhiệt độ**: ESP32 gốc (D0WD) luôn trả đúng 53,3 °C — không có cảm biến thật, tool bỏ qua. Số đáng tin: RAM, lý do reset (`brownout` = nguồn USB yếu: đổi cáp / hub có nguồn), BLE rớt, lỗi serial.
+- **Nhiệt độ đã BỎ**: ESP32 gốc (D0WD) luôn trả đúng 53,3 °C — không có cảm biến thật nên không hiển thị. Số đáng tin: RAM, lý do reset (`brownout` = nguồn USB yếu: đổi cáp / hub có nguồn), BLE rớt, lỗi serial.
 - Nạp firmware mới: trang **Thiết bị → Nạp** (hoặc `esp.flash`). Firmware cũ vẫn chạy bình thường, chỉ không có số liệu sức khoẻ.
 
-Trong app / AI: thẻ board ở trang Thiết bị hiện một dòng tóm tắt + cảnh báo; nút «BLE?» ở trình dựng kịch bản hiện sức khoẻ; công cụ MCP/CLI `board_health` (`./farm health [máy]`, chỉ xem) và
+Ghi chú: «tổng RAM» là vùng **heap** của ESP32 (~256 KB khi đã bật BLE), không phải toàn bộ 520 KB SRAM của chip. `disconnect` giữ tối đa 600 s và **cần firmware v3**
+(board chạy firmware cũ báo «nạp lại firmware»); lệnh dùng thư viện ESP32-BLE-Combo (bản nằm trong `.arduino-user`, không vào git) qua hook `onStarted`. Nút **Khởi động lại**
+tự chuyển sang reset cứng (chân EN) nếu board đơ không nghe lệnh `reset`; cả hai nút dùng được cả với board CHƯA gán iPhone (tự mở cổng riêng, không đòi UDID).
+
+Trong app / AI: thẻ board ở tab **ESP32** hiện **RAM đang dùng / tổng** (vd `129 / 256 KB (51%)`), thời gian chạy, lý do reset, cảnh báo, và hai nút **Khởi động lại** (lệnh `reset`, rồi chờ iPhone nối lại)
+và **Huỷ kết nối BT** (giữ 30 s; chỉ hiện khi đang nối iPhone) — cả hai bị từ chối khi máy đang chạy / đang được điều khiển; nút «BLE?» ở trình dựng kịch bản hiện sức khoẻ; công cụ MCP/CLI `board_health` (`./farm health [máy]`, chỉ xem) và
 `board_recover` (`./farm recover [máy]`: board im → reset cứng bằng chân EN qua RTS; thiếu RAM / phân mảnh → reset mềm; rồi chờ iPhone nối lại BLE — bị từ chối khi máy đang chạy).
 Bộ chạy nhận đơn tự kiểm board **lúc rảnh** (đầu phiên, rồi mỗi 5 phút, và khi máy báo «chưa sẵn sàng»); **bộ chạy** không bao giờ chủ động reset giữa lúc đang xử lý đơn. (Firmware thì tự khởi động lại khi RAM < 24 KB và 30 s không nhận byte nào — có thể trúng lúc chờ OTP; reset chỉ làm rớt BLE vài giây, không gây thao tác nào lên iPhone.)
 
@@ -332,7 +339,8 @@ Kiểm thử ESP32 (ngoài iPhone):
 ./.venv/bin/python app/tests/test_board.py               # đọc/đánh giá status, quyết định reset, chuỗi phục hồi — board giả, không cần phần cứng
 ./.venv/bin/python app/tests/smoke_board.py iPhoneFarm-03        # board THẬT (tắt app trước): độ trễ, giao thức, gửi dồn, rò RAM, reset mềm/cứng, BLE nối lại
 ```
-Đo trên board thật (iPhoneFarm-03, ESP32-D0WD-V3, firmware v2): ping p50 ≈ 67 ms; 300 lệnh gửi dồn trong một lần ghi không rớt lệnh nào; 500 lệnh ping/status mất 0 byte RAM;
+Huỷ kết nối BT đo trên 2 board có iPhone: iPhone rớt sau ~0,1 s, KHÔNG nối lại trong lúc giữ (còn rớt sau 1,5 s), tự nối lại ~3,8 s sau lệnh `disconnect 3`.
+Đo trên board thật (ESP32-D0WD-V3, firmware v3; RAM heap tổng ≈ 256 KB, đang dùng ≈ 129 KB): ping p50 ≈ 67 ms; 300 lệnh gửi dồn trong một lần ghi không rớt lệnh nào; 500 lệnh ping/status mất 0 byte RAM;
 dòng 700 ký tự bị chặn đúng; reset mềm ≈ 1,7 s, reset cứng qua RTS ≈ 1,7 s.
 
 ### Còn mở

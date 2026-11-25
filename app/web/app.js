@@ -876,7 +876,8 @@ function renderESP() {
         ${(b.vid || b.pid) ? `<div class="row"><span>VID:PID</span><span class="val">${esc(b.vid || "?")}:${esc(b.pid || "?")}</span></div>` : ""}
         ${flashed ? `<div class="row"><span>Tên BLE</span><span class="val esp-name-big">${esc(b.name || "—")}</span></div>` : ""}
         ${flashed ? `<div class="row"><span>Bluetooth</span><span class="val">${b.ble === true ? "✓ đã nối iPhone" : b.ble === false ? "✕ chưa nối" : "?"}</span></div>` : ""}
-        ${(flashed && b.health) ? `<div class="esp-health ${esc(b.health.level)}" title="${esc((b.health.notes || []).join("\n"))}">${esc(b.health.summary)}${(b.health.notes || []).map(n => `<div>⚠ ${esc(n)}</div>`).join("")}</div>` : ""}
+        ${(flashed && b.health && b.health.ram_total) ? `<div class="row"><span>RAM</span><span class="val">dùng ${Math.round(b.health.ram_used / 1024)} / ${Math.round(b.health.ram_total / 1024)} KB (${Number(b.health.ram_pct)}%)</span></div>` : ""}
+        ${(flashed && b.health) ? `<div class="esp-health ${esc(b.health.level)}" title="${esc((b.health.notes || []).join("\n"))}">${esc(b.health.ram_total ? b.health.summary.replace(/^RAM dùng [^·]*· /, "") : b.health.summary)}${(b.health.notes || []).map(n => `<div>⚠ ${esc(n)}</div>`).join("")}</div>` : ""}
       </div>`;
 
     if (loading) {
@@ -890,6 +891,8 @@ function renderESP() {
         <div class="esp-actions">
           <button class="btn btn-sm btn-label-secondary" data-esp="rename" data-port="${esc(b.port)}" data-name="${esc(b.name || "")}">Đổi tên</button>
           <button class="btn btn-sm btn-label-secondary" data-esp="chip" data-port="${esc(b.port)}">Thông tin chip</button>
+          <button class="btn btn-sm btn-label-warning" data-esp="restart" data-port="${esc(b.port)}" data-name="${esc(b.name || "")}" title="Khởi động lại board ESP32 (Bluetooth rớt vài giây rồi iPhone tự nối lại)">Khởi động lại</button>
+          ${b.ble === true ? `<button class="btn btn-sm btn-label-warning" data-esp="btoff" data-port="${esc(b.port)}" data-name="${esc(b.name || "")}" title="Huỷ kết nối Bluetooth với iPhone đang nối (30 giây sau iPhone tự nối lại)">Huỷ kết nối BT</button>` : ""}
           <button class="btn btn-sm btn-danger" data-esp="erase" data-port="${esc(b.port)}">Xoá sạch</button>
         </div>`;
     } else {
@@ -972,6 +975,21 @@ async function handleEsp(action, btn) {
       espSpinner(card, "", false);
       if (r && r.ok) { toast("Đã xoá sạch board", "ok"); showEspLog(card, r.log); await espScan(); }
       else { toast("Xoá thất bại", "bad"); showEspLog(card, (r && r.log) || ""); }
+    } catch (e) { espSpinner(card, "", false); toast("Lỗi: " + e, "bad"); }
+
+  } else if (action === "restart" || action === "btoff") {
+    const name = btn.dataset.name;
+    if (!name) { toast("Board chưa có tên BLE", "warn"); return; }
+    const restart = action === "restart";
+    if (!confirmBox(restart
+        ? `Khởi động lại board «${name}»?\n\nBluetooth rớt vài giây rồi iPhone đã ghép tự nối lại. Không làm được khi máy đang chạy.`
+        : `Huỷ kết nối Bluetooth của board «${name}» với iPhone đang nối?\n\nBoard ngừng quảng bá 30 giây (iPhone không nối lại liền), sau đó iPhone đã ghép tự nối lại. Không làm được khi máy đang chạy.`)) return;
+    espSpinner(card, restart ? "Đang khởi động lại board… (~10s)" : "Đang huỷ kết nối Bluetooth…", true);
+    try {
+      const r = restart ? await API().board_restart(name) : await API().board_disconnect_bt(name, 30);
+      espSpinner(card, "", false);
+      if (r && r.ok) { toast(r.msg, "ok"); await espScan(); }
+      else toast((r && r.error) || "Không làm được", "bad");
     } catch (e) { espSpinner(card, "", false); toast("Lỗi: " + e, "bad"); }
 
   } else if (action === "chip") {

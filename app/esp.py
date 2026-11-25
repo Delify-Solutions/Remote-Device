@@ -159,6 +159,11 @@ def flash(port, name, log=print):
         out("✓ Nạp xong. Chờ board khởi động…")
         time.sleep(2)
         p = probe(port)
+        for _ in range(3):                           # board vừa nạp có lúc chưa kịp trả lời whoami (BLE đang khởi tạo) → hỏi lại, đừng báo lỗi oan
+            if p["flashed"]:
+                break
+            time.sleep(2)
+            p = probe(port)
         out(f"Kiểm tra: {'OK, tên=' + p['name'] if p['flashed'] else 'chưa thấy phản hồi'}")
         return {"ok": p["flashed"], "name": p.get("name"), "log": "\n".join(lines)}
     finally:

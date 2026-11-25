@@ -421,9 +421,7 @@ class Control:
             raise ToolError("Board của máy %s không trả lời lệnh status (đơ hoặc rớt kết nối). Thử board_recover." % name)
         lines = ["Board %s: %s — %s" % (name, {"ok": "KHOẺ", "info": "ổn (có ghi chú)", "warn": "CẢNH BÁO", "bad": "NẶNG"}[h["level"]], h["summary"])]
         lines += ["  • %s" % f["text"] for f in h["findings"]]
-        data = {"device": name, **{k: h[k] for k in ("level", "summary", "findings", "connected", "fw", "up", "heap", "min", "blk", "rst", "drop", "rxerr", "cmds") if k in h}}
-        if boardhealth.temp_of(h) is not None:                # số kẹt cứng 53,3 °C (chip không có cảm biến thật) thì không đưa ra
-            data["temp_c"] = boardhealth.temp_of(h)
+        data = {"device": name, **{k: h[k] for k in ("level", "summary", "findings", "connected", "fw", "up", "heap", "tot", "min", "blk", "rst", "drop", "rxerr", "cmds") if k in h}}
         return Result("\n".join(lines), data)
 
     def board_recover(self, device=None):
@@ -624,9 +622,8 @@ def build_tools(c: Control) -> list:
              {"keys": {"type": "string", "description": "Space-separated, e.g. \"gui h\"."}, "device": _DEV}, ("keys",),
              fn=c.key_combo, destructive=True, cli="combo", positional=("device", "keys"), help="Tổ hợp phím, vd \"gui h\" (về Home), \"gui space\" (tìm kiếm)"),
         Tool("board_health", "Check the ESP32 board health",
-             "Read the health of the ESP32 board that drives a phone: free RAM, uptime, why it last reset (brownout = weak USB power, "
-             "watchdog, crash), Bluetooth drops, serial errors. The chip's temperature is usually a fixed fake value and is ignored. "
-             "Refused while the device runs a script/order.",
+             "Read the health of the ESP32 board that drives a phone: RAM used / total, uptime, why it last reset (brownout = weak USB power, "
+             "watchdog, crash), Bluetooth drops, serial errors. Refused while the device runs a script/order.",
              {"device": _DEV}, fn=c.board_health, read_only=True, idempotent=True, cli="health", positional=("device",),
              help="Sức khoẻ board ESP32: RAM, thời gian chạy, lý do reset, BLE rớt, lỗi serial"),
         Tool("board_recover", "Recover the ESP32 board",

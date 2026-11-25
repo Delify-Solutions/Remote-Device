@@ -15,7 +15,9 @@
       board_online: true, port: "/dev/cu.usbserial-7", ios_connected: false, ios: null, model: null, device_name: null },
   ];
   const BOARDS = [
-    { port: "/dev/cu.usbserial-0001", chip_desc: "CP2102 (Silicon Labs)", vid: 0x10c4, pid: 0xea60, serial: "0001", flashed: true, name: "iPhoneFarm-01", ble: true },
+    { port: "/dev/cu.usbserial-0001", chip_desc: "CP2102 (Silicon Labs)", vid: 0x10c4, pid: 0xea60, serial: "0001", flashed: true, name: "iPhoneFarm-01", ble: true,
+      health: { level: "ok", summary: "RAM dùng 129 / 256 KB (51%) · chạy 14 phút · reset: poweron · BLE rớt 0", notes: [], fw: 3,
+                ram_used: 132096, ram_total: 262144, ram_pct: 50, connected: true, bthold: 0 } },
     { port: "/dev/cu.usbserial-7", chip_desc: "CH340", vid: 0x1a86, pid: 0x7523, serial: null, flashed: false, name: null },
   ];
   const IOS = [
@@ -135,7 +137,9 @@
       ranked: [{ name: "iPhone 8 (demo)", udid: "1111aaaa…", score: 4210 }, { name: "XS Max", udid: "aaaa1111…", score: 60 }],
     }), 1500)),
     screenshot: (n) => P({ ok: true, img: SMALL_PNG, w: 375, h: 667 }),
-    ble_status: (n) => P({ ok: true, status: "OK ble=connected" }),
+    ble_status: (n) => P({ ok: true, status: "OK ble=connected", health: { level: "ok", summary: "RAM dùng 129 / 256 KB (51%) · chạy 14 phút · reset: poweron · BLE rớt 0", notes: [] } }),
+    board_restart: (n) => P({ ok: true, msg: "Đã khởi động lại board " + n + " — iPhone đã nối lại Bluetooth." }),
+    board_disconnect_bt: (n, hold) => P({ ok: true, msg: "Đã huỷ kết nối Bluetooth của board " + n + "; sau " + hold + " giây iPhone sẽ tự nối lại." }),
     run_step: (n, s) => P({ ok: true, msg: "test " + s.type + " OK" }),
     // ---- nhóm & chạy ----
     groups_list: () => P(JSON.parse(JSON.stringify(GROUPS))),

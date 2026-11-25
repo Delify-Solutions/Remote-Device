@@ -9,7 +9,7 @@ Thử BẢN THÂN board ESP32 trên phần cứng thật (không cần iPhone; c
 TẮT app iPhone Farm Manager trước khi chạy (cổng serial của board chỉ một chương trình mở được).
 
 Kiểm: độ trễ lệnh (p50/p95/tối đa), giao thức (lệnh lạ, dòng quá dài, rác), gửi dồn không rớt lệnh (bộ đệm nhận),
-RAM không rò rỉ sau N lệnh, số liệu sức khoẻ hợp lý (RAM, nhiệt độ, lý do reset), reset mềm (lệnh `reset`) và reset cứng
+RAM không rò rỉ sau N lệnh, số liệu sức khoẻ hợp lý (RAM dùng/tổng, lý do reset), huỷ kết nối BT, reset mềm (lệnh `reset`) và reset cứng
 (chân EN qua RTS) đều đưa board về dùng được, BLE nối lại sau reset (nếu có iPhone). Cần firmware v2 (app → Thiết bị → Nạp);
 firmware cũ chỉ kiểm được độ trễ + giao thức cơ bản.
 """
@@ -76,9 +76,9 @@ def main() -> int:
             note("info: chip, lõi, xung nhịp, flash", bool(info and info.get("chip") and info.get("mhz")), (info or {}))
             print("    sức khoẻ: " + st["summary"])
             note("RAM trống hợp lý (> 40 KB)", st["heap"] > 40_000, "%d KB" % (st["heap"] // 1024))
-            tv = bh.temp_of(st)
-            note("nhiệt độ thô hợp lý (0–100 °C), hoặc chip không có cảm biến thật", tv is None or 0 < tv < 100,
-                 ("%.1f °C" % tv) if tv is not None else "luôn 53.3 °C = không có cảm biến thật (chỉ RAM / nguồn / reset là đáng tin)")
+            used, tot, pct = bh.ram_of(st)
+            note("RAM đang dùng / tổng hợp lý (tổng 200–600 KB, đang dùng < 90%)", bool(tot) and 200_000 < tot < 600_000 and pct < 90,
+                 ("dùng %d / %d KB (%d%%)" % (used // 1024, tot // 1024, pct)) if tot else "firmware chưa báo tổng RAM")
             note("không có phát hiện NẶNG", st["level"] != "bad", "; ".join(f["text"] for f in st["findings"]) or "—")
 
         if v2:
@@ -86,7 +86,15 @@ def main() -> int:
             up_a = st["up"]
             h.ser.close()
             time.sleep(3)
-            h = Hands(h.port)                         # mở lại cổng: QuietSerial không được làm board khởi động lại
+            port_ = h.port
+            for attempt in range(8):                  # mở lại cổng: QuietSerial không được làm board khởi động lại (thử lại nếu một lượt dò board khác đang mở thoáng qua)
+                try:
+                    h = Hands(port_)
+                    break
+                except RuntimeError:
+                    if attempt == 7:
+                        raise
+                    time.sleep(0.5 + random.random() * 2)
             st_b = bh.read(h)
             note("mở lại cổng KHÔNG làm board reset (uptime tăng, không về 0)", bool(st_b) and st_b["up"] >= up_a + 2,
                  "up %s → %s s" % (up_a, (st_b or {}).get("up")))
@@ -145,6 +153,16 @@ def main() -> int:
             bad = sum(not (h.send("move 1 0", wait=1.0) == "OK move" and h.send("move -1 0", wait=1.0) == "OK move") for _ in range(30))
             note("30 cặp move +1/−1: đều OK", bad == 0, "lỗi %d" % bad)
             note("nhả nút (up) OK", h.send("up") == "OK up")
+            if v2 and st.get("fw", 1) >= 3:
+                t = time.time()
+                r = bh.disconnect_bt(h, 3)
+                note("HUỶ kết nối BT (disconnect 3): iPhone rớt kết nối", r.get("ok") and not r.get("none"), r.get("error") or "%.1f s" % (time.time() - t))
+                time.sleep(1.5)
+                still_off = "ble=disconnected" in str(h.send("status") or "")
+                note("…trong lúc GIỮ (3 s) board không quảng bá nên iPhone KHÔNG nối lại liền", still_off, "sau 1,5 s " + ("vẫn rớt" if still_off else "ĐÃ nối lại"))
+                back = h.wait_connected(40)
+                dt = time.time() - t
+                note("…hết thời gian giữ, iPhone tự nối lại BLE", back and dt >= 2.5, "%.1f s kể từ lệnh" % dt)
         else:
             print("  (chưa có iPhone nối BLE → bỏ qua; lệnh HID phải trả ERR not-connected)")
             note("chưa nối BLE → lệnh HID trả ERR not-connected (không treo)", h.send("move 1 0", wait=1.0) == "ERR not-connected", h.send("move 1 0", wait=1.0))

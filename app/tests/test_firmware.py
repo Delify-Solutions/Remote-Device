@@ -33,7 +33,17 @@ def main():
     print("== 1. Soi mã nguồn firmware ==")
     cmds = set(re.findall(r'line == "([a-z]+)"', src)) | set(re.findall(r'cmd == "([a-z]+)"', src))
     want = {"ping", "whoami", "status", "info", "reset", "home", "type", "key", "combo", "move", "click", "rclick", "down", "up"}
-    ok(want <= cmds, "đủ lệnh giao thức: " + " ".join(sorted(want)), sorted(want - cmds))
+    ok(want <= cmds and 'startsWith("disconnect ")' in src, "đủ lệnh giao thức: " + " ".join(sorted(want)) + " disconnect", sorted(want - cmds))
+    i_set, i_dis = src.index("btHold = true"), src.index("srv->disconnect(")
+    ok(i_set < i_dis and "else btHold = false;" in src, "đặt btHold TRƯỚC khi ngắt kết nối (onDisconnect cần biết để tắt quảng bá); `disconnect 0` gỡ lần giữ còn sót")
+    ok("if (hold > 600) hold = 600;" in src and "if (hold < 0) hold = 0;" in src and "(int32_t)(millis() - btResumeAt) >= 0" in src,
+       "giới hạn thời gian giữ 0–600 s và so hạn bằng hiệu có dấu (không sai khi millis() tràn số)")
+    ok('" bthold="' in src, "status báo bthold (thời gian giữ còn lại)")
+    ok('line == "disconnect" || line.startsWith("disconnect ")' in src, "chỉ nhận đúng lệnh «disconnect» hoặc «disconnect <số>» (không nhận «disconnectxyz»)")
+    ok("temperatureRead" not in src and "temp=" not in src, "đã bỏ nhiệt độ (ESP32 gốc không có cảm biến thật, luôn báo 53,3 °C)")
+    ok('" tot="' in src and "ESP.getHeapSize()" in src, "status báo TỔNG RAM (tot=) bên cạnh RAM trống (heap=)")
+    ok("class FarmCombo" in src and "void onStarted(BLEServer *s) override" in src and "void onDisconnect(BLEServer *s) override" in src and "BleCombo::onDisconnect(s)" in src and "hid.srv->getPeerDevices(false)" in src and "= BLEDevice::getPeerDevices" not in src and "srv->disconnect(" in src and "stopAdvertising()" in src and "startAdvertising()" in src,
+       "huỷ kết nối BT: lấy máy chủ BLE qua onStarted, ngắt từng kết nối, tắt quảng bá trong thời gian giữ rồi bật lại")
     doc = src.split("#include")[0]
     ok(all(c in doc for c in ("status", "info", "reset")), "đầu tệp ghi rõ các lệnh sức khoẻ (status / info / reset)")
     ok("String buf" not in src and "lineBuf[MAX_LINE" in src and "ERR line-too-long" in src,

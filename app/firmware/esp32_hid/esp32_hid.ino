@@ -6,10 +6,13 @@
  *
  * Lệnh Serial (115200), mỗi dòng kết thúc \n:
  *   ping | whoami
- *   status            OK ble=<connected|disconnected> fw=.. up=<giây> heap=<RAM trống> min=<đáy thấp nhất> blk=<mảng liền lớn nhất>
- *                        rst=<lý do reset lần trước> rxerr=.. ovf=.. drop=<số lần mất BLE> cmds=.. temp=<°C thô>
+ *   status            OK ble=<connected|disconnected> fw=.. up=<giây> heap=<RAM trống> tot=<tổng RAM heap> min=<đáy thấp nhất>
+ *                        blk=<mảng liền lớn nhất> rst=<lý do reset lần trước> rxerr=.. ovf=.. drop=<số lần mất BLE> cmds=..
+ *                        [bthold=<giây còn lại của lần huỷ kết nối>]
  *   info              OK info chip=.. rev=.. cores=.. mhz=.. flash=.. sdk=..
  *   reset             OK reset rồi tự khởi động lại (board đơ hẳn thì Mac reset cứng bằng chân EN qua RTS)
+ *   disconnect [giây] HUỶ kết nối Bluetooth với iPhone đang nối; giữ board KHÔNG quảng bá <giây> giây (mặc định 30, 0 = quảng bá lại
+ *                     ngay) để iPhone không nối lại liền. Hết hạn thì tự quảng bá lại và iPhone đã ghép sẽ tự nối lại.
  *   type <chuỗi>      gõ chuỗi (giữ nguyên khoảng trắng sau "type ")
  *   key <tên>         enter|return|tab|esc|back|space
  *   move <dx> <dy>    di chuột tương đối (mỗi trục tự chia nhỏ nếu > 127)
@@ -17,9 +20,10 @@
  * Trả về 1 dòng "OK..." hoặc "ERR...".
  */
 #include <BleCombo.h>
+#include <BLEDevice.h>        // getPeerDevices / stopAdvertising / startAdvertising (lệnh disconnect)
 #include <esp_system.h>
 
-#define FW_VERSION 2             // 2 = có status sức khoẻ / info / reset / watchdog / chống tràn dòng lệnh
+#define FW_VERSION 3             // 2 = status sức khoẻ / info / reset / watchdog / chống tràn dòng lệnh; 3 = + tổng RAM (tot=), lệnh disconnect, bỏ temp
 #define MAX_LINE 512             // dòng lệnh dài hơn → bỏ cả dòng + "ERR line-too-long" (không để ăn dần RAM)
 #define RX_BUFFER 2048           // bộ đệm nhận serial (mặc định 256: gửi dồn nhiều lệnh khi board đang bận thì tràn, rớt lệnh)
 #define LOW_HEAP 24000           // RAM trống dưới mức này mà board đang rảnh → tự khởi động lại trước khi hỏng hẳn
@@ -34,7 +38,23 @@
 #define DEVICE_NAME "iPhoneFarm-01"
 #endif
 
-BleCombo hid;
+// «Huỷ kết nối có giữ»: sau lệnh `disconnect` board KHÔNG quảng bá cho tới btResumeAt (iPhone đã ghép nối lại trong <1 s nếu quảng bá).
+static volatile bool btHold = false;
+static volatile uint32_t btResumeAt = 0;
+
+// BleCombo giữ con trỏ máy chủ BLE ở biến cục bộ; móc `onStarted` để lấy nó ra dùng cho lệnh `disconnect`.
+class FarmCombo : public BleCombo {
+ public:
+  BLEServer *srv = nullptr;
+ protected:
+  void onStarted(BLEServer *s) override { srv = s; }
+  void onDisconnect(BLEServer *s) override {
+    BleCombo::onDisconnect(s);                          // thư viện bật quảng bá lại ngay khi mất kết nối…
+    if (btHold) BLEDevice::stopAdvertising();           // …đang «huỷ kết nối có giữ» thì tắt NGAY trong cùng callback (iPhone không kịp nối lại)
+  }
+};
+
+FarmCombo hid;
 
 // Bộ đệm dòng lệnh CỐ ĐỊNH (không dùng String nối dần → không phân mảnh / không tràn RAM khi nhận rác không có xuống dòng).
 static char lineBuf[MAX_LINE + 1];
@@ -68,6 +88,7 @@ void doStatus() {
   s += " fw=" + String(FW_VERSION);
   s += " up=" + String(millis() / 1000);
   s += " heap=" + String(ESP.getFreeHeap());
+  s += " tot=" + String(ESP.getHeapSize());
   s += " min=" + String(ESP.getMinFreeHeap());
   s += " blk=" + String(ESP.getMaxAllocHeap());
   s += " rst=" + String(resetName());
@@ -75,7 +96,7 @@ void doStatus() {
   s += " ovf=" + String(lineOverflows);
   s += " drop=" + String(bleDrops);
   s += " cmds=" + String(cmdCount);
-  s += " temp=" + String(temperatureRead(), 1);
+  if (btHold) { int32_t left = (int32_t)(btResumeAt - millis()) / 1000; s += " bthold=" + String(left > 0 ? left : 0); }
   reply(s);
 }
 
@@ -83,6 +104,22 @@ void doInfo() {
   reply(String("OK info chip=") + ESP.getChipModel() + " rev=" + String(ESP.getChipRevision()) +
         " cores=" + String(ESP.getChipCores()) + " mhz=" + String(ESP.getCpuFreqMHz()) +
         " flash=" + String(ESP.getFlashChipSize() / 1024) + "k sdk=" + ESP.getSdkVersion());
+}
+
+// Huỷ kết nối Bluetooth với iPhone đang nối. Thư viện tự bật quảng bá lại ngay khi mất kết nối → iPhone (đã ghép) nối lại liền;
+// nên sau khi mất kết nối ~0,5 s ta TẮT quảng bá `giây` giây, hết hạn mới bật lại (xem loop()).
+void doDisconnect(String arg) {
+  arg.trim();
+  if (!hid.isConnected() || hid.srv == nullptr) { reply("OK disconnect none"); return; }
+  long hold = arg.length() ? arg.toInt() : 30;
+  if (hold < 0) hold = 0;
+  if (hold > 600) hold = 600;
+  auto peers = hid.srv->getPeerDevices(false);       // các kết nối của CHÍNH máy chủ này (BLEDevice::getPeerDevices chỉ liệt kê kết nối phía client → luôn rỗng)
+  if (peers.empty()) { reply("ERR no-peer"); return; }
+  if (hold > 0) { btResumeAt = millis() + (uint32_t)hold * 1000UL; btHold = true; }   // đặt TRƯỚC khi ngắt: onDisconnect cần biết để tắt quảng bá
+  else btHold = false;                                                                  // `disconnect 0` cũng gỡ một lần giữ còn sót
+  for (auto &kv : peers) hid.srv->disconnect(kv.first);
+  reply("OK disconnect hold=" + String(hold));
 }
 
 void doReset() {
@@ -176,6 +213,7 @@ void handle(String line) {
   if (line == "status") { doStatus(); return; }
   if (line == "info") { doInfo(); return; }
   if (line == "reset") { doReset(); return; }
+  if (line == "disconnect" || line.startsWith("disconnect ")) { doDisconnect(line.substring(10)); return; }
   if (line == "home") {                 // slam nhanh con trỏ về góc trên-trái
     if (!hid.isConnected()) { reply("ERR not-connected"); return; }
     for (int i = 0; i < 8; i++) { hid.move(-127, -127); delay(6); }
@@ -219,6 +257,10 @@ void loop() {
     }
   }
   bool c = hid.isConnected();
+  if (btHold && (int32_t)(millis() - btResumeAt) >= 0) {              // hết hạn giữ → quảng bá lại, iPhone đã ghép tự nối lại
+    btHold = false;
+    if (!c) BLEDevice::startAdvertising();
+  }
   if (wasConnected && !c) bleDrops++;          // đếm số lần BLE bị rớt (iPhone đi xa, tắt Bluetooth, board nghẽn…)
   wasConnected = c;
   // Tự chữa: RAM gần cạn mà board đang rảnh → khởi động lại SỚM (lúc không ai nhờ gì) thay vì đơ giữa một lệnh.
