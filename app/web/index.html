@@ -76,8 +76,16 @@
         <li class="menu-item">
           <a class="menu-link app-nav" data-view="flows" href="javascript:void(0)">
             <i class="menu-icon icon-base ti tabler-settings-automation"></i>
-            <div>Kịch bản</div>
+            <div>Nhóm &amp; Kịch bản</div>
             <span class="badge rounded-pill bg-label-secondary ms-auto" id="nav-flow-count">0</span>
+          </a>
+        </li>
+        <li class="menu-header small"><span class="menu-header-text">Tự động hoá</span></li>
+        <li class="menu-item">
+          <a class="menu-link app-nav" data-view="ai" href="javascript:void(0)">
+            <i class="menu-icon icon-base ti tabler-robot"></i>
+            <div>Kết nối AI</div>
+            <span class="badge rounded-pill bg-label-secondary ms-auto" id="nav-ai-state">MCP</span>
           </a>
         </li>
       </ul>
@@ -243,6 +251,18 @@
           </section>
 
           <!-- ---------- VIEW: FLOWS ---------- -->
+          <section class="view" id="view-ai">
+            <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+              <div>
+                <h4 class="mb-1">Kết nối AI &amp; dòng lệnh</h4>
+                <small class="text-muted">Cho AI (qua MCP) hoặc lệnh <span class="mono">farm</span> đọc màn hình iPhone và điều khiển máy.</small>
+              </div>
+              <button class="btn btn-primary" id="btn-ai-refresh"><i class="ti tabler-refresh me-1"></i>Tải lại</button>
+            </div>
+            <div id="ai-body"><div class="api-note">Đang tải…</div></div>
+          </section>
+
+          <!-- ---------- VIEW: NHÓM & KỊCH BẢN ---------- -->
           <section class="view" id="view-flows">
             <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
               <div>
@@ -256,6 +276,7 @@
                 </div>
                 <button class="btn btn-sm btn-primary" id="btn-group-new"><i class="ti tabler-plus me-1"></i>Tạo nhóm</button>
                 <button class="btn btn-sm btn-label-danger" id="btn-group-del"><i class="ti tabler-trash me-1"></i>Xoá nhóm</button>
+                <button class="btn btn-sm btn-label-secondary" id="btn-gw-settings" title="Địa chỉ + khoá của Topup Gateway (để nhóm nhận đơn qua API)"><i class="ti tabler-plug-connected me-1"></i>Gateway <span class="gw-dot" id="gw-dot"></span></button>
               </div>
             </div>
 
@@ -273,17 +294,36 @@
                   <div class="col-md-3">
                     <label class="form-label small mb-1">Chế độ chạy</label>
                     <select id="group-mode" class="form-select form-select-sm">
-                      <option value="loop">Lặp lại</option>
-                      <option value="once">Chạy 1 lần</option>
+                      <option value="loop">Lặp lại kịch bản</option>
+                      <option value="once">Chạy kịch bản 1 lần</option>
+                      <option value="api">Nhận đơn từ Gateway (API)</option>
                     </select>
                   </div>
                   <div class="col-md-2" id="group-loops-wrap">
                     <label class="form-label small mb-1">Số vòng (0 = ∞)</label>
                     <input id="group-loops" type="number" min="0" value="0" class="form-control form-control-sm">
                   </div>
+                  <div class="col-md-2" id="group-pool-wrap" hidden>
+                    <label class="form-label small mb-1">Pool trên gateway</label>
+                    <select id="group-pool" class="form-select form-select-sm"></select>
+                  </div>
                   <div class="col-md-3 d-flex gap-2 justify-content-md-end">
                     <button class="btn btn-sm btn-success" id="btn-group-run"><i class="ti tabler-player-play me-1"></i>Chạy nhóm</button>
                     <button class="btn btn-sm btn-label-danger" id="btn-group-stop"><i class="ti tabler-player-stop me-1"></i>Dừng nhóm</button>
+                  </div>
+                </div>
+
+                <!-- chỉ hiện ở chế độ API -->
+                <div class="api-row" id="group-api-row" hidden>
+                  <div class="api-note" id="gw-state">—</div>
+                  <div class="api-opts">
+                    <label class="api-opt" title="Sau khi bấm đăng nhập, chờ tối đa bao lâu để thấy kết quả (thành công / thất bại / đòi OTP)">
+                      Chờ đăng nhập <input id="api-login-wait" type="number" min="5" max="600" value="45"> giây</label>
+                    <label class="api-opt" title="Sau khi bấm mua, chờ tối đa bao lâu để thấy kết quả. Hết giờ mà không rõ → đơn sang «chờ đối soát»">
+                      Chờ kết quả mua <input id="api-purchase-wait" type="number" min="5" max="600" value="60"> giây</label>
+                    <label class="api-opt" title="Lúc bắt đầu chạy: thử gõ ở Spotlight xem bàn phím có bị Telex đổi chữ không (gõ sai sẽ làm sai mật khẩu của khách)">
+                      <input id="api-kb" type="checkbox" checked> Kiểm tra bàn phím tiếng Anh</label>
+                    <button class="btn btn-sm btn-label-secondary" id="btn-gw-import" title="Chép các bước đang cấu hình trên gateway vào nhóm để sửa riêng cho loại máy này"><i class="ti tabler-download me-1"></i>Lấy bước từ gateway</button>
                   </div>
                 </div>
               </div></div>
@@ -339,6 +379,12 @@
                       <button class="btn btn-sm btn-label-secondary" id="btn-flow-test"><i class="ti tabler-player-play me-1"></i>Chạy thử (máy đang chọn)</button>
                     </div>
                     <div class="card-body">
+                      <!-- chế độ API: mỗi giai đoạn của 1 đơn có danh sách bước riêng -->
+                      <div id="api-phase-box" hidden>
+                        <div class="seg seg-wrap mb-2" id="api-phases"></div>
+                        <div class="api-warn mb-3" id="api-warn" hidden></div>
+                        <div class="api-hint mb-3" id="api-phase-hint"></div>
+                      </div>
                       <label class="form-label small">Thêm bước</label>
                       <div class="add-grid mb-3">
                         <button class="chip" data-add="type">Gõ chữ</button>
@@ -350,6 +396,9 @@
                         <button class="chip" data-add="wait">Chờ</button>
                         <button class="chip" data-add="wait_text">Chờ chữ</button>
                         <button class="chip" data-add="assert_text">Kiểm chữ</button>
+                        <button class="chip" data-add="swipe" title="Lật trang / cuộn">Vuốt</button>
+                        <button class="chip" data-add="hold" title="Bấm giữ tại một toạ độ">Bấm giữ</button>
+                        <button class="chip" data-add="hold_text" title="Bấm giữ vào một chữ trên màn">Giữ chữ</button>
                       </div>
 
                       <label class="form-label small">Các bước</label>
@@ -445,5 +494,6 @@
 
 <!-- App -->
 <script src="app.js"></script>
+<script src="ai.js"></script>
 </body>
 </html>

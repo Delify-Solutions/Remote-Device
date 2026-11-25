@@ -13,12 +13,18 @@ Mỗi bước là dict JSON, ví dụ:
   {"type":"wait","seconds":1.5}
   {"type":"wait_text","text":"Shop","timeout":15}
   {"type":"assert_text","text":"Success"}
+  {"type":"swipe","dir":"left"}                         # left|right (lật trang) | up|down (cuộn)
+  {"type":"swipe","x1":375,"y1":1000,"x2":375,"y2":400} # vuốt theo toạ độ (quãng thực tế chỉ xấp xỉ)
+  {"type":"hold","x":636,"y":468,"seconds":1.2}         # bấm giữ
+  {"type":"hold_text","text":"Sách","seconds":1.2}
 """
 from __future__ import annotations
 import time
 
+import apimode
+
 STEP_TYPES = ["tap", "tap_text", "type", "key", "combo", "home",
-              "launch", "wait", "wait_text", "assert_text"]
+              "launch", "wait", "wait_text", "assert_text", "swipe", "hold", "hold_text"]
 
 
 def run_step(nav, step, log=print):
@@ -27,28 +33,32 @@ def run_step(nav, step, log=print):
     try:
         if t == "tap":
             ok = nav.tap_at(int(step["x"]), int(step["y"]))
-            return ok, f"tap ({step['x']},{step['y']}) {'OK' if ok else 'lệch'}"
+            return ok, f"tap ({step['x']},{step['y']}) {'OK' if ok else 'con trỏ không tới nơi → KHÔNG bấm'}"
         if t == "tap_text":
             ok = nav.tap_text(step["text"])
-            return ok, f"tap_text '{step['text']}' {'OK' if ok else 'không thấy'}"
+            return ok, f"tap_text '{step['text']}' {'OK' if ok else 'không thấy chữ / con trỏ không tới nơi → KHÔNG bấm'}"
+        # Sau mỗi lệnh BÀN PHÍM nghỉ một nhịp (lệnh xuống board giờ trả về ngay khi board làm xong; trước đây mỗi
+        # lệnh tự trễ thêm ~0,4s và các kịch bản đã quen với nhịp đó: ô nhập kịp nhận chữ, kịp chuyển ô sau Tab).
         if t == "type":
-            nav.h.type(step["text"])
+            nav.h.type(step["text"]); time.sleep(0.4)
             return True, f"gõ '{step['text']}'"
         if t == "key":
-            nav.h.key(step["name"])
+            nav.h.key(step["name"]); time.sleep(0.4)
             return True, f"phím {step['name']}"
         if t == "combo":
-            nav.h.do("combo " + step["keys"])
-            return True, f"combo {step['keys']}"
+            keys = apimode.combo_keys(step["keys"])     # sai dạng → ném lỗi, báo ra ở dưới (không gửi thứ lạ xuống board)
+            nav.h.do("combo " + keys); time.sleep(0.4)
+            return True, f"combo {keys}"
         if t == "home":
             nav.home_screen()
             return True, "về home"
         if t == "launch":
-            nav.h.do("combo gui h"); time.sleep(0.6)
-            nav.h.do("combo gui space"); time.sleep(1.2)
-            nav.h.do("combo cmd a"); nav.h.key("back"); time.sleep(0.3)
-            nav.h.type(step["app"]); time.sleep(1.2)
-            nav.h.key("enter"); time.sleep(2.5)
+            # (quãng nghỉ: Spotlight phải mở ra và CHỌN xong kết quả đầu rồi Enter mới mở được app)
+            nav.h.do("combo gui h"); time.sleep(1.1)
+            nav.h.do("combo gui space"); time.sleep(1.7)
+            nav.h.do("combo cmd a"); time.sleep(0.5); nav.h.key("back"); time.sleep(0.8)
+            nav.h.type(step["app"]); time.sleep(1.7)
+            nav.h.key("enter"); time.sleep(3.0)
             return True, f"mở app '{step['app']}'"
         if t == "wait":
             time.sleep(float(step.get("seconds", 1)))
@@ -63,9 +73,28 @@ def run_step(nav, step, log=print):
                 time.sleep(1)
             return False, f"hết giờ chờ '{needle}'"
         if t == "assert_text":
+            time.sleep(0.9)                     # chờ màn hình đứng yên rồi mới nhìn (ảnh chụp giờ tức thì)
             txt = nav.e.read_text().lower()
             ok = step["text"].lower() in txt
             return ok, f"kiểm '{step['text']}' {'có' if ok else 'KHÔNG thấy'}"
+        if t == "swipe":
+            if step.get("dir"):
+                ok = nav.flick(str(step["dir"]).lower())
+                return ok, f"vuốt {step['dir']} {'OK' if ok else 'không thực hiện được'}"
+            ok = nav.swipe(int(step["x1"]), int(step["y1"]), int(step["x2"]), int(step["y2"]))
+            return ok, f"vuốt ({step['x1']},{step['y1']})→({step['x2']},{step['y2']}) {'OK' if ok else 'không thực hiện được'}"
+        if t == "hold":
+            sec = max(0.2, min(float(step.get("seconds", 1.0)), 10.0))
+            ok = nav.hold_at(int(step["x"]), int(step["y"]), sec)
+            return ok, f"bấm giữ ({step['x']},{step['y']}) {sec}s {'OK' if ok else 'con trỏ không tới nơi → KHÔNG bấm'}"
+        if t == "hold_text":
+            sec = max(0.2, min(float(step.get("seconds", 1.0)), 10.0))
+            time.sleep(0.9)
+            pos = nav.e.find_text(step["text"], nav.e.screenshot())
+            if not pos:
+                return False, f"bấm giữ '{step['text']}': không thấy chữ"
+            ok = nav.hold_at(pos[0], pos[1], sec)
+            return ok, f"bấm giữ '{step['text']}' {sec}s {'OK' if ok else 'con trỏ không tới nơi → KHÔNG bấm'}"
         return False, f"bước lạ: {t}"
     except Exception as e:
         return False, f"lỗi {t}: {e}"
@@ -82,7 +111,7 @@ def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None):
         ok, msg = run_step(nav, step, log)
         log(f"[{i+1}/{len(steps)}] {step.get('type')}: {msg}")
         results.append({"i": i, "type": step.get("type"), "ok": ok, "msg": msg})
-        if not ok and stop_on_fail:
+        if not ok and stop_on_fail and not step.get("optional"):     # bước «bỏ qua nếu lỗi» thì đi tiếp
             log(f"  ⟂ dừng vì bước {i+1} thất bại")
             break
         time.sleep(0.3)

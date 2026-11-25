@@ -9,15 +9,36 @@ eyes.py — "con mắt": chụp màn iPhone qua USB + nhận diện trên ảnh.
     e.save("shots/now.png")              # chụp ra file
 
 Chụp dùng pymobiledevice3 (dvt screenshot) — chạy cả trên máy bypass, iOS 16.
+Mặc định chụp qua MỘT kết nối giữ mở (fastshot.py, ~0,33s/ảnh); kết nối hỏng thì quay về cách gọi
+lệnh cho từng ảnh (~1,3s) và tạm nghỉ dùng đường nhanh FAST_COOLDOWN giây (lần hỏng đó có thể tốn thêm
+vài giây chờ đường nhanh hết giờ).
 """
 from __future__ import annotations
-import subprocess, tempfile, os, sys
+import subprocess, tempfile, os, sys, time, unicodedata
 import numpy as np
 import cv2
+import fastshot
 try:
     import pytesseract
 except ImportError:
     pytesseract = None
+
+
+def norm_text(s) -> str:
+    """Chuẩn hoá để so khớp chữ OCR: chữ thường, BỎ DẤU tiếng Việt (đ→d), gộp khoảng trắng.
+    OCR hay đọc sai dấu ("Đăng nhập" → "Dang nhap"/"Đăng nhâp") nên so khớp không dấu bền hơn."""
+    s = unicodedata.normalize("NFD", str(s or "").lower())
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+    return " ".join(s.replace("đ", "d").split())
+
+
+def text_has(haystack_norm: str, needle) -> bool:
+    """`needle` (chưa chuẩn hoá) có nằm trong `haystack_norm` (đã norm_text) không.
+    Thử cả dạng bỏ hết khoảng trắng vì OCR hay tách/gộp chữ ("1 050" ↔ "1050")."""
+    n = norm_text(needle)
+    if not n:
+        return False
+    return n in haystack_norm or n.replace(" ", "") in haystack_norm.replace(" ", "")
 
 VENV_PMD = os.path.join(os.path.dirname(__file__), "..", ".venv", "bin", "pymobiledevice3")
 
@@ -35,8 +56,30 @@ class Eyes:
         )
         return r.returncode == 0 and os.path.exists(path) and os.path.getsize(path) > 0
 
+    FAST = True       # False = luôn gọi lệnh cho từng ảnh (cách cũ) — để so sánh / khi nghi đường nhanh có vấn đề
+    FAST_COOLDOWN = 30.0
+    _fast_off = {}    # udid -> thời điểm được thử lại đường nhanh (sau một lần nó hỏng)
+
+    def _grab_fast(self):
+        """Chụp qua kết nối giữ mở. Trả ảnh, hoặc None nếu không được (bên gọi quay về cách cũ)."""
+        if time.time() < Eyes._fast_off.get(self.udid, 0):
+            return None
+        for _ in range(2):                  # kết nối cũ có thể vừa chết (rút cáp, máy vừa khoá) → mở lại thử thêm 1 lần
+            try:
+                img = cv2.imdecode(np.frombuffer(fastshot.grab(self.udid), np.uint8), cv2.IMREAD_COLOR)
+                if img is not None:
+                    return img
+            except Exception:
+                pass
+        Eyes._fast_off[self.udid] = time.time() + self.FAST_COOLDOWN
+        return None
+
     def screenshot(self):
         """Trả về ảnh numpy BGR (OpenCV)."""
+        if self.FAST and fastshot.AVAILABLE:
+            img = self._grab_fast()
+            if img is not None:
+                return img
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             tmp = f.name
         try:
@@ -104,6 +147,104 @@ class Eyes:
                     best = (cx, cy, r, score)
         return best[:3] if best else None
 
+    @staticmethod
+    def pointer_size(img) -> int:
+        """Đường kính con trỏ AssistiveTouch trên ảnh chụp (px) = 19pt × hệ số điểm ảnh của máy
+        (iPhone 8/SE: ×2 → 38px; dòng Plus / X trở lên: ×3 → 57px)."""
+        return 19 * (3 if img.shape[1] > 900 else 2)
+
+    @staticmethod
+    def _diff_max(a, b):
+        """Độ lệch LỚN NHẤT trong ba kênh màu tại từng điểm ảnh (= absdiff(a,b).max(axis=2)) — làm bằng cv2.max trên
+        các kênh tách sẵn: nhanh gấp ~10 lần so với numpy.max(axis=2) trên ảnh 750×1334×3 (mỗi lần nhìn gọi 2 lần)."""
+        b_, g_, r_ = cv2.split(cv2.absdiff(a, b))
+        return cv2.max(cv2.max(b_, g_), r_)
+
+    @staticmethod
+    def _changed(ref, img):
+        """Những điểm ảnh KHÁC nhau giữa hai ảnh cùng cỡ: (mask thô, mask đã lấp các khe hẹp)."""
+        raw = cv2.threshold(Eyes._diff_max(ref, img), 14, 255, cv2.THRESH_BINARY)[1]
+        return raw, cv2.morphologyEx(raw, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+
+    @staticmethod
+    def changed_fraction(a, b) -> float:
+        """Tỉ lệ điểm ảnh KHÁC nhau giữa hai ảnh (0…1). Khác cỡ / thiếu ảnh → 1.0 (coi như khác hẳn)."""
+        if a is None or b is None or a.shape != b.shape:
+            return 1.0
+        return float(cv2.countNonZero(cv2.threshold(Eyes._diff_max(a, b), 14, 255, cv2.THRESH_BINARY)[1]) / (a.shape[0] * a.shape[1]))
+
+    def pointer_blobs(self, ref, img, ignore=()):
+        """Định vị con trỏ bằng cách SO `img` với `ref` — một ảnh cùng màn hình chụp lúc con trỏ
+        KHÔNG nằm ở chỗ này (vd đang ghim ở góc). Con trỏ lộ ra thành một vệt thay đổi tròn đúng cỡ,
+        bất kể nó đang đè lên thứ gì (chữ, icon, nút màu) — khác với find_pointer() chỉ nhận ra
+        chấm xám trên nền phẳng. Con trỏ nằm LẪN trong một vệt thay đổi to hơn (nút đang được phủ sáng,
+        kim đồng hồ đang chạy) cũng được tách ra — xem _pointer_inside().
+        Trả danh sách [(cx, cy, diện_tích)] các vệt giống con trỏ;
+        `ignore` = các ô (x0,y0,x1,y1) bỏ qua (vd chỗ con trỏ nằm trong ảnh `ref`)."""
+        if ref is None or img is None or ref.shape != img.shape:
+            return []
+        D = self.pointer_size(img)
+        disc = 3.1416 * (D / 2.0) ** 2
+        raw, mask = self._changed(ref, img)
+        n, lab, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        out = []
+
+        def take(x, y, w, h, area) -> bool:
+            if not (0.6 * D <= w <= 1.5 * D and 0.6 * D <= h <= 1.5 * D):
+                return False                                # đồng hồ đổi phút, chữ nhấp nháy… không đúng cỡ
+            if not (0.4 * disc <= area <= 1.5 * disc):
+                return False
+            cx, cy = x + w / 2.0, y + h / 2.0
+            if not any(x0 <= cx <= x1 and y0 <= cy <= y1 for (x0, y0, x1, y1) in ignore):
+                out.append((int(round(cx)), int(round(cy)), area))
+            return True
+
+        for i in range(1, n):
+            x, y, w, h, area = (int(v) for v in stats[i])
+            if take(x, y, w, h, area):
+                continue
+            if w < 0.6 * D or h < 0.6 * D or area < 0.4 * disc:
+                continue                                    # nhỏ hơn con trỏ → không thể chứa con trỏ
+            for sx, sy, sw, sh, sa in self._pointer_inside(ref, img, raw, lab, i, (x, y, w, h, area), D, disc):
+                take(x + sx, y + sy, sw, sh, sa)
+        return out
+
+    @staticmethod
+    def _pointer_inside(ref, img, raw, lab, i, box, D, disc):
+        """Con trỏ nằm LẪN trong một vệt thay đổi TO hơn nó. Hai kiểu đã gặp trên iPhone thật:
+
+          • NÚT ĐƯỢC PHỦ SÁNG — con trỏ đi vào nút của hộp thoại hệ thống thì iOS tô sẫm CẢ nút. Chấm tròn vẫn
+            được vẽ bên trong, nhưng cả nút đều «đổi» so với ảnh nền nên không còn là một vệt riêng. Nút đổi
+            ĐỀU một độ lệch màu (đo trên iPhone 8: 271×88px, lệch ≈ −19 mức xám, chỉ riêng chỗ con trỏ là khác)
+            → trừ độ lệch chung đó đi, phần còn lại (đổi KHÁC hẳn) chính là con trỏ. Chữ trên nút không đổi
+            màu nên tự rơi ra.
+          • DÍNH VÀO NÉT MẢNH đang chuyển động (kim của icon Đồng hồ) → bào bỏ nét mảnh, còn lại chấm tròn.
+
+        Chỉ xét vệt cỡ một cái nút (≤ 60 lần diện tích con trỏ): cả màn hình đổi (chuyển trang, hộp thoại mới
+        bật lên) thì KHÔNG đoán — ở đó có vô số mảnh cỡ con trỏ. Trả các mảnh [(x, y, w, h, diện_tích)] theo toạ
+        độ trong ô `box`; bên gọi lọc lại theo đúng cỡ con trỏ."""
+        x, y, w, h, area = box
+        comp = lab[y:y + h, x:x + w] == i
+        k = int(0.45 * D) | 1
+        if area >= 2 * disc:
+            if area > 60 * disc or area < 0.75 * w * h:
+                return []                                   # không phải một khối đặc cỡ cái nút
+            core = comp & (raw[y:y + h, x:x + w] > 0)
+            d = img[y:y + h, x:x + w].astype(np.int16) - ref[y:y + h, x:x + w].astype(np.int16)
+            resid = np.abs(d - np.median(d[core], axis=0)).max(axis=2)
+            # «Đổi đều» = cả vùng đổi cùng một độ lệch, TRỪ tối đa một mảnh cỡ con trỏ. Tính theo diện tích tuyệt
+            # đối chứ không theo tỉ lệ: nút nhỏ (60×60) thì riêng con trỏ đã chiếm 1/3; vùng lớn thì 20% đã là
+            # cả chục «con trỏ» nội dung lạ.
+            if int((resid[core] > 10).sum()) > 2.2 * disc or int((resid[core] <= 10).sum()) < disc:
+                return []                                   # không «đổi đều» → không phải nút được phủ sáng
+            m = ((resid > 14) & core).astype(np.uint8) * 255
+            m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+        else:
+            m = comp.astype(np.uint8) * 255
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        n, _, stats, _ = cv2.connectedComponentsWithStats(m, 8)
+        return [tuple(int(v) for v in stats[j]) for j in range(1, n)]
+
     def find_assistive_button(self, img=None):
         """Tìm nút AssistiveTouch (nút tròn/vuông-bo to ~R40-75, có vòng đồng tâm, xám,
         thường nằm sát mép). Trả (cx, cy, r) hoặc None."""
@@ -137,8 +278,9 @@ class Eyes:
 
     OCR_LANG = "vie+eng"      # có gói tiếng Việt (brew tesseract-lang)
 
-    def read_text(self, img=None, region=None, scale=2, lang=None):
-        """OCR: trả chuỗi text đọc được. region=(x0,y0,x1,y1) để giới hạn vùng."""
+    def read_text(self, img=None, region=None, scale=2, lang=None, psm=None):
+        """OCR: trả chuỗi text đọc được. region=(x0,y0,x1,y1) để giới hạn vùng.
+        psm=7: coi cả vùng là MỘT dòng chữ (đọc ô nhập liệu chính xác hơn hẳn)."""
         if pytesseract is None:
             raise RuntimeError("Thiếu pytesseract (pip install pytesseract) + tesseract (brew)")
         if img is None:
@@ -149,14 +291,16 @@ class Eyes:
         if scale != 1:
             img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        config = ("--psm %d" % int(psm)) if psm else ""
         try:
-            return pytesseract.image_to_string(gray, lang=lang or self.OCR_LANG).strip()
+            return pytesseract.image_to_string(gray, lang=lang or self.OCR_LANG, config=config).strip()
         except Exception:
-            return pytesseract.image_to_string(gray).strip()
+            return pytesseract.image_to_string(gray, config=config).strip()
 
     def find_text(self, needle: str, img=None, scale=2):
-        """Tìm nhãn chữ trên màn (OCR). Trả (cx, cy) tâm (pixel ảnh gốc) hoặc None.
-        So khớp không phân biệt hoa thường, bỏ dấu phụ đơn giản."""
+        """Tìm nhãn chữ trên màn (OCR). Trả (cx, cy) = tâm của ĐÚNG CÁC CHỮ KHỚP (pixel ảnh
+        gốc) hoặc None. So khớp không phân biệt hoa thường, bỏ dấu tiếng Việt, bỏ qua khoảng
+        trắng (OCR hay tách/gộp chữ). Nhiều chỗ khớp thì lấy chỗ đầu tiên theo thứ tự đọc."""
         if pytesseract is None:
             raise RuntimeError("Thiếu pytesseract")
         if img is None:
@@ -168,7 +312,9 @@ class Eyes:
                                              output_type=pytesseract.Output.DICT)
         except Exception:
             data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
-        nd = needle.lower()
+        nd = norm_text(needle).replace(" ", "")
+        if not nd:
+            return None
         n = len(data["text"])
         # gộp theo dòng để khớp cụm từ
         lines = {}
@@ -179,16 +325,21 @@ class Eyes:
             key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
             lines.setdefault(key, []).append(i)
         for key, idxs in lines.items():
-            words = [(data["text"][i] or "").strip() for i in idxs]
-            line_text = " ".join(words).lower()
-            if nd in line_text:
-                xs = [data["left"][i] for i in idxs]
-                ys = [data["top"][i] for i in idxs]
-                xe = [data["left"][i] + data["width"][i] for i in idxs]
-                ye = [data["top"][i] + data["height"][i] for i in idxs]
-                cx = (min(xs) + max(xe)) / 2 / scale
-                cy = (min(ys) + max(ye)) / 2 / scale
-                return (int(cx), int(cy))
+            joined = ""
+            owner = []                    # owner[k] = chỉ số từ chứa ký tự thứ k của `joined`
+            for i in idxs:
+                w = norm_text(data["text"][i]).replace(" ", "")
+                joined += w
+                owner.extend([i] * len(w))
+            pos = joined.find(nd)
+            if pos < 0:
+                continue
+            used = sorted(set(owner[pos:pos + len(nd)]))     # chỉ các từ thực sự khớp
+            x0 = min(data["left"][i] for i in used)
+            y0 = min(data["top"][i] for i in used)
+            x1 = max(data["left"][i] + data["width"][i] for i in used)
+            y1 = max(data["top"][i] + data["height"][i] for i in used)
+            return (int((x0 + x1) / 2 / scale), int((y0 + y1) / 2 / scale))
         return None
 
     def find(self, template_path: str, img=None, threshold: float = 0.8):

@@ -72,7 +72,7 @@ function askForm(title, msg, fields) {
           <select data-k="${esc(f.key)}" class="modal-select">${opts}</select>`;
       } else {
         wrap.innerHTML = `<label>${esc(f.label)}</label>
-          <input data-k="${esc(f.key)}" value="${esc(f.value ?? "")}" placeholder="${esc(f.placeholder ?? "")}">`;
+          <input type="${f.type === "password" ? "password" : "text"}" autocomplete="off" data-k="${esc(f.key)}" value="${esc(f.value ?? "")}" placeholder="${esc(f.placeholder ?? "")}">`;
       }
       box.appendChild(wrap);
     });
@@ -135,11 +135,15 @@ function busy(btn, on) {
 function showView(name) {
   $$(".app-nav").forEach(b => b.closest(".menu-item").classList.toggle("active", b.dataset.view === name));
   $$(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
-  const titles = { overview: "Tổng quan", devices: "Thiết bị", esp: "ESP32", flows: "Nhóm & Kịch bản" };
+  const titles = { overview: "Tổng quan", devices: "Thiết bị", esp: "ESP32", flows: "Nhóm & Kịch bản", ai: "Kết nối AI" };
   const pt = document.getElementById("page-title"); if (pt) pt.textContent = titles[name] || "";
   if (name === "overview") loadOverview();
-  if (name === "flows") { loadGroups(); startStatusPoll(); } else { stopStatusPoll(); }
+  if (name === "flows") {
+    (async () => { await loadGroups(); await loadGateway(); })();
+    loadRunLog(); startStatusPoll();
+  } else { stopStatusPoll(); }
   if (name === "esp" && !ESP_SCANNED) espScan();   // tự quét lần đầu mở tab ESP
+  if (name === "ai") loadAI();
 }
 
 /* =========================================================
@@ -169,7 +173,7 @@ function updateCounts() {
   const bleN = DEVICES.filter(d => d.ble === true).length;
   $("#nav-dev-count").textContent = DEVICES.length;
   $("#nav-esp-count").textContent = ESP.length;
-  $("#nav-flow-count").textContent = FLOWS.length;
+  $("#nav-flow-count").textContent = GROUPS.length;
   $("#dev-summary").textContent =
     `${online}/${DEVICES.length} board online · ${bleN} Bluetooth nối · ${iosConn} iPhone USB`;
   $("#dev-count-lbl").textContent = `${DEVICES.length} board`;
@@ -682,6 +686,7 @@ function refreshCurrentView(manual = false) {
   if (id === "view-overview") loadOverview();
   else if (id === "view-esp" || id === "view-devices") { if (!SCANNING) espScan(); }
   else if (id === "view-flows") loadDevices();
+  else if (id === "view-ai") loadAI();             // trang AI không đụng cổng serial → không quét board
   else espScan();
 }
 
@@ -852,8 +857,10 @@ function renderESP() {
     card.dataset.port = b.port;
     const loading = (b.flashed === null || b.flashed === undefined);
     const flashed = b.flashed === true;
+    const working = !!b.busy;            // máy đang chạy: lượt quét không đụng vào cổng của nó
     const badge = loading
       ? `<span class="pill mut"><span class="spinner" style="width:10px;height:10px;border-width:2px;vertical-align:-1px"></span> đang dò</span>`
+      : working ? (b.locked ? `<span class="pill mut">🔒 đang được điều khiển</span>` : `<span class="pill ok">▶ đang chạy</span>`)
       : flashed ? `<span class="pill ok">đã nạp</span>` : `<span class="pill bad">chưa nạp</span>`;
 
     let body = `
@@ -869,10 +876,15 @@ function renderESP() {
         ${(b.vid || b.pid) ? `<div class="row"><span>VID:PID</span><span class="val">${esc(b.vid || "?")}:${esc(b.pid || "?")}</span></div>` : ""}
         ${flashed ? `<div class="row"><span>Tên BLE</span><span class="val esp-name-big">${esc(b.name || "—")}</span></div>` : ""}
         ${flashed ? `<div class="row"><span>Bluetooth</span><span class="val">${b.ble === true ? "✓ đã nối iPhone" : b.ble === false ? "✕ chưa nối" : "?"}</span></div>` : ""}
+        ${(flashed && b.health) ? `<div class="esp-health ${esc(b.health.level)}" title="${esc((b.health.notes || []).join("\n"))}">${esc(b.health.summary)}${(b.health.notes || []).map(n => `<div>⚠ ${esc(n)}</div>`).join("")}</div>` : ""}
       </div>`;
 
     if (loading) {
       body += `<div class="esp-actions"><span class="muted" style="font-size:.82rem">Đang kiểm tra firmware…</span></div>`;
+    } else if (working) {
+      body += b.locked
+        ? `<div class="esp-actions"><span class="muted" style="font-size:.82rem">Cổng này đang do một chương trình ngoài app giữ (lệnh <b>farm</b> hoặc AI chạy lúc app chưa mở). Lần điều khiển kế tiếp sẽ tự đi qua app.</span></div>`
+        : `<div class="esp-actions"><span class="muted" style="font-size:.82rem">Máy này đang chạy — dừng máy (tab Nhóm &amp; Kịch bản) rồi mới đổi tên / nạp lại được.</span></div>`;
     } else if (flashed) {
       body += `
         <div class="esp-actions">
@@ -1035,7 +1047,8 @@ async function bleStatus(btn) {
   busy(btn, true);
   try {
     const r = await API().ble_status(SEL);
-    if (r && r.ok) toast(r.status, r.status.includes("disconnected") ? "warn" : "ok");
+    if (r && r.ok && r.health) toast("ESP32: " + r.health.summary + (r.health.notes.length ? " — " + r.health.notes[0] : ""), r.health.level === "bad" ? "bad" : (r.health.level === "warn" || r.status.includes("disconnected")) ? "warn" : "ok");
+    else if (r && r.ok) toast(r.status, r.status.includes("disconnected") ? "warn" : "ok");
     else toast("Không rõ trạng thái BLE", "warn");
   } catch (e) { toast("Lỗi BLE: " + e, "bad"); }
   busy(btn, false);
@@ -1056,12 +1069,17 @@ function stepText(s) {
     case "wait": return s.seconds + "s";
     case "wait_text": return `“${s.text}” (${s.timeout || 15}s)`;
     case "assert_text": return `“${s.text}”`;
+    case "swipe": return s.dir ? (SWIPE_DIR[s.dir] || s.dir) : `(${s.x1}, ${s.y1}) → (${s.x2}, ${s.y2})`;
+    case "hold": return `(${s.x}, ${s.y}) · ${s.seconds || 1}s`;
+    case "hold_text": return `“${s.text}” · ${s.seconds || 1}s`;
     default: return "";
   }
 }
+const SWIPE_DIR = { left: "sang trái (trang sau)", right: "sang phải (trang trước)", up: "lên (cuộn xuống dưới)", down: "xuống (cuộn lên trên)" };
 const STEP_LABEL = {
   tap: "Tap", tap_text: "Tap chữ", type: "Gõ", key: "Phím", combo: "Tổ hợp",
   launch: "Mở app", home: "Home", wait: "Chờ", wait_text: "Chờ chữ", assert_text: "Kiểm chữ",
+  swipe: "Vuốt", hold: "Bấm giữ", hold_text: "Giữ chữ",
 };
 
 function renderSteps() {
@@ -1074,29 +1092,37 @@ function renderSteps() {
     li.className = "step";
     li.innerHTML = `
       <span class="t">${esc(STEP_LABEL[s.type] || s.type)}</span>
-      <span class="v">${esc(stepText(s))}</span>
+      <span class="v">${esc(stepText(s))}${s.optional ? ` <span class="opt-tag">bỏ qua nếu lỗi</span>` : ""}</span>
       <span class="ops">
+        <button data-op="opt" class="${s.optional ? "on" : ""}" title="Bật/tắt «bỏ qua nếu lỗi»: bước này trượt (vd không thấy chữ) thì vẫn chạy tiếp bước sau">?</button>
         <button data-op="up" title="Lên">▲</button>
         <button data-op="down" title="Xuống">▼</button>
         <button data-op="test" title="Chạy thử">▶</button>
         <button data-op="del" title="Xoá">✕</button>
       </span>`;
+    $('[data-op=opt]', li).onclick = () => { if (s.optional) delete s.optional; else s.optional = true; renderSteps(); };
     $('[data-op=up]', li).onclick = () => { if (i > 0) { [FLOW.steps[i - 1], FLOW.steps[i]] = [FLOW.steps[i], FLOW.steps[i - 1]]; renderSteps(); } };
     $('[data-op=down]', li).onclick = () => { if (i < FLOW.steps.length - 1) { [FLOW.steps[i + 1], FLOW.steps[i]] = [FLOW.steps[i], FLOW.steps[i + 1]]; renderSteps(); } };
     $('[data-op=del]', li).onclick = () => { FLOW.steps.splice(i, 1); renderSteps(); };
     $('[data-op=test]', li).onclick = async (ev) => {
       if (!SEL) { toast("Chọn máy", "warn"); return; }
       const b = ev.currentTarget; busy(b, true);
-      log(`▶ thử ${s.type} ${stepText(s)}`);
+      log(`▶ thử ${STEP_LABEL[s.type] || s.type} ${stepText(s)}`);
       try {
-        const r = await API().run_step(SEL, s);
-        log(`   ${r.ok ? "✓" : "✗"} ${r.msg}`, r.ok ? "ok" : "bad");
+        if (GROUP && GROUP.mode === "api") {            // cùng bộ chạy với lúc nạp thật (thế {{biến}})
+          const res = await runApiSteps([s]);
+          if (res) res.forEach(x => log(`   ${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad"));
+        } else {
+          const r = await API().run_step(SEL, s);
+          log(`   ${r.ok ? "✓" : "✗"} ${r.msg}`, r.ok ? "ok" : "bad");
+        }
       } catch (e) { log("   ✗ " + e, "bad"); }
       busy(b, false);
-      if (s.type === "tap" || s.type === "tap_text") setTimeout(() => shot(null), 600);
+      if (["tap", "tap_text", "swipe", "hold", "hold_text"].includes(s.type)) setTimeout(() => shot(null), 900);
     };
     ol.appendChild(li);
   });
+  renderApiUi();
 }
 function addStep(s) { FLOW.steps.push(s); renderSteps(); }
 
@@ -1131,6 +1157,37 @@ async function addStepPrompt(type) {
   } else if (type === "assert_text") {
     const t = await askOne("Thêm bước: Kiểm chữ", "Xác minh màn hình có chữ", "", "VD: Thành công");
     if (!t) return; s.text = t;
+  } else if (type === "swipe") {
+    const r = await askForm("Thêm bước: Vuốt",
+      "Lật trang cần kéo gần hết bề ngang nên tool tự kéo dài. Cuộn chỉ là ước lượng — cuộn xong nên thêm bước «Chờ chữ» để biết đã tới đâu.", [
+      { key: "dir", label: "Hướng vuốt (theo ngón tay)", type: "select", value: "left", options: [
+        { value: "left", label: "Sang trái — lật sang trang sau" }, { value: "right", label: "Sang phải — về trang trước" },
+        { value: "up", label: "Lên — cuộn nội dung xuống dưới" }, { value: "down", label: "Xuống — cuộn nội dung lên trên" },
+        { value: "xy", label: "Tự nhập toạ độ đầu → cuối" }] },
+      { key: "xy", label: "Toạ độ (chỉ khi chọn «tự nhập»)", value: "", placeholder: "375,1000 > 375,400" },
+    ]);
+    if (!r) return;
+    if (r.dir === "xy") {
+      const m = /^\s*(-?\d+)\s*[,; ]\s*(-?\d+)\s*(?:>|→|->)\s*(-?\d+)\s*[,; ]\s*(-?\d+)\s*$/.exec(r.xy || "");
+      if (!m) { toast("Toạ độ phải có dạng x1,y1 > x2,y2", "warn"); return; }
+      [s.x1, s.y1, s.x2, s.y2] = m.slice(1).map(Number);
+    } else s.dir = r.dir;
+  } else if (type === "hold" || type === "hold_text") {
+    const byText = type === "hold_text";
+    const r = await askForm(byText ? "Thêm bước: Bấm giữ vào chữ" : "Thêm bước: Bấm giữ",
+      "Nhấn và giữ rồi nhả (mở menu ngữ cảnh, vào chế độ sửa màn hình chính…).", [
+      byText ? { key: "text", label: "Chữ hiển thị trên màn (OCR)", value: "", placeholder: "VD: Sách" }
+             : { key: "xy", label: "Toạ độ x,y (pixel ảnh chụp)", value: "", placeholder: "636,468" },
+      { key: "seconds", label: "Giữ bao lâu (giây)", value: "1.2" },
+    ]);
+    if (!r) return;
+    s.seconds = Math.min(10, Math.max(0.2, parseFloat(r.seconds) || 1));
+    if (byText) { if (!r.text) return; s.text = r.text; }
+    else {
+      const m = /^\s*(-?\d+)\s*[,; ]\s*(-?\d+)\s*$/.exec(r.xy || "");
+      if (!m) { toast("Toạ độ phải có dạng x,y", "warn"); return; }
+      s.x = Number(m[1]); s.y = Number(m[2]);
+    }
   }
   addStep(s);
 }
@@ -1155,18 +1212,201 @@ async function loadGroups(selectId) {
   selectGroup(pick);
 }
 
+/* ---- chế độ API: các giai đoạn của 1 đơn nạp (mỗi giai đoạn 1 danh sách bước) ---- */
+const API_PHASES = [
+  ["login",    "Đăng nhập",     "Mở game và đăng nhập tài khoản của khách. Biến: {{username}} {{password}} (mọi trường đăng nhập của pool)."],
+  ["otp",      "Nhập OTP",      "Chạy khi game đòi OTP và khách đã gửi mã. Biến: {{otp}}. Để trống = gõ mã rồi Enter."],
+  ["nav",      "Vào DS gói",    "Từ màn hình sau đăng nhập đi tới danh sách gói nạp."],
+  ["purchase", "Mua 1 gói",     "Mua MỘT gói, lặp theo số lượng. Dừng ở màn hình báo kết quả (tool chụp bill ở đó). Biến: {{package.ocr_text}} {{package.price_text}} {{package.name}}."],
+  ["after",    "Sau khi mua",   "Sau mỗi lần mua được: đóng thông báo, quay lại danh sách gói để mua tiếp."],
+  ["finish",   "Kết thúc đơn",  "Sau khi báo kết quả: đăng xuất, về màn hình chính — để máy sẵn sàng cho đơn sau."],
+];
+let API_PHASE = "login";               // giai đoạn đang sửa trong trình dựng
+let GW = { url: "", has_key: false, key_hint: "", ok: null, error: "", pools: [] };
+let GW_POOL = null;                    // cấu hình pool đang chọn (để biết gateway có sẵn bước nào)
+let TEST_VARS = {};                    // giá trị thử cho {{biến}} (chỉ giữ trong phiên, không lưu)
+
+function normApi(a) {
+  a = a || {};
+  const steps = {};
+  API_PHASES.forEach(([k]) => { steps[k] = Array.isArray((a.steps || {})[k]) ? a.steps[k] : []; });
+  return { pool: a.pool || "", steps, login_wait: a.login_wait || 45, purchase_wait: a.purchase_wait || 60,
+           check_keyboard: a.check_keyboard !== false };
+}
+
+// FLOW.steps luôn TRỎ vào đúng danh sách đang sửa (kịch bản thường, hoặc 1 giai đoạn của chế độ API)
+function bindSteps() {
+  if (!GROUP) return;
+  FLOW.steps = GROUP.mode === "api" ? GROUP.api.steps[API_PHASE] : GROUP.steps;
+  renderSteps();
+}
+
 function selectGroup(id) {
   const g = GROUPS.find(x => x.id === id);
   $("#group-empty").hidden = true; $("#group-panel").hidden = !g;
   if (!g) { GROUP = null; return; }
   GROUP = JSON.parse(JSON.stringify({ id: g.id, name: g.name, steps: g.steps || [],
-    devices: g.devices || [], mode: g.mode || "loop", loops: g.loops || 0 }));
+    devices: g.devices || [], mode: g.mode || "loop", loops: g.loops || 0, api: normApi(g.api) }));
   FLOW = { id: GROUP.id, name: GROUP.name, steps: GROUP.steps };   // tái dùng renderSteps/addStep
   $("#group-name").value = GROUP.name || "";
   $("#group-mode").value = GROUP.mode;
   $("#group-loops").value = GROUP.loops;
+  $("#api-login-wait").value = GROUP.api.login_wait;
+  $("#api-purchase-wait").value = GROUP.api.purchase_wait;
+  $("#api-kb").checked = GROUP.api.check_keyboard;
+  if (!GW_POOL || GW_POOL.code !== GROUP.api.pool) GW_POOL = null;
+  bindSteps(); renderMembers(); renderGroupAddDev(); renderDevicePicker();
+  if (GROUP.mode === "api") { renderPoolSelect(); loadGwPool(); }
+}
+
+/* ---- giao diện riêng của chế độ API ---- */
+function renderApiUi() {
+  if (!GROUP) return;
+  const api = GROUP.mode === "api";
   $("#group-loops-wrap").style.display = GROUP.mode === "loop" ? "" : "none";
-  renderSteps(); renderMembers(); renderGroupAddDev(); renderDevicePicker();
+  $("#group-pool-wrap").hidden = !api;
+  $("#group-api-row").hidden = !api;
+  $("#api-phase-box").hidden = !api;
+  $("#btn-save").innerHTML = `<i class="ti tabler-device-floppy me-1"></i>${api ? "Lưu nhóm" : "Lưu kịch bản"}`;
+  if (!api) {
+    $("#steps-empty").textContent = "Chưa có bước nào. Thêm bước ở trên, hoặc bấm vào ảnh màn hình.";
+    return;
+  }
+  const gwSteps = (GW_POOL && GW_POOL.steps) || {};
+  $("#api-phases").innerHTML = API_PHASES.map(([k, label]) => {
+    const mine = GROUP.api.steps[k].length, theirs = (gwSteps[k] || []).length;
+    const tag = mine ? `<span class="seg-c own" title="Nhóm có ${mine} bước riêng">${mine}</span>`
+              : theirs ? `<span class="seg-c" title="Dùng ${theirs} bước của gateway">gw ${theirs}</span>`
+              : `<span class="seg-c none" title="Chưa có bước nào">0</span>`;
+    return `<button class="seg-btn ${k === API_PHASE ? "active" : ""}" data-phase="${k}">${esc(label)} ${tag}</button>`;
+  }).join("");
+  $$("#api-phases .seg-btn").forEach(b => b.onclick = () => { API_PHASE = b.dataset.phase; bindSteps(); });
+
+  // Pool/nhóm còn thiếu thứ bắt buộc → máy sẽ KHÔNG nhận đơn: nói rõ ngay ở đây thay vì để người vận hành tự mò.
+  const warn = $("#api-warn");
+  if (warn) {
+    const miss = [];
+    if (GW_POOL) {
+      (GW_POOL.missing_rules || []).forEach(r => miss.push(`pool chưa có luật <b>«${esc(r)}»</b> (thêm ở trang quản trị gateway → Pool → mục 3)`));
+      (GW_POOL.required_phases || []).forEach(k => {
+        if (!GROUP.api.steps[k].length && !(gwSteps[k] || []).length)
+          miss.push(`chưa có bước <b>«${esc((API_PHASES.find(p => p[0] === k) || [k, k])[1])}»</b> (thêm ở đây hoặc trên gateway)`);
+      });
+    }
+    warn.hidden = !miss.length;
+    warn.innerHTML = miss.length
+      ? `<i class="ti tabler-alert-triangle me-1"></i><b>Máy sẽ KHÔNG nhận đơn</b> cho tới khi bổ sung: ${miss.join("; ")}.` : "";
+  }
+
+  const [, label, help] = API_PHASES.find(p => p[0] === API_PHASE);
+  const mine = GROUP.api.steps[API_PHASE].length, theirs = (gwSteps[API_PHASE] || []).length;
+  const src = mine ? `Nhóm đang dùng <b>${mine} bước RIÊNG</b> cho giai đoạn này (ghi đè gateway). Xoá hết để quay về dùng bước của gateway.`
+            : theirs ? `Đang dùng <b>${theirs} bước cấu hình trên gateway</b>. Chỉ thêm bước ở đây nếu loại máy này cần cách bấm khác (vd toạ độ khác).`
+            : (API_PHASE === "otp" ? "Chưa cấu hình ở đâu → tool sẽ <b>gõ mã OTP rồi nhấn Enter</b>."
+               : ["login", "purchase", "finish"].includes(API_PHASE) ? "<b class=\"text-danger\">Chưa có bước nào cho giai đoạn BẮT BUỘC này</b> — phải cấu hình ở đây hoặc trên gateway thì máy mới nhận đơn."
+               : "Chưa có bước nào cho giai đoạn này (bỏ qua giai đoạn).");
+  $("#api-phase-hint").innerHTML = `<b>${esc(label)}:</b> ${esc(help)}<br>${src}`;
+  $("#steps-empty").textContent = mine ? "" : (theirs ? "Nhóm chưa có bước riêng — đang dùng bước của gateway." : "Chưa có bước nào.");
+}
+
+function setGwState() {
+  const dot = $("#gw-dot"), el = $("#gw-state");
+  if (dot) dot.className = "gw-dot " + (GW.ok === true ? "ok" : GW.ok === false ? "bad" : "");
+  if (!el) return;
+  if (!GW.url || !GW.has_key) el.innerHTML = `Chưa cấu hình gateway — bấm nút <b>Gateway</b> ở trên để nhập địa chỉ + khoá Tool.`;
+  else if (GW.ok === false) el.innerHTML = `<span class="text-danger">Gateway lỗi:</span> ${esc(GW.error)} <span class="text-muted">(${esc(GW.url)})</span>`;
+  else if (GW.ok === true) el.innerHTML = `Đã nối gateway <b>${esc(GW.url)}</b> — máy trống sẽ tự xin đơn của pool đã chọn.`;
+  else el.textContent = "Đang kiểm tra gateway…";
+}
+
+function renderPoolSelect() {
+  const sel = $("#group-pool");
+  if (!sel || !GROUP) return;
+  const cur = GROUP.api.pool;
+  const opts = [`<option value="">— chọn pool —</option>`]
+    .concat(GW.pools.map(p => `<option value="${esc(p.code)}">${esc(p.name || p.code)}${p.active === false ? " (tạm dừng)" : ""}</option>`));
+  if (cur && !GW.pools.some(p => p.code === cur)) opts.push(`<option value="${esc(cur)}">${esc(cur)} (không thấy trên gateway)</option>`);
+  sel.innerHTML = opts.join("");
+  sel.value = cur;
+}
+
+async function loadGateway() {
+  try { Object.assign(GW, await API().gateway_get()); } catch (e) {}
+  if (!GW.url || !GW.has_key) { GW.ok = null; GW.pools = []; setGwState(); renderPoolSelect(); return; }
+  GW.ok = null; setGwState();
+  try {
+    const r = await API().gateway_pools();
+    GW.ok = !!(r && r.ok); GW.error = (r && r.error) || ""; GW.pools = (r && r.pools) || [];
+  } catch (e) { GW.ok = false; GW.error = String(e); GW.pools = []; }
+  setGwState(); renderPoolSelect();
+  if (GROUP && GROUP.mode === "api") loadGwPool();
+}
+
+async function loadGwPool() {
+  const code = GROUP && GROUP.api.pool;
+  if (!code || GW.ok !== true) { GW_POOL = null; renderApiUi(); return; }
+  if (GW_POOL && GW_POOL.code === code) { renderApiUi(); return; }
+  try {
+    const r = await API().gateway_pool(code);
+    GW_POOL = (r && r.ok) ? r : null;
+    if (r && !r.ok) toast("Không tải được pool: " + r.error, "warn");
+  } catch (e) { GW_POOL = null; }
+  renderApiUi();
+}
+
+async function gatewaySettings() {
+  try { Object.assign(GW, await API().gateway_get()); } catch (e) {}
+  const r = await askForm("Kết nối Topup Gateway",
+    "Tạo khoá ở trang quản trị gateway → Khoá API → loại «Tool». Khoá chỉ lưu trên máy này.", [
+    { key: "url", label: "Địa chỉ gateway", value: GW.url, placeholder: "https://gateway.cua-ban.vn" },
+    { key: "key", label: "Khoá Tool (gwt_…)", type: "password", value: "",
+      placeholder: GW.has_key ? `để trống = giữ khoá đang lưu (${GW.key_hint})` : "gwt_…" },
+  ]);
+  if (!r) return;
+  try {
+    const res = await API().gateway_save(r.url, r.key);
+    if (res && res.ok) toast(`Đã nối gateway — khoá «${res.key || "tool"}»`, "ok");
+    else toast("Chưa nối được: " + ((res && res.error) || "?"), "bad");
+  } catch (e) { toast("Lỗi: " + e, "bad"); }
+  await loadGateway();
+}
+
+async function importGwSteps(btn) {
+  if (!GROUP || GROUP.mode !== "api") return;
+  const code = $("#group-pool").value;
+  if (!code) { toast("Chọn pool trước", "warn"); return; }
+  busy(btn, true);
+  try {
+    const r = await API().gateway_pool(code);
+    if (!r || !r.ok) { toast("Không tải được pool: " + ((r && r.error) || "?"), "bad"); busy(btn, false); return; }
+    const total = API_PHASES.reduce((n, [k]) => n + (r.steps[k] || []).length, 0);
+    const have = API_PHASES.reduce((n, [k]) => n + GROUP.api.steps[k].length, 0);
+    if (!total) { toast("Pool này chưa cấu hình bước nào trên gateway", "warn"); busy(btn, false); return; }
+    if (!have || confirmBox(`Chép ${total} bước của pool «${r.name || code}» vào nhóm?\nCác bước RIÊNG hiện có của nhóm (${have} bước) sẽ bị thay.`)) {
+      GROUP.api.pool = code;
+      API_PHASES.forEach(([k]) => { GROUP.api.steps[k] = JSON.parse(JSON.stringify(r.steps[k] || [])); });
+      GW_POOL = r;
+      bindSteps();
+      toast(`Đã chép ${total} bước — sửa cho hợp loại máy rồi bấm «Lưu nhóm»`, "ok");
+    }
+  } catch (e) { toast("Lỗi: " + e, "bad"); }
+  busy(btn, false);
+}
+
+// Chạy thử các bước ở chế độ API: hỏi giá trị cho {{biến}} rồi chạy bằng đúng bộ chạy lúc nạp thật.
+async function runApiSteps(steps) {
+  const names = [...new Set((JSON.stringify(steps).match(/\{\{\s*[A-Za-z0-9_.]+\s*\}\}/g) || []).map(s => s.replace(/[{}\s]/g, "")))];
+  let vars = {};
+  if (names.length) {
+    const r = await askForm("Giá trị thử cho các biến", "Chỉ dùng cho lần chạy thử này, không lưu lại.",
+      names.map(n => ({ key: n, label: `{{${n}}}`, value: TEST_VARS[n] || "",
+                        type: /pass|otp|pin|secret|token|cookie/i.test(n) ? "password" : "text" })));
+    if (!r) return null;
+    vars = r; Object.assign(TEST_VARS, r);
+  }
+  const res = await API().test_api_steps(SEL, steps, vars);
+  if (!res || !res.ok) { log("✗ " + ((res && res.error) || "lỗi"), "bad"); toast((res && res.error) || "Chạy thử lỗi", "bad"); return null; }
+  return res.results;
 }
 
 async function newGroup() {
@@ -1184,7 +1424,11 @@ async function saveGroupSilent() {
   GROUP.name = $("#group-name").value.trim() || GROUP.name;
   GROUP.mode = $("#group-mode").value;
   GROUP.loops = parseInt($("#group-loops").value) || 0;
-  GROUP.steps = FLOW.steps;
+  // các bước đã nằm sẵn trong GROUP.steps / GROUP.api.steps (FLOW.steps chỉ là tham chiếu tới chúng)
+  GROUP.api.pool = $("#group-pool").value || GROUP.api.pool || "";
+  GROUP.api.login_wait = parseInt($("#api-login-wait").value) || 45;
+  GROUP.api.purchase_wait = parseInt($("#api-purchase-wait").value) || 60;
+  GROUP.api.check_keyboard = $("#api-kb").checked;
   try { return await API().group_save(GROUP); } catch (e) {}
 }
 
@@ -1222,28 +1466,42 @@ function renderMembers() {
     const d = DEVICES.find(x => x.name === name);
     const st = RUN_STATUS[name];
     const running = !!(st && st.running);
+    const stopping = !!(st && st.stopping);
+    const halted = !running && st && /^DỪNG/.test(st.status || "");     // máy tự dừng, cần người xem
     const label = d ? (d.label || d.name) : name;
     const online = d ? d.board_online : false;
-    const statusTxt = running ? (st.status || "đang chạy") : (st ? (st.status || "nghỉ") : "nghỉ");
-    const dotStyle = running ? "" : online ? "background:var(--bs-warning)" : "background:var(--bs-secondary)";
+    const statusTxt = st ? (st.status || (running ? "đang chạy" : "nghỉ")) : "nghỉ";
+    const dotStyle = running ? "" : halted ? "background:var(--bs-danger)" : online ? "background:var(--bs-warning)" : "background:var(--bs-secondary)";
+    const c = (st && st.counts) || {};
+    const counts = (c.done || c.failed || c.review)
+      ? `<span class="mem-counts" title="Hoàn tất · Thất bại · Chờ đối soát (từ lúc bấm Chạy)">✓${c.done || 0} · ✕${c.failed || 0} · ?${c.review || 0}</span>` : "";
+    let acts;
+    if (running && stopping && st.mode === "api") {
+      acts = `<span class="pill warn" title="Không nhận đơn mới; làm nốt đơn đang dở rồi dừng">đang dừng…</span>
+              <button class="btn btn-sm btn-danger" data-mforce="${esc(name)}" title="Bỏ dở đơn đang làm ngay lập tức">Dừng ngay</button>`;
+    } else if (running) {
+      acts = `<button class="btn btn-sm btn-label-danger" data-mstop="${esc(name)}"
+                title="${st.mode === "api" ? "Không nhận đơn mới; đơn đang làm vẫn làm cho xong" : "Dừng kịch bản"}">Dừng</button>`;
+    } else {
+      acts = `<button class="btn btn-sm btn-success" data-mrun="${esc(name)}">${halted ? "Chạy lại" : "Chạy"}</button>`;
+    }
     const row = document.createElement("div");
-    row.className = "mem-row";
+    row.className = "mem-row" + (halted ? " halted" : "");
     row.innerHTML = `
       <span class="dot ${running ? "on" : ""}" style="${dotStyle}"></span>
       <div class="mem-info">
-        <div class="mem-name">${esc(label)}</div>
-        <div class="mem-sub">${esc(statusTxt)}${st && st.last_msg ? " · " + esc(st.last_msg) : ""}</div>
+        <div class="mem-name">${esc(label)} ${counts}</div>
+        <div class="mem-sub" title="${esc(statusTxt)}">${esc(statusTxt)}${st && st.last_msg && !halted ? " · " + esc(st.last_msg) : ""}</div>
       </div>
       <div class="mem-act">
-        ${running
-          ? `<button class="btn btn-sm btn-label-danger" data-mstop="${esc(name)}">Dừng</button>`
-          : `<button class="btn btn-sm btn-success" data-mrun="${esc(name)}">Chạy</button>`}
+        ${acts}
         <button class="btn btn-sm btn-label-secondary" data-mremove="${esc(name)}" title="Bỏ khỏi nhóm">✕</button>
       </div>`;
     box.appendChild(row);
   });
   $$("[data-mrun]", box).forEach(b => b.onclick = () => runMachine(b.dataset.mrun));
   $$("[data-mstop]", box).forEach(b => b.onclick = () => stopMachine(b.dataset.mstop));
+  $$("[data-mforce]", box).forEach(b => b.onclick = () => stopMachine(b.dataset.mforce, true));
   $$("[data-mremove]", box).forEach(b => b.onclick = () => removeMember(b.dataset.mremove));
 }
 
@@ -1265,16 +1523,29 @@ async function removeMember(name) {
   catch (e) { toast("Lỗi: " + e, "bad"); }
 }
 
+// Nhóm chạy được chưa (kiểm nhanh phía giao diện; backend kiểm lại đầy đủ, kể cả hỏi gateway)
+function groupNotReady() {
+  if (GROUP.mode === "api") {
+    if (!GW.url || !GW.has_key) return "Chưa cấu hình gateway (bấm nút Gateway)";
+    if (!$("#group-pool").value) return "Chưa chọn pool trên gateway";
+    return "";
+  }
+  return GROUP.steps.length ? "" : "Nhóm chưa có bước nào trong kịch bản";
+}
+
 async function runGroup(btn) {
   if (!GROUP) return;
   if (!GROUP.devices.length) { toast("Nhóm chưa có máy nào", "warn"); return; }
-  if (!FLOW.steps.length) { toast("Nhóm chưa có bước nào trong kịch bản", "warn"); return; }
+  const why = groupNotReady();
+  if (why) { toast(why, "warn"); return; }
   busy(btn, true);
   await saveGroupSilent();
   try {
     const r = await API().group_run(GROUP.id);
-    if (r && r.ok) { log(`▶ Chạy nhóm “${GROUP.name}”: ${(r.started || []).join(", ") || "(không có máy mới)"}`); toast("Đã chạy nhóm", "ok"); }
-    else toast("Lỗi: " + ((r && r.error) || "?"), "bad");
+    if (r && r.ok) {
+      log(`▶ Chạy nhóm “${GROUP.name}”: ${(r.started || []).join(", ") || "(không có máy mới)"}`);
+      toast(GROUP.mode === "api" ? "Các máy bắt đầu nhận đơn từ gateway" : "Đã chạy nhóm", "ok");
+    } else toast((r && r.error) || "Lỗi không rõ", "bad");
   } catch (e) { toast("Lỗi: " + e, "bad"); }
   busy(btn, false);
   pollStatus();
@@ -1282,44 +1553,71 @@ async function runGroup(btn) {
 async function stopGroup(btn) {
   if (!GROUP) return;
   busy(btn, true);
-  try { await API().group_stop(GROUP.id); log(`■ Dừng nhóm “${GROUP.name}”`); toast("Đã dừng nhóm", ""); }
-  catch (e) { toast("Lỗi: " + e, "bad"); }
+  try {
+    await API().group_stop(GROUP.id, false);
+    log(`■ Dừng nhóm “${GROUP.name}”`);
+    toast(GROUP.mode === "api" ? "Đã ngừng nhận đơn mới — máy đang làm dở sẽ làm nốt rồi dừng" : "Đã dừng nhóm", "");
+  } catch (e) { toast("Lỗi: " + e, "bad"); }
   busy(btn, false);
   pollStatus();
 }
 async function runMachine(name) {
   if (!GROUP) return;
-  if (!FLOW.steps.length) { toast("Nhóm chưa có bước nào", "warn"); return; }
+  const why = groupNotReady();
+  if (why) { toast(why, "warn"); return; }
   await saveGroupSilent();
   try {
     const r = await API().machine_run(GROUP.id, name);
     if (r && r.ok) log(`▶ Chạy máy ${name}`);
-    else toast("Lỗi: " + ((r && r.error) || "?"), "bad");
+    else toast((r && r.error) || "Lỗi không rõ", "bad");
   } catch (e) { toast("Lỗi: " + e, "bad"); }
   pollStatus();
 }
-async function stopMachine(name) {
-  try { await API().machine_stop(name); log(`■ Dừng máy ${name}`); }
+async function stopMachine(name, force = false) {
+  if (force && !confirmBox(`Dừng NGAY máy ${name}?\n\nĐơn đang làm sẽ bị bỏ dở:\n• chưa chạm tới bước mua → báo «thất bại (chưa nạp)»\n• đã chạm bước mua → báo «chờ đối soát» để bạn kiểm tra trong game.`)) return;
+  try { await API().machine_stop(name, force); log(`■ ${force ? "Dừng ngay" : "Dừng"} máy ${name}`); }
   catch (e) { toast("Lỗi: " + e, "bad"); }
   pollStatus();
 }
 
 async function testFlow(btn) {
   if (!SEL) { toast("Chọn máy để thử", "warn"); return; }
-  if (!FLOW.steps.length) { toast("Chưa có bước nào", "warn"); return; }
+  const api = GROUP && GROUP.mode === "api";
+  // chế độ API: nhóm chưa có bước riêng cho giai đoạn này thì thử luôn bước của gateway
+  let steps = FLOW.steps;
+  if (api && !steps.length && GW_POOL) steps = (GW_POOL.steps || {})[API_PHASE] || [];
+  if (!steps.length) { toast("Chưa có bước nào để thử", "warn"); return; }
   busy(btn, true);
-  log(`▶ Chạy thử kịch bản trên ${SEL}`);
+  const what = api ? `giai đoạn «${API_PHASES.find(p => p[0] === API_PHASE)[1]}»` : "kịch bản";
+  log(`▶ Chạy thử ${what} trên ${SEL}`);
   try {
-    const r = await API().test_flow(SEL, FLOW.steps);
-    if (!r || !r.ok) { log("✗ " + ((r && r.error) || "lỗi"), "bad"); toast("Chạy thử lỗi", "bad"); }
+    let results = null;
+    if (api) results = await runApiSteps(steps);
     else {
+      const r = await API().test_flow(SEL, steps);
+      if (!r || !r.ok) { log("✗ " + ((r && r.error) || "lỗi"), "bad"); toast((r && r.error) || "Chạy thử lỗi", "bad"); }
+      else results = r.results;
+    }
+    if (results) {
       let okN = 0;
-      r.results.forEach(x => { if (x.ok) okN++; log(`   [${x.i + 1}] ${x.type}: ${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad"); });
-      toast(`${SEL}: ${okN}/${r.results.length} bước OK`, okN === r.results.length ? "ok" : "warn");
+      results.forEach(x => { if (x.ok) okN++; log(`   [${x.i + 1}] ${api ? "" : x.type + ": "}${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad"); });
+      toast(`${SEL}: ${okN}/${steps.length} bước OK`, okN === steps.length ? "ok" : "warn");
       setTimeout(() => shot(null), 600);
     }
   } catch (e) { log("✗ " + e, "bad"); toast("Lỗi: " + e, "bad"); }
   busy(btn, false);
+}
+
+// nhật ký các máy đang nhận đơn: backend đẩy từng dòng về đây
+let RUNLOG_LOADED = false;
+function showRunLog(e) {
+  log(`${e.t} [${e.name}] ${e.text}`, e.kind === "ok" ? "ok" : e.kind === "bad" ? "bad" : "");
+}
+window.__runLog = showRunLog;
+async function loadRunLog() {
+  if (RUNLOG_LOADED) return;
+  RUNLOG_LOADED = true;
+  try { (await API().run_log() || []).forEach(showRunLog); } catch (e) {}
 }
 
 // poll trạng thái chạy khi đang ở tab Nhóm & Kịch bản
@@ -1349,6 +1647,9 @@ function init() {
 
   // nav
   $$(".app-nav").forEach(b => b.onclick = () => showView(b.dataset.view));
+  const aiRefresh = $("#btn-ai-refresh");
+  if (aiRefresh) aiRefresh.onclick = () => loadAI();
+  if (typeof loadAI === "function") loadAI().catch(() => {});   // chấm trạng thái ở thanh bên đúng ngay từ đầu
 
   // theme toggle (light/dark) — persist + reload so Vuexy re-themes the menu
   const themeBtn = $("#btn-theme");
@@ -1420,9 +1721,17 @@ function init() {
   $("#btn-group-new").onclick = newGroup;
   $("#btn-group-del").onclick = delGroup;
   $("#group-mode").onchange = (e) => {
-    $("#group-loops-wrap").style.display = e.target.value === "loop" ? "" : "none";
-    if (GROUP) GROUP.mode = e.target.value;
+    if (!GROUP) return;
+    GROUP.mode = e.target.value;
+    bindSteps();                                    // đổi danh sách bước đang sửa theo chế độ
+    if (GROUP.mode === "api") { renderPoolSelect(); GW.ok === null ? loadGateway() : loadGwPool(); }
   };
+  $("#group-pool").onchange = (e) => {
+    if (!GROUP) return;
+    GROUP.api.pool = e.target.value; GW_POOL = null; loadGwPool();
+  };
+  $("#btn-gw-settings").onclick = gatewaySettings;
+  $("#btn-gw-import").onclick = (e) => importGwSteps(e.currentTarget);
   $("#btn-group-run").onclick = (e) => runGroup(e.currentTarget);
   $("#btn-group-stop").onclick = (e) => stopGroup(e.currentTarget);
   $("#group-add-dev").onchange = (e) => { const v = e.target.value; if (v) { addMember(v); e.target.value = ""; } };
@@ -1442,6 +1751,7 @@ function init() {
 
   // initial load
   loadOverview();     // trang mặc định
+  API().groups_list().then(g => { GROUPS = g || []; updateCounts(); }).catch(() => {});   // số nhóm ở thanh bên
   SCANNING = true;
   espScan();          // quét song song + streaming → badge + board hiện dần
   loadDevices();      // tải iPhone (USB) song song; __scanDone sẽ chốt lại

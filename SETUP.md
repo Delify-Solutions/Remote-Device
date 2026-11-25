@@ -223,3 +223,133 @@ Kết quả research về hướng A (khả năng cao là chạy được, chưa
 - **20 iPhone 8 bypass: KHÔNG tự động hoá được input** (không WDA, không inject tap/gõ). Jailbreak palera1n thì tắt Apple Pay → vô nghĩa cho mục đích thanh toán.
 - Máy bypass **chỉ** làm được: đọc thông số (`ideviceinfo`, `devices.py`) + đọc màn hình AX (giám sát), không điều khiển.
 - **Tự động hoá login + Apple Pay CHỈ chạy trên máy SẠCH/đã kích hoạt + tài khoản trả phí** (như XS Max). Tài khoản `contact@delify.vn` vẫn dùng tốt cho máy sạch.
+
+## 8. Điều khiển bằng AI (MCP) và dòng lệnh `farm` (2026-11-24)
+
+App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Desktop, Cursor… qua giao thức MCP) hoặc lệnh `./farm`
+đọc được màn hình iPhone (ảnh + chữ kèm toạ độ) và bấm / gõ / vuốt / bấm giữ / mở app / chạy-dừng nhóm.
+
+### Kết nối AI (3 cách — xem luôn trong app: mục «Kết nối AI»)
+1. **Claude Code**: mở Claude Code trong thư mục dự án và đồng ý với máy chủ `iphone-farm` (khai sẵn trong `.mcp.json`),
+   hoặc chạy một lần `claude mcp add iphone-farm -- /đường/dẫn/Remote-Device/farm mcp`.
+2. **Claude Desktop / Cursor / client MCP khác**: thêm `{"mcpServers": {"iphone-farm": {"command": "/đường/dẫn/Remote-Device/farm", "args": ["mcp"]}}}`.
+3. **HTTP** (khi app đang mở): `http://127.0.0.1:47821/mcp` + tiêu đề `Authorization: Bearer <khoá>`. Khoá xem / đổi ở mục «Kết nối AI»;
+   lưu trong `app/data/control.json` (không vào git). Chỉ nghe trên 127.0.0.1.
+
+`./farm mcp-config` in sẵn cả ba cách.
+
+### Dòng lệnh
+```bash
+./farm devices                               # danh sách máy
+./farm screen iPhoneFarm-01                  # chụp + đọc chữ kèm toạ độ (ảnh lưu vào shots/)
+./farm tap iPhoneFarm-01 462 820             # bấm toạ độ (pixel của ảnh chụp)
+./farm tap iPhoneFarm-01 --text "Wi-Fi"      # bấm vào chữ
+./farm type iPhoneFarm-01 "hello" --enter    # gõ (chỉ ASCII) rồi Enter
+./farm swipe iPhoneFarm-01 left              # lật trang; up/down = cuộn
+./farm hold iPhoneFarm-01 636 468 --seconds 1.5
+./farm run iPhoneFarm-01 @steps.json         # chạy một chuỗi bước (cùng dạng bước với kịch bản của app)
+./farm status ; ./farm groups ; ./farm start "Tên nhóm" ; ./farm stop iPhoneFarm-01
+./farm --help                                # mọi lệnh;  thêm --json để lấy kết quả cho script
+```
+
+### Cách hoạt động
+- **App đang mở** → mọi lệnh của AI/CLI được chuyển cho app thực hiện (app là nơi DUY NHẤT giữ cổng serial của board).
+  **App chưa mở** → `farm` tự dò board và tự mở cổng (chỉ điều khiển trực tiếp; chạy/dừng nhóm thì cần app).
+- Cổng serial được mở **độc quyền**: hai chương trình không thể cùng điều khiển một board (bên mở sau nhận lỗi rõ ràng).
+- **Một máy, một người dùng tại một thời điểm** (sổ dùng chung giữa AI/CLI, các nút thử trong giao diện và bộ chạy): máy **đang
+  chạy kịch bản / nhận đơn** thì AI/CLI không chen vào bấm được; máy đang được AI/CLI điều khiển thì app không quét / không chạy
+  nhóm / không thử bước trên máy đó cho tới khi lệnh xong; hai nút «Chạy thử» trên giao diện cũng không chạy chồng lên cùng một
+  máy. Tắt app / tắt cầu nối, bấm Esc ở client MCP (kể cả khi đi qua `farm mcp`) hoặc Ctrl-C ở `farm` thì lệnh đang chạy dở trên
+  điện thoại được huỷ.
+- **Máy đang nhận đơn của khách** (chế độ nhận đơn), hoặc vừa **dừng giữa chừng một đơn của khách** và đang được giữ nguyên màn hình:
+  AI/CLI **không xem được màn hình** (ảnh + chữ có thể lộ tài khoản / OTP của khách) — chỉ xem tiến độ bằng `farm status`.
+  Máy chạy kịch bản thường của chủ thì vẫn xem được.
+- **Máy dừng chờ người kiểm tra** (đơn gián đoạn giữa lúc mua, đơn cần đối soát, lỗi phiên đăng nhập, lỗi lặp lại…): màn hình được
+  GIỮ NGUYÊN — AI/CLI không điều khiển, không chạy lại nhóm có máy đó, và **`stop_run` cũng bị từ chối** (Dừng trong app là lời xác
+  nhận «đã đối soát xong», chỉ người vận hành đưa ra được). Trạng thái này chỉ gỡ bằng nút Dừng / Chạy lại trong app.
+- Mọi cú bấm đều ĐO vị trí con trỏ trên ảnh chụp rồi mới bấm; không đo được thì không bấm. Con trỏ chỉ được nhận bằng **bằng chứng
+  chuyển động**: vệt duy nhất vừa dời đi đúng hướng, đúng quãng theo lệnh di, ở hai nhịp liền nhau. Đến đích rồi vẫn chưa bấm: tool làm
+  **phép thử «đi – đứng yên – về»** (nhích con trỏ ra một chỗ TRỐNG của màn hình, hướng chọn ngẫu nhiên; nhìn thêm một lần không ra lệnh
+  gì — con trỏ thật đứng yên tuyệt đối; rồi quay lại đích bằng một nhịp ngắn) và chỉ bấm khi con trỏ làm đúng cả ba. Vật tự chạy / bay
+  vào đích / nhảy lung tung rất khó làm theo (không phải không thể — xem «Còn mở»). Chỗ trống được chọn theo ảnh nền (tránh nhãn chữ, icon, mép màn hình — đo thật: nhích
+  lên nhãn chữ làm con trỏ biến mất khỏi ảnh). Ảnh chụp trúng lúc con trỏ còn đang lướt (~0,4 s sau lệnh di) thì chờ nhìn lại, không ra
+  lệnh thừa. Tool tự đo «tốc độ con trỏ» của từng máy (pixel cho mỗi đơn vị lệnh — hai iPhone 8 đang có: ~0,9–1,1 và ~1,15–1,4) và chỉ
+  dùng số đo để siết phép kiểm khi hai lần đo liên tiếp khớp nhau; đổi tốc độ con trỏ trong Cài đặt của iPhone thì tool tự đo lại.
+- Khoá của cầu nối HTTP không in ra màn hình trừ khi yêu cầu rõ (`./farm mcp-config --show-token`).
+- Chỉ có một máy sẵn sàng thì bỏ được tên máy: `./farm find Safari`, `./farm tap 288 468`, `./farm type hello`.
+- Máy chủ MCP viết tay (`app/mcpserver.py`, không cần SDK, chạy trên Python 3.9), hỗ trợ cả giao thức đời cũ (bắt tay
+  `initialize`, 2024-11-05 … 2025-11-25) lẫn đời mới 2026-07-28 (không bắt tay, có `server/discover`).
+
+### Tệp
+| Tệp | Việc |
+|---|---|
+| `app/mcpserver.py` | giao thức MCP: stdio + HTTP, khách gọi sang app |
+| `app/control.py` | bộ công cụ dùng chung (đọc màn hình, bấm, gõ, vuốt, chạy nhóm…), máy chủ trong app, chế độ tự mở cổng |
+| `app/cli.py`, `farm` | dòng lệnh |
+| `app/fastshot.py` | chụp màn hình qua một kết nối giữ mở (~0,33s/ảnh thay vì ~1,3s) |
+| `app/web/ai.js` | trang «Kết nối AI» |
+
+### Kiểm thử
+```bash
+./.venv/bin/python app/tests/test_mcp.py          # giao thức + lõi điều khiển + CLI (máy giả)
+./.venv/bin/python app/tests/test_nav.py          # định vị con trỏ, bấm vòng kín, lệnh xuống board
+./.venv/bin/python app/tests/test_api_mode.py     # chế độ nhận đơn (gateway tạm + iPhone giả)
+uv run --python 3.12 --with mcp app/tests/interop_sdk.py     # kiểm chéo với client của SDK MCP chính thức
+./.venv/bin/python app/tests/smoke_device.py iPhoneFarm-01   # máy THẬT (tắt app trước): các bước của chế độ nhận đơn
+./.venv/bin/python app/tests/device_gestures.py iPhoneFarm-01  # máy THẬT (tắt app trước): bấm, lật trang, cuộn, bấm giữ
+```
+
+### Tốc độ đo trên iPhone 8 (sau khi chụp nhanh + đọc phản hồi board ngay)
+| Thao tác | Trước | Nay |
+|---|---|---|
+| chụp màn hình | ~1,3s | ~0,33s |
+| bấm vào toạ độ | 7–17s | ~8s (trung vị; gồm phép thử «đi – đứng yên – về»; đo trên 2 iPhone 8). Màn hình chính có icon Đồng hồ (kim chạy) thì thỉnh thoảng 15–30s |
+| dò chữ + bấm | ~18s | ~6s |
+| đọc màn hình (ảnh + chữ) qua MCP | — | ~1s |
+| lật trang (vuốt) | — | ~8s (thỉnh thoảng ~20s khi phải đo lại con trỏ) |
+
+Soak qua đường `farm` → app → board → iPhone: 8 vòng (mở Cài đặt, về home, lật trang, lật lại) trên từng máy, 0 lỗi.
+
+Nhịp của **bàn phím** (gõ, phím, mở app qua Spotlight) được giữ như cũ có chủ đích: nhấn Enter sớm thì Spotlight chưa kịp chọn app.
+
+### Board ESP32: sức khoẻ, tự reset, kiểm thử (firmware v2)
+Firmware (`app/firmware/esp32_hid/esp32_hid.ino`, `FW_VERSION 2`) nay báo được và tự bảo vệ:
+- `status` → `OK ble=… fw=2 up=<giây> heap=<RAM trống> min=<đáy RAM> blk=<mảng liền lớn nhất> rst=<lý do reset lần trước> rxerr=… ovf=… drop=<số lần BLE rớt> cmds=… temp=…`;
+  `info` → chip, lõi, xung nhịp, flash; `reset` → khởi động lại (chạy được cả khi chưa nối BLE).
+- Chống tràn: dòng lệnh đọc vào bộ đệm CỐ ĐỊNH 512 byte (dài hơn → `ERR line-too-long`, không ăn dần RAM như `String` nối cũ), bộ đệm nhận serial
+  2048 byte (mặc định 256 → gửi dồn nhiều lệnh khi board đang bận thì rớt lệnh), watchdog (`loop()` kẹt quá ~5 s → tự reset, lý do báo là `panic` hoặc `task_wdt` tuỳ cấu hình core),
+  RAM < 24 KB lúc rảnh → tự khởi động lại sớm.
+- **Nhiệt độ**: ESP32 gốc (D0WD) luôn trả đúng 53,3 °C — không có cảm biến thật, tool bỏ qua. Số đáng tin: RAM, lý do reset (`brownout` = nguồn USB yếu: đổi cáp / hub có nguồn), BLE rớt, lỗi serial.
+- Nạp firmware mới: trang **Thiết bị → Nạp** (hoặc `esp.flash`). Firmware cũ vẫn chạy bình thường, chỉ không có số liệu sức khoẻ.
+
+Trong app / AI: thẻ board ở trang Thiết bị hiện một dòng tóm tắt + cảnh báo; nút «BLE?» ở trình dựng kịch bản hiện sức khoẻ; công cụ MCP/CLI `board_health` (`./farm health [máy]`, chỉ xem) và
+`board_recover` (`./farm recover [máy]`: board im → reset cứng bằng chân EN qua RTS; thiếu RAM / phân mảnh → reset mềm; rồi chờ iPhone nối lại BLE — bị từ chối khi máy đang chạy).
+Bộ chạy nhận đơn tự kiểm board **lúc rảnh** (đầu phiên, rồi mỗi 5 phút, và khi máy báo «chưa sẵn sàng»); **bộ chạy** không bao giờ chủ động reset giữa lúc đang xử lý đơn. (Firmware thì tự khởi động lại khi RAM < 24 KB và 30 s không nhận byte nào — có thể trúng lúc chờ OTP; reset chỉ làm rớt BLE vài giây, không gây thao tác nào lên iPhone.)
+
+Kiểm thử ESP32 (ngoài iPhone):
+```bash
+./.venv/bin/python app/tests/test_firmware.py            # biên dịch thật firmware (arduino-cli, core esp32 2.0.17) + soi mã: đủ lệnh, giới hạn dòng, watchdog, reset
+./.venv/bin/python app/tests/test_board.py               # đọc/đánh giá status, quyết định reset, chuỗi phục hồi — board giả, không cần phần cứng
+./.venv/bin/python app/tests/smoke_board.py iPhoneFarm-03        # board THẬT (tắt app trước): độ trễ, giao thức, gửi dồn, rò RAM, reset mềm/cứng, BLE nối lại
+```
+Đo trên board thật (iPhoneFarm-03, ESP32-D0WD-V3, firmware v2): ping p50 ≈ 67 ms; 300 lệnh gửi dồn trong một lần ghi không rớt lệnh nào; 500 lệnh ping/status mất 0 byte RAM;
+dòng 700 ký tự bị chặn đúng; reset mềm ≈ 1,7 s, reset cứng qua RTS ≈ 1,7 s.
+
+### Còn mở
+- Trạng thái «dừng chờ người kiểm tra» chỉ nằm trong bộ nhớ của app: tắt / khởi động lại app giữa lúc đang xử lý một đơn thì AI/CLI
+  lại điều khiển được máy đó. Đơn vẫn được ghi trong sổ (journal) nên bộ chạy xử lý đúng khi chạy lại; hãy tự kiểm tra máy sau khi
+  app bị tắt đột ngột.
+- Vật tròn cỡ con trỏ **tự chuyển động** gần đích (hoạt ảnh, băng chuyền, huy hiệu nảy) thì bấm có thể chậm hơn / báo «không tới được».
+  Giả lập: dừng-đi, giữ-rồi-nhảy, lướt-rồi-đỗ, bay thẳng/chéo vào đích rồi đỗ, bắt chước lệnh di rồi trôi → 0 cú bấm lệch trong hàng nghìn lượt.
+  Còn lại là **xác suất thấp, không bằng 0**, kể cả khi con trỏ thật hiện được: vật nhảy ngẫu nhiên quanh đích ±120px (~0,5–1%/cú bấm trong
+  mô hình giả lập cực đoan đó), và vật «biết» đúng các chỗ trống mà tool dùng để nhích thử (~1/số chỗ trống). Đòi hỏi một vật cỡ con trỏ nhấp nháy
+  đúng quanh đích — hiếm khi gặp thật. Bước mua tiền luôn có thêm kiểm chữ trên màn hình trước và sau khi bấm.
+- Icon **Đồng hồ** có kim chạy trên màn hình chính tạo ra «vật mới» liên tục nên mỗi cú bấm ở đó có thể phải chụp lại ảnh nền vài lần
+  (chậm 15–30s). Bên trong app / game thì không gặp.
+- Kết quả «thất bại» / «không mua được» chỉ được kết luận khi chữ báo lỗi đã hiện ỔN ĐỊNH ít nhất 30 s mà vẫn không thấy «thành công»
+  (game chậm có thể hiện «thành công» muộn tới 15–25 s; báo sai «chưa nạp» cho đơn đã trừ tiền là lỗi đắt nhất). Hệ quả: `purchase_wait`
+  ngắn (≲ 40 s) thì kết quả lỗi hay chuyển ĐỐI SOÁT hơn là kết luận; mặc định 60 s thì kết luận được. Giới hạn thiết kế: nếu «thành công»
+  chỉ hiện sau hơn 30 s kể từ lúc chữ lỗi bắt đầu hiện, đơn vẫn bị báo lỗi.
+- Nút rộng của **hộp thoại hệ thống** (vd «Xác minh ID Apple → Để sau»): cú bấm đầu tiên từng bị iOS bỏ qua 1 lần, bấm lần hai mới ăn.
+  Chưa tái hiện lại được nên chưa sửa; tạm dùng 2 bước «bấm chữ» (đánh dấu «bỏ qua nếu lỗi») liên tiếp.
+- Màn hình nền động hẳn (video) thì không định vị được con trỏ → không bấm (an toàn nhưng bước sẽ hỏng).

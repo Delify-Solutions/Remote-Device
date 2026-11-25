@@ -10,6 +10,9 @@ import os, re, shutil, subprocess, sys, time, tempfile
 import serial
 from serial.tools import list_ports
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from quietserial import QuietSerial
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # thư mục Remote-Device
 VENV_PY = os.path.join(ROOT, ".venv", "bin", "python")
 ARDUINO_DATA = os.path.join(ROOT, ".arduino")
@@ -47,9 +50,11 @@ def probe(port, timeout=3.0):
     """Mở cổng KHÔNG reset, hỏi whoami. Trả {flashed, name}.
     Nếu đã nạp firmware của ta -> flashed True + name; nếu không -> flashed False."""
     try:
-        ser = serial.Serial()
+        ser = QuietSerial()                 # mở KHÔNG làm board reset (xem quietserial.py)
         ser.port = port; ser.baudrate = 115200; ser.timeout = 0.4
         ser.dtr = False; ser.rts = False
+        if os.name == "posix":
+            ser.exclusive = True      # cổng đang được điều khiển (app / farm / AI) thì KHÔNG chen lệnh dò vào
         ser.open()
         time.sleep(0.3)
         ser.reset_input_buffer()
@@ -67,6 +72,7 @@ def probe(port, timeout=3.0):
             # rỗng/cũ khi BLE đang bận → đọc 1 lần dễ trượt thành "?" hoặc sai.
             ser.reset_input_buffer()
             conn = disc = 0
+            last_status = None
             for _ in range(8):
                 ser.write(b"status\n"); ser.flush()
                 time.sleep(0.15)
@@ -78,6 +84,7 @@ def probe(port, timeout=3.0):
                         break
                     if "ble=" in line:
                         got = line
+                        last_status = line
                 if got is not None:
                     # LƯU Ý: "disconnected" chứa chuỗi con "connected" → khớp đúng.
                     if "ble=connected" in got: conn += 1
@@ -85,9 +92,12 @@ def probe(port, timeout=3.0):
             if conn or disc:
                 ble = conn > disc
         ser.close()
-        return {"flashed": name is not None, "name": name, "ble": ble}
+        return {"flashed": name is not None, "name": name, "ble": ble, "status": last_status if name else None}
     except Exception as e:
-        return {"flashed": False, "name": None, "ble": None, "error": str(e)}
+        # cổng đang bị một chương trình khác giữ độc quyền (lệnh `farm` / máy chủ MCP chạy ngoài app):
+        # KHÔNG phải «chưa nạp firmware» — chỉ là lúc này không hỏi được.
+        locked = "lock" in str(e).lower() or "busy" in str(e).lower()
+        return {"flashed": False, "name": None, "ble": None, "error": str(e), "busy": locked}
 
 
 def chip_info(port):

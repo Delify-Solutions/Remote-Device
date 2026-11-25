@@ -12,6 +12,16 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DEVICES_FILE = os.path.join(DATA_DIR, "devices.json")
 FLOWS_FILE = os.path.join(DATA_DIR, "flows.json")
 GROUPS_FILE = os.path.join(DATA_DIR, "groups.json")
+SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")     # địa chỉ + khoá gateway (KHÔNG vào git)
+
+# Chế độ "api": các giai đoạn của 1 đơn nạp. Mỗi giai đoạn có danh sách bước riêng.
+#   login    đăng nhập tài khoản của khách
+#   otp      nhập mã OTP khách vừa gửi ({{otp}})
+#   nav      từ màn hình sau đăng nhập đi tới danh sách gói nạp
+#   purchase mua MỘT gói (lặp theo số lượng) — dừng ở màn hình báo kết quả để tool chụp bill
+#   after    sau khi mua xong 1 gói: đóng thông báo, quay lại danh sách gói
+#   finish   kết thúc đơn: đăng xuất, về màn hình chính (để máy sẵn sàng cho đơn sau)
+API_PHASES = ["login", "otp", "nav", "purchase", "after", "finish"]
 
 
 def _ensure():
@@ -118,9 +128,53 @@ def delete_flow(flow_id):
     return True
 
 
+# ---- settings (dict) ----
+def get_settings():
+    _ensure()
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_settings(patch):
+    s = get_settings()
+    s.update(patch)
+    _write(SETTINGS_FILE, s)
+    try:
+        os.chmod(SETTINGS_FILE, 0o600)      # có khoá API → chỉ chủ máy đọc được
+    except OSError:
+        pass
+    return s
+
+
 # ---- groups (nhóm máy + 1 kịch bản riêng) ----
-# group = {id, name, steps:[...], devices:[board_name...], mode:"loop"|"once",
-#          loops:int (0=vô hạn), created, updated}
+# group = {id, name, steps:[...], devices:[board_name...], mode:"loop"|"once"|"api",
+#          loops:int (0=vô hạn), created, updated,
+#          api:{pool, steps:{login:[],otp:[],nav:[],purchase:[],finish:[]},
+#               login_wait, purchase_wait, check_keyboard}}
+# mode "api": máy trống tự xin đơn ở gateway; `api.steps` để TRỐNG giai đoạn nào thì giai
+# đoạn đó dùng các bước cấu hình trên gateway (pool), có thì ghi đè riêng cho nhóm máy này.
+def api_defaults(api=None):
+    """Chuẩn hoá khối cấu hình API của nhóm (thiếu gì bù mặc định)."""
+    api = dict(api or {})
+    steps = dict(api.get("steps") or {})
+    api["pool"] = str(api.get("pool") or "")
+    api["steps"] = {ph: list(steps.get(ph) or []) for ph in API_PHASES}
+
+    def _num(key, default, lo, hi):
+        try:
+            return max(lo, min(hi, int(api.get(key, default))))
+        except (TypeError, ValueError):
+            return default
+    api["login_wait"] = _num("login_wait", 45, 5, 600)
+    api["purchase_wait"] = _num("purchase_wait", 60, 5, 600)
+    api["check_keyboard"] = bool(api.get("check_keyboard", True))
+    return api
+
+
 def get_groups():
     _ensure(); return _read(GROUPS_FILE)
 
@@ -140,8 +194,10 @@ def save_group(group):
         group["created"] = time.time()
     group.setdefault("steps", [])
     group.setdefault("devices", [])
-    group.setdefault("mode", "loop")
+    if group.get("mode") not in ("loop", "once", "api"):
+        group["mode"] = "loop"
     group.setdefault("loops", 0)
+    group["api"] = api_defaults(group.get("api"))
     group["updated"] = time.time()
     for i, g in enumerate(groups):
         if g["id"] == group["id"]:

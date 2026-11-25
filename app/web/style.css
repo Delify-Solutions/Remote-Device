@@ -117,7 +117,7 @@
 
 /* ---- segmented sub-tabs (Tất cả / Board / iPhone) ---- */
 .seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 10px;
-  background: var(--bs-secondary-bg); border: 1px solid var(--bs-border-color); }
+  background: var(--bs-body-bg); border: 1px solid var(--bs-border-color); }
 .seg-btn { border: 0; background: transparent; color: var(--bs-body-color);
   padding: .4rem .95rem; border-radius: 7px; font-size: .85rem; font-weight: 500; cursor: pointer;
   display: inline-flex; align-items: center; gap: .4rem; transition: background .12s, color .12s; }
@@ -385,3 +385,50 @@
   border-radius: var(--bs-border-radius); background: var(--bs-body-bg); color: var(--bs-body-color);
   font-size: .84rem;
 }
+
+/* ---- chế độ API (nhận đơn từ gateway) ---- */
+.gw-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: .35rem;
+  background: var(--bs-secondary); vertical-align: 1px; }
+.gw-dot.ok { background: var(--bs-success); } .gw-dot.bad { background: var(--bs-danger); }
+.api-row { margin-top: .9rem; padding-top: .8rem; border-top: 1px dashed var(--bs-border-color);
+  display: flex; flex-wrap: wrap; gap: .6rem 1.2rem; align-items: center; justify-content: space-between; }
+.api-row[hidden] { display: none; }
+.api-note { font-size: .82rem; color: var(--bs-secondary-color); min-width: 0; }
+.api-opts { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; }
+.api-opt { font-size: .8rem; color: var(--bs-secondary-color); display: inline-flex; align-items: center; gap: .35rem; margin: 0; white-space: nowrap; }
+.api-opt input[type=number] { width: 62px; padding: .15rem .35rem; border-radius: 6px; font-size: .8rem;
+  border: 1px solid var(--bs-border-color); background: var(--bs-body-bg); color: var(--bs-body-color); }
+.api-hint { font-size: .8rem; line-height: 1.5; color: var(--bs-body-color); padding: .55rem .75rem;
+  border-radius: 8px; background: transparent; border: 1px dashed var(--bs-border-color); }
+.seg.seg-wrap { display: flex; flex-wrap: wrap; }
+.seg-wrap .seg-btn { padding: .32rem .7rem; font-size: .8rem; }
+.seg-c.own { background: var(--bs-success-bg-subtle); color: var(--bs-success); }
+.seg-c.none { opacity: .55; }
+.seg-btn.active .seg-c.own { background: rgba(255,255,255,.3); color: #fff; }
+.mem-counts { font-size: .7rem; font-weight: 500; color: var(--bs-secondary-color); margin-left: .35rem; white-space: nowrap; }
+.mem-row.halted .mem-sub { color: var(--bs-danger); white-space: normal; }
+
+/* bước «bỏ qua nếu lỗi» */
+.opt-tag { font-size: .66rem; padding: .05rem .4rem; border-radius: 20px; margin-left: .35rem; white-space: nowrap;
+  background: var(--bs-warning-bg-subtle); color: var(--bs-warning); }
+.step .ops button.on { background: var(--bs-warning); color: #fff; border-color: var(--bs-warning); }
+
+/* ---- cảnh báo «máy sẽ không nhận đơn» (pool/nhóm thiếu luật hoặc bước bắt buộc) ---- */
+.api-warn { font-size: .8rem; line-height: 1.5; padding: .55rem .75rem; border-radius: 8px;
+  color: var(--bs-warning-text-emphasis, var(--bs-warning)); background: var(--bs-warning-bg-subtle);
+  border: 1px solid rgba(var(--bs-warning-rgb), .45); }
+
+/* ---- trang «Kết nối AI» ---- */
+.ai-code { position: relative; }
+.ai-code pre { background: var(--bs-tertiary-bg); border: 1px solid var(--bs-border-color); border-radius: .5rem;
+  padding: .75rem 3rem .75rem .9rem; white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; }
+.ai-code .ai-copy { position: absolute; top: .45rem; right: .45rem; padding: .25rem .45rem; }
+.ai-kv { display: grid; grid-template-columns: 5.5rem 1fr; gap: .45rem .75rem; align-items: center; }
+.ai-kv dt { font-weight: 500; color: var(--bs-secondary-color); font-size: .85rem; }
+.ai-kv dd { margin: 0; min-width: 0; word-break: break-all; }
+
+/* Sức khoẻ board ESP32 (firmware v2): một dòng tóm tắt + các ghi chú */
+.esp-health { margin-top: 6px; font-size: .76rem; color: var(--bs-secondary-color); line-height: 1.35; }
+.esp-health.warn { color: var(--bs-warning); }
+.esp-health.bad  { color: var(--bs-danger); font-weight: 600; }
+.esp-health > div { margin-top: 2px; }

@@ -1,0 +1,4 @@
+#!/bin/sh
+# farm — điều khiển iPhone Farm bằng dòng lệnh / máy chủ MCP cho AI.   ./farm --help
+DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHONWARNINGS="${PYTHONWARNINGS:-ignore}" exec "$DIR/.venv/bin/python" "$DIR/app/cli.py" "$@"
