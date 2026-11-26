@@ -297,7 +297,7 @@
 
             <!-- TRANG 2: quản lý kịch bản + máy của MỘT nhóm -->
             <div id="group-detail" hidden>
-              <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+              <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2" id="group-head">
                 <div class="d-flex align-items-center gap-3">
                   <button class="btn btn-sm btn-label-secondary" id="btn-group-back" title="Về danh sách nhóm"><i class="ti tabler-arrow-left me-1"></i>Danh sách nhóm</button>
                   <div>
@@ -386,128 +386,124 @@
                 </div>
               </div>
 
-              <!-- Trình sửa 1 kịch bản (các bước + màn hình thử) -->
+              <!-- Trình sửa 1 kịch bản: đầu trang gọn (đường dẫn + tên + Lưu) · dải «Chạy» · các bước dạng lộ trình + màn hình thử -->
               <div id="script-editor" hidden>
-                <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
-                  <div class="d-flex align-items-center gap-3 flex-grow-1">
-                    <button class="btn btn-sm btn-label-secondary" id="btn-script-back" title="Về trang của nhóm"><i class="ti tabler-arrow-left me-1"></i>Về nhóm</button>
-                    <div class="flex-grow-1" style="max-width:420px">
-                      <label class="form-label small mb-1" id="script-name-label">Tên kịch bản</label>
-                      <input id="script-name" class="form-control form-control-sm" placeholder="VD: Đăng nhập + mua gói" maxlength="80">
-                    </div>
-                    <div id="script-phase-title" class="fw-medium" hidden></div>
+                <header class="ed-head">
+                  <button class="ed-back" id="btn-script-back" title="Về trang của nhóm"><i class="ti tabler-chevron-left"></i><span id="ed-group-name">Nhóm</span></button>
+                  <span class="ed-sep" aria-hidden="true">/</span>
+                  <div class="ed-title">
+                    <input id="script-name" class="ed-name" placeholder="Tên kịch bản" maxlength="80" aria-label="Tên kịch bản" title="Bấm để đổi tên kịch bản">
                   </div>
-                </div>
-                <!-- Cách chạy của KỊCH BẢN này: 1 lần / lặp, chạy trên những máy nào, Chạy / Dừng. Một máy chỉ chạy một kịch bản một lúc. -->
-                <div class="card mb-4" id="script-run-card">
-                  <div class="card-body">
-                    <div class="row g-3 align-items-start">
-                      <div class="col-md-2">
-                        <label class="form-label small mb-1">Cách chạy</label>
-                        <select id="script-mode" class="form-select form-select-sm">
-                          <option value="once">Chạy 1 lần</option>
-                          <option value="loop">Lặp lại</option>
-                        </select>
-                      </div>
-                      <div class="col-md-2" id="script-loops-wrap" hidden>
-                        <label class="form-label small mb-1">Số vòng (0 = ∞)</label>
-                        <input id="script-loops" type="number" min="0" max="100000" value="0" class="form-control form-control-sm">
-                      </div>
-                      <div class="col-md">
-                        <label class="form-label small mb-1">Chạy trên máy</label>
-                        <div id="script-machines" class="script-machines"></div>
-                      </div>
-                      <div class="col-md-auto d-flex gap-2 pt-md-4">
-                        <button class="btn btn-sm btn-success" id="btn-script-run"><i class="ti tabler-player-play me-1"></i>Chạy</button>
-                        <button class="btn btn-sm btn-label-danger" id="btn-script-stop"><i class="ti tabler-player-stop me-1"></i>Dừng</button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                  <div id="script-phase-title" class="ed-phase" hidden></div>
+                  <span class="ed-dirty" id="ed-dirty" hidden>Có thay đổi chưa lưu</span>
+                  <button class="btn btn-sm btn-primary" id="btn-save"><i class="ti tabler-device-floppy me-1"></i>Lưu kịch bản</button>
+                </header>
 
-                <div class="row g-4">
-                <div class="col-lg-5">
-                  <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                      <h5 class="mb-0">Màn hình thử</h5>
+                <!-- Cách chạy của KỊCH BẢN này, đọc như một câu: «Chạy [1 lần] trên [máy…]». Một máy chỉ chạy một kịch bản một lúc. -->
+                <section class="ed-run" id="script-run-card" aria-label="Chạy kịch bản">
+                  <div class="ed-run-main">
+                    <span class="ed-run-word">Chạy</span>
+                    <select id="script-mode" class="form-select form-select-sm ed-run-mode" aria-label="Cách chạy">
+                      <option value="once">1 lần</option>
+                      <option value="loop">lặp lại</option>
+                    </select>
+                    <span class="ed-run-loops" id="script-loops-wrap" hidden>
+                      <input id="script-loops" type="number" min="0" max="100000" value="0" class="form-control form-control-sm" aria-label="Số vòng (0 = lặp vô hạn)" title="Số vòng — 0 là lặp vô hạn">
+                      <span class="ed-run-word">vòng</span>
+                    </span>
+                    <span class="ed-run-word">trên</span>
+                    <div id="script-machines" class="script-machines"></div>
+                  </div>
+                  <div class="ed-run-acts">
+                    <button class="btn btn-sm btn-success" id="btn-script-run"><i class="ti tabler-player-play me-1"></i>Chạy</button>
+                    <button class="btn btn-sm btn-label-secondary" id="btn-script-stop"><i class="ti tabler-player-stop me-1"></i>Dừng</button>
+                  </div>
+                </section>
+
+                <div class="ed-grid">
+                  <section class="ed-flow card" aria-label="Các bước">
+                    <div class="ed-card-head">
+                      <h5 class="mb-0">Các bước <span class="ed-count" id="step-count"></span></h5>
+                      <button class="btn btn-sm btn-label-primary" id="btn-flow-test" title="Chạy lần lượt mọi bước trên máy đang chọn ở khung màn hình"><i class="ti tabler-player-play me-1"></i>Chạy thử</button>
+                    </div>
+                    <!-- chế độ API: mỗi giai đoạn của 1 đơn có danh sách bước riêng -->
+                    <div id="api-phase-box" hidden>
+                      <div class="seg seg-wrap mb-2" id="api-phases"></div>
+                      <div class="api-warn mb-3" id="api-warn" hidden></div>
+                      <div class="api-hint mb-3" id="api-phase-hint"></div>
+                    </div>
+
+                    <ol id="steps" class="flow"></ol>
+                    <p class="flow-empty" id="steps-empty">Chưa có bước nào. Chọn một hành động bên dưới để bắt đầu.</p>
+
+                    <div class="flow-add" id="flow-add">
+                      <button class="flow-add-btn" id="btn-step-add" aria-expanded="false" aria-controls="step-palette">
+                        <span class="flow-node plus"><i class="ti tabler-plus"></i></span><span id="step-add-label">Thêm bước</span>
+                      </button>
+                      <div class="palette" id="step-palette" hidden>
+                        <div class="pal-group">
+                          <div class="pal-title">Chạm</div>
+                          <button class="pal-item" data-add="tap_text"><i class="ti tabler-hand-finger"></i>Bấm vào chữ</button>
+                          <button class="pal-item" data-add="pick" title="Bật «bấm vào ảnh» rồi bấm lên ảnh màn hình để lấy toạ độ"><i class="ti tabler-pointer"></i>Bấm theo vị trí trên ảnh</button>
+                          <button class="pal-item" data-add="hold_text"><i class="ti tabler-hand-stop"></i>Bấm giữ vào chữ</button>
+                          <button class="pal-item" data-add="hold"><i class="ti tabler-hand-stop"></i>Bấm giữ theo toạ độ</button>
+                          <button class="pal-item" data-add="swipe" title="Lật trang / cuộn"><i class="ti tabler-hand-move"></i>Vuốt</button>
+                        </div>
+                        <div class="pal-group">
+                          <div class="pal-title">Bàn phím</div>
+                          <button class="pal-item" data-add="type"><i class="ti tabler-keyboard"></i>Gõ chữ</button>
+                          <button class="pal-item" data-add="key"><i class="ti tabler-keyboard"></i>Nhấn phím</button>
+                          <button class="pal-item" data-add="combo"><i class="ti tabler-command"></i>Tổ hợp phím</button>
+                        </div>
+                        <div class="pal-group">
+                          <div class="pal-title">Ứng dụng</div>
+                          <button class="pal-item" data-add="launch"><i class="ti tabler-apps"></i>Mở app</button>
+                          <button class="pal-item" data-add="home"><i class="ti tabler-home"></i>Về màn hình chính</button>
+                        </div>
+                        <div class="pal-group">
+                          <div class="pal-title">Chờ và kiểm</div>
+                          <button class="pal-item" data-add="wait"><i class="ti tabler-clock"></i>Chờ vài giây</button>
+                          <button class="pal-item" data-add="wait_text"><i class="ti tabler-eye"></i>Chờ thấy chữ</button>
+                          <button class="pal-item" data-add="assert_text"><i class="ti tabler-checks"></i>Kiểm có chữ</button>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <aside class="ed-screen card" aria-label="Màn hình thử">
+                    <div class="ed-card-head">
+                      <select id="flow-device" class="form-select form-select-sm" aria-label="Máy để thử" title="Máy dùng để chụp màn hình và chạy thử"></select>
+                      <button class="btn btn-sm btn-icon btn-label-secondary" id="btn-ble" title="Hỏi trạng thái Bluetooth của board"><i class="ti tabler-bluetooth"></i></button>
+                      <button class="btn btn-sm btn-primary" id="btn-shot" title="Chụp màn hình máy đang chọn"><i class="ti tabler-camera me-1"></i>Chụp</button>
+                    </div>
+                    <div id="screen-wrap">
+                      <img id="screen" alt="Ảnh màn hình iPhone">
+                      <div id="screen-hint">
+                        <i class="ti tabler-device-mobile mb-2" style="font-size:38px"></i>
+                        <div>Chọn máy rồi bấm «Chụp».</div>
+                      </div>
+                      <div class="screen-spinner" id="screen-spin" hidden><span class="spinner"></span></div>
+                    </div>
+                    <div class="ed-screen-foot">
                       <div class="form-check form-switch mb-0">
                         <input class="form-check-input" type="checkbox" id="pick-mode">
-                        <label class="form-check-label small" for="pick-mode">Bấm ảnh để thêm Tap</label>
+                        <label class="form-check-label" for="pick-mode">Bấm vào ảnh để thêm bước chạm</label>
                       </div>
-                    </div>
-                    <div class="card-body">
-                      <label class="form-label small mb-1">Máy để thử</label>
-                      <select id="flow-device" class="form-select form-select-sm mb-3"></select>
-                      <div id="screen-wrap">
-                        <img id="screen" alt="">
-                        <div id="screen-hint">
-                          <i class="ti tabler-device-mobile mb-2" style="font-size:42px"></i>
-                          <div>Chọn máy rồi bấm “Chụp màn hình”.</div>
-                        </div>
-                        <div class="screen-spinner" id="screen-spin" hidden><span class="spinner"></span></div>
-                      </div>
-                    </div>
-                    <div class="card-footer d-flex justify-content-between align-items-center">
                       <small class="text-muted" id="screen-info">—</small>
-                      <div class="d-flex gap-2">
-                        <button class="btn btn-sm btn-label-secondary" id="btn-ble"><i class="ti tabler-bluetooth me-1"></i>BLE?</button>
-                        <button class="btn btn-sm btn-primary" id="btn-shot"><i class="ti tabler-camera me-1"></i>Chụp màn hình</button>
-                      </div>
                     </div>
-                  </div>
-                </div>
-                <div class="col-lg-7">
-                  <div class="card mb-4">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                      <h5 class="mb-0">Các bước <span class="text-muted" id="step-count"></span></h5>
-                      <button class="btn btn-sm btn-label-secondary" id="btn-flow-test"><i class="ti tabler-player-play me-1"></i>Chạy thử (máy đang chọn)</button>
-                    </div>
-                    <div class="card-body">
-                      <!-- chế độ API: mỗi giai đoạn của 1 đơn có danh sách bước riêng -->
-                      <div id="api-phase-box" hidden>
-                        <div class="seg seg-wrap mb-2" id="api-phases"></div>
-                        <div class="api-warn mb-3" id="api-warn" hidden></div>
-                        <div class="api-hint mb-3" id="api-phase-hint"></div>
-                      </div>
-                      <label class="form-label small">Thêm bước</label>
-                      <div class="add-grid mb-3">
-                        <button class="chip" data-add="type">Gõ chữ</button>
-                        <button class="chip" data-add="tap_text">Tap chữ</button>
-                        <button class="chip" data-add="key">Phím</button>
-                        <button class="chip" data-add="combo">Tổ hợp</button>
-                        <button class="chip" data-add="launch">Mở app</button>
-                        <button class="chip" data-add="home">Về home</button>
-                        <button class="chip" data-add="wait">Chờ</button>
-                        <button class="chip" data-add="wait_text">Chờ chữ</button>
-                        <button class="chip" data-add="assert_text">Kiểm chữ</button>
-                        <button class="chip" data-add="swipe" title="Lật trang / cuộn">Vuốt</button>
-                        <button class="chip" data-add="hold" title="Bấm giữ tại một toạ độ">Bấm giữ</button>
-                        <button class="chip" data-add="hold_text" title="Bấm giữ vào một chữ trên màn">Giữ chữ</button>
-                      </div>
-
-                      <label class="form-label small">Các bước</label>
-                      <ol id="steps" class="list-unstyled mb-0"></ol>
-                      <div class="text-muted small py-2" id="steps-empty">Chưa có bước nào. Thêm bước ở trên, hoặc bấm vào ảnh màn hình.</div>
-
-                      <div class="d-flex flex-wrap gap-2 mt-3">
-                        <button class="btn btn-primary" id="btn-save"><i class="ti tabler-device-floppy me-1"></i>Lưu kịch bản</button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                  </aside>
                 </div>
               </div>
 
-              <!-- Nhật ký chung (chạy thử + các máy đang chạy) -->
-                  <div class="card mt-4">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                      <h5 class="mb-0">Nhật ký</h5>
-                      <button class="btn btn-sm btn-label-secondary" id="btn-clear-log">Xoá log</button>
-                    </div>
-                    <div class="card-body">
-                      <pre id="log" class="mb-0"></pre>
-                    </div>
-                  </div>
+              <!-- Nhật ký chung (chạy thử + các máy đang chạy): gập lại, dòng mới nhất luôn hiện ở tiêu đề -->
+              <details class="ed-log card" id="log-box">
+                <summary>
+                  <span class="ed-log-title"><i class="ti tabler-chevron-right ed-log-caret"></i>Nhật ký</span>
+                  <span class="ed-log-last" id="log-last"></span>
+                  <button class="btn btn-sm btn-text-secondary" id="btn-clear-log" type="button">Xoá</button>
+                </summary>
+                <pre id="log" class="mb-0"></pre>
+              </details>
             </div>
             </div><!-- /group-detail -->
           </section>

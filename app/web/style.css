@@ -223,32 +223,6 @@
   color: var(--bs-body-color); border: 0;
 }
 
-/* ---- step chips (add step) ---- */
-.add-grid { display: flex; flex-wrap: wrap; gap: .5rem; }
-.chip {
-  border: 1px solid var(--bs-border-color); background: var(--bs-card-bg);
-  color: var(--bs-body-color); border-radius: 30px; padding: .32rem .8rem;
-  font-size: .82rem; cursor: pointer; transition: all .12s;
-}
-.chip:hover { border-color: var(--bs-primary); color: var(--bs-primary); }
-
-/* ---- step list ---- */
-#steps { display: flex; flex-direction: column; gap: .4rem; }
-.step {
-  display: flex; align-items: center; gap: .6rem;
-  background: var(--bs-body-bg); border: 1px solid var(--bs-border-color);
-  border-radius: var(--bs-border-radius); padding: .45rem .65rem;
-}
-.step .t { font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
-  color: var(--bs-primary); background: var(--bs-primary-bg-subtle); padding: .12rem .45rem; border-radius: 6px; }
-.step .v { flex: 1; font-size: .84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.step .ops { display: flex; gap: .15rem; }
-.step .ops button {
-  border: 0; background: transparent; color: var(--bs-secondary-color);
-  width: 26px; height: 26px; border-radius: 6px; cursor: pointer; font-size: .8rem;
-}
-.step .ops button:hover { background: var(--bs-secondary-bg-subtle); color: var(--bs-body-color); }
-
 /* ---- multi-device list ---- */
 .multi-list { display: flex; flex-direction: column; gap: .35rem; }
 .multi-item {
@@ -467,3 +441,155 @@ html.ipf-menu-off #layout-menu.layout-menu { display: none !important; }
 html.ipf-menu-off .layout-page { padding-inline-start: 0 !important; }
 html.ipf-menu-off.layout-navbar-fixed .layout-navbar { inset-inline-start: 0 !important; }
 html.ipf-menu-off.layout-navbar-fixed .layout-navbar.navbar-detached { inline-size: calc(100% - 1.5rem * 2) !important; }
+
+/* =====================================================================================
+   TRÌNH SỬA KỊCH BẢN — gọn: một hàng đầu trang · một dải «Chạy» · các bước dạng LỘ TRÌNH
+   (mỗi bước là một trạm trên đường ray; thử xong trạm nào thì trạm đó đổi màu) + màn hình thử.
+   Chỉ dùng biến màu của Vuexy nên tự theo sáng / tối.
+   ===================================================================================== */
+#script-editor { container-type: inline-size; }
+
+/* ---- đầu trang: ‹ nhóm / tên kịch bản ……… [Lưu] ---- */
+.ed-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .9rem; min-width: 0; }
+.ed-back { display: inline-flex; align-items: center; gap: .15rem; border: 0; background: transparent; padding: .25rem .45rem .25rem .1rem;
+  border-radius: .4rem; color: var(--bs-secondary-color); font-size: 1rem; white-space: nowrap; max-width: 40%; }
+.ed-back span { overflow: hidden; text-overflow: ellipsis; }
+.ed-back:hover, .ed-back:focus-visible { color: var(--bs-heading-color); background: var(--bs-secondary-bg-subtle); outline: 0; }
+.ed-sep { color: var(--bs-secondary-color); opacity: .6; }
+.ed-title { flex: 1 1 8rem; min-width: 0; }
+.ed-name { width: 100%; border: 1px solid transparent; background: transparent; border-radius: .4rem; padding: .2rem .45rem;
+  font-size: 1.25rem; font-weight: 600; color: var(--bs-heading-color); text-overflow: ellipsis; }
+.ed-name:hover { border-color: var(--bs-border-color); }
+.ed-name:focus { border-color: var(--bs-primary); outline: 0; background: var(--bs-body-bg); }
+.ed-name::placeholder { color: var(--bs-secondary-color); font-weight: 400; }
+.ed-phase { flex: 1 1 8rem; min-width: 0; font-size: 1.05rem; font-weight: 600; color: var(--bs-heading-color); }
+.ed-dirty { font-size: .8rem; color: var(--bs-warning); white-space: nowrap; }
+.ed-dirty::before { content: ""; display: inline-block; width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; margin-right: .35rem; vertical-align: .05rem; }
+
+/* ---- dải «Chạy [1 lần] trên [máy…]» ---- */
+.ed-run { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem 1rem; flex-wrap: wrap;
+  padding: .7rem 0; margin-bottom: 1rem; border-block: 1px solid var(--bs-border-color); }
+.ed-run-main { display: flex; align-items: center; gap: .45rem .55rem; flex-wrap: wrap; min-width: 0; flex: 1 1 18rem; }
+.ed-run-word { font-size: .9rem; color: var(--bs-secondary-color); }
+.ed-run-mode { width: auto; }
+.ed-run-loops { display: inline-flex; align-items: center; gap: .45rem; }
+.ed-run-loops input { width: 5.2rem; }
+.ed-run-acts { display: flex; gap: .5rem; flex: 0 0 auto; }
+.ed-run .script-machines { flex-direction: row; flex-wrap: wrap; gap: .4rem; }
+.ed-run .script-machine-row { gap: .35rem; padding: .16rem .3rem .16rem .6rem; border: 1px solid var(--bs-border-color); border-radius: 2rem; flex-wrap: nowrap; }
+.ed-run .script-machine { font-size: .85rem; white-space: nowrap; }
+.ed-run .script-machine-acts .btn { padding: .12rem .5rem; font-size: .74rem; border-radius: 2rem; }
+.ed-run .script-machine-acts .btn-label-warning:not(:hover) { background: transparent; color: var(--bs-secondary-color); }   /* «Dừng máy» lúc nghỉ: có đó nhưng không giành chú ý */
+
+/* ---- bố cục: các bước (trái) + màn hình (phải, đứng yên khi cuộn); khung hẹp thì xếp dọc ---- */
+.ed-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; align-items: start; }
+@container (min-width: 600px) {
+  .ed-grid { grid-template-columns: minmax(0, 1fr) clamp(210px, 36%, 330px); }
+  .ed-screen { position: sticky; top: 5.5rem; }
+}
+.ed-flow, .ed-screen { padding: 1rem 1.1rem 1.1rem; min-width: 0; }
+.ed-card-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .9rem; }
+.ed-card-head .form-select { min-width: 0; flex: 1 1 auto; }
+.ed-screen .ed-card-head { flex-wrap: wrap; justify-content: flex-end; }
+.ed-screen .ed-card-head .form-select { flex: 1 1 9.5rem; min-width: 9.5rem; }
+.ed-count { font-weight: 400; color: var(--bs-secondary-color); font-size: .9rem; margin-left: .2rem; }
+
+/* ---- LỘ TRÌNH các bước ---- */
+.flow { list-style: none; margin: 0; padding: 0; display: block; counter-reset: none; }
+.flow-step { position: relative; display: grid; grid-template-columns: 1.75rem minmax(0, 1fr); column-gap: .75rem; align-items: start;
+  padding: .1rem .35rem 1.05rem .1rem; border-radius: .5rem; }
+/* đường ray nối trạm này với trạm kế (và với nút «Thêm bước» ở cuối) */
+.flow-step::before { content: ""; position: absolute; left: calc(.1rem + .875rem - 1px); top: 1.85rem; bottom: -.1rem; width: 2px;
+  background: var(--bs-border-color); border-radius: 2px; }
+.flow-step.is-ok::before { background: var(--bs-success); }
+.flow-node { position: relative; z-index: 1; width: 1.75rem; height: 1.75rem; border-radius: 50%; display: inline-grid; place-items: center; flex: 0 0 auto;
+  font-size: .8rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--bs-secondary-color);
+  background: var(--bs-card-bg, var(--bs-paper-bg)); border: 2px solid var(--bs-border-color); }
+.flow-node .ti { font-size: 1rem; }
+.flow-step.is-ok .flow-node { border-color: var(--bs-success); background: var(--bs-success); color: #fff; }
+.flow-step.is-bad .flow-node { border-color: var(--bs-danger); background: var(--bs-danger); color: #fff; }
+.flow-step.is-run .flow-node { border-color: var(--bs-primary); color: var(--bs-primary); }
+.flow-body { min-width: 0; padding-top: .16rem; cursor: pointer; }
+.flow-line { display: flex; align-items: flex-start; gap: .5rem; font-size: .92rem; color: var(--bs-body-color); line-height: 1.4; }
+.flow-ico { margin-top: .12rem; font-size: 1.05rem; flex: 0 0 auto; color: var(--bs-secondary-color); }
+.k-touch .flow-ico { color: var(--bs-primary); }
+.k-key .flow-ico { color: var(--bs-info); }
+.k-app .flow-ico { color: var(--bs-warning); }
+.k-wait .flow-ico { color: var(--bs-success); }
+.flow-text { min-width: 0; overflow-wrap: anywhere; }
+.flow-text b { font-weight: 600; color: var(--bs-heading-color); }
+.flow-text .flow-dim { color: var(--bs-secondary-color); font-size: .84rem; }
+.flow-text code { font-size: .82em; padding: .05rem .35rem; border-radius: .3rem; background: var(--bs-primary-bg-subtle); color: var(--bs-primary);
+  white-space: nowrap; display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.flow-tag { font-size: .72rem; padding: .05rem .45rem; margin-left: .4rem; border-radius: 2rem; background: var(--bs-warning-bg-subtle); color: var(--bs-warning); white-space: nowrap; }
+.flow-result { margin: .2rem 0 0 1.55rem; font-size: .8rem; color: var(--bs-secondary-color); overflow-wrap: anywhere; }
+.flow-step.is-ok .flow-result { color: var(--bs-success); }
+.flow-step.is-bad .flow-result { color: var(--bs-danger); }
+/* thao tác của từng bước: KHÔNG chiếm chỗ của câu — chỉ hiện (nổi ở góc phải) khi rê chuột vào bước hoặc khi bước đang có tiêu điểm bàn phím */
+.flow-ops { position: absolute; top: -.15rem; right: .25rem; z-index: 3; display: flex; gap: .05rem; padding: .15rem;
+  border: 1px solid var(--bs-border-color); border-radius: .5rem; background: var(--bs-card-bg, var(--bs-paper-bg));
+  box-shadow: 0 .2rem .6rem rgba(0, 0, 0, .18); opacity: 0; pointer-events: none; transition: opacity .1s; }
+.flow-step:hover .flow-ops, .flow-step:focus-within .flow-ops, .flow-step.is-run .flow-ops { opacity: 1; pointer-events: auto; }
+.flow-step:hover, .flow-step:focus-within { background: color-mix(in srgb, var(--bs-body-color) 6%, transparent); }
+.flow-ops button { border: 0; background: transparent; color: var(--bs-secondary-color); width: 1.75rem; height: 1.75rem; border-radius: .4rem;
+  display: inline-grid; place-items: center; font-size: 1rem; }
+.flow-ops button:hover, .flow-ops button:focus-visible { background: color-mix(in srgb, var(--bs-body-color) 10%, transparent); color: var(--bs-heading-color); outline: 0; }
+.flow-ops button[data-op=del]:hover { color: var(--bs-danger); }
+.flow-ops button[data-op=test]:hover { color: var(--bs-success); }
+.flow-ops button.on { color: var(--bs-warning); }
+.flow-ops button:disabled { opacity: .35; pointer-events: none; }
+/* chèn một bước vào giữa: dấu + hiện trên đường ray khi rê chuột vào bước phía trên */
+.flow-ins { position: absolute; left: calc(.1rem + .875rem - .55rem); bottom: -.5rem; z-index: 2; width: 1.1rem; height: 1.1rem; border-radius: 50%;
+  border: 0; padding: 0; display: grid; place-items: center; font-size: .7rem; line-height: 1;
+  background: var(--bs-primary); color: #fff; opacity: 0; transition: opacity .12s; }
+.flow-step:hover .flow-ins, .flow-ins:focus-visible, .flow-step.ins-open .flow-ins { opacity: 1; outline: 0; }
+.flow-step:last-child .flow-ins { display: none; }                      /* sau bước cuối đã có nút «Thêm bước» */
+.flow-empty { margin: 0 0 .6rem; color: var(--bs-secondary-color); font-size: .9rem; }
+
+/* nút «Thêm bước» — trạm cuối của lộ trình */
+.flow-add { position: relative; }
+.flow-add-btn { display: inline-flex; align-items: center; gap: .75rem; border: 0; background: transparent; padding: .1rem .6rem .1rem .1rem;
+  border-radius: 2rem; color: var(--bs-primary); font-size: .92rem; font-weight: 500; }
+.flow-add-btn:hover, .flow-add-btn:focus-visible { background: var(--bs-primary-bg-subtle); outline: 0; }
+.flow-node.plus { border-style: dashed; border-color: var(--bs-primary); color: var(--bs-primary); }
+
+/* bảng chọn hành động (thay cho 12 nút luôn nằm trên đầu) */
+.palette { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: .6rem 1rem;
+  margin: .6rem 0 .2rem 2.5rem; padding: .8rem .9rem; border: 1px solid var(--bs-border-color); border-radius: .6rem; background: var(--bs-body-bg); }
+.flow-step > .palette { grid-column: 1 / -1; margin: .7rem 0 0 2.5rem; cursor: default; }
+.pal-group { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+.pal-title { font-size: .76rem; color: var(--bs-secondary-color); padding: 0 .45rem .2rem; }
+.pal-item { display: flex; align-items: center; gap: .5rem; text-align: left; border: 0; background: transparent; color: var(--bs-body-color);
+  padding: .32rem .45rem; border-radius: .4rem; font-size: .88rem; }
+.pal-item .ti { font-size: 1.05rem; color: var(--bs-secondary-color); flex: 0 0 auto; }
+.pal-item:hover, .pal-item:focus-visible { background: var(--bs-primary-bg-subtle); color: var(--bs-primary); outline: 0; }
+.pal-item:hover .ti, .pal-item:focus-visible .ti { color: var(--bs-primary); }
+
+/* ---- màn hình thử ---- */
+.ed-screen #screen-wrap { min-height: 220px; }
+.ed-screen #screen { max-height: min(62vh, 560px); }
+.ed-screen-foot { display: flex; flex-direction: column; gap: .35rem; margin-top: .8rem; font-size: .85rem; }
+.ed-screen-foot .form-check-label { font-size: .85rem; }
+
+/* ---- nhật ký gập ---- */
+.ed-log { margin-top: 1.25rem; }
+.ed-log > summary { display: flex; align-items: center; gap: .75rem; padding: .7rem 1.1rem; cursor: pointer; list-style: none; }
+.ed-log > summary::-webkit-details-marker { display: none; }
+.ed-log-title { display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; color: var(--bs-heading-color); white-space: nowrap; }
+.ed-log-caret { transition: transform .12s; }
+.ed-log[open] .ed-log-caret { transform: rotate(90deg); }
+.ed-log-last { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--bs-font-monospace); font-size: .78rem; color: var(--bs-secondary-color); }
+.ed-log-last.lok { color: var(--bs-success); }
+.ed-log-last.lbad { color: var(--bs-danger); }
+.ed-log[open] .ed-log-last { visibility: hidden; }
+.ed-log #log { margin: 0 1.1rem 1.1rem; }
+
+/* trình sửa đủ rộng: thanh thao tác của bước có CỘT RIÊNG bên phải (không bao giờ che câu); chỉ khung hẹp mới nổi lên trên câu */
+@container (min-width: 760px) {
+  .flow-step { grid-template-columns: 1.75rem minmax(0, 1fr) auto; }
+  .flow-ops { position: static; border: 0; padding: 0; box-shadow: none; background: transparent; }
+  .flow-step > .palette { grid-column: 2 / -1; margin-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) { .flow-ops, .flow-ins, .ed-log-caret { transition: none; } }

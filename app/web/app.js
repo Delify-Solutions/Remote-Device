@@ -113,6 +113,8 @@ function log(line, kind = "") {
   const cls = kind === "ok" ? "lok" : kind === "bad" ? "lbad" : "";
   el.innerHTML += `<span class="${cls}">${esc(line)}</span>\n`;
   el.scrollTop = el.scrollHeight;
+  const last = $("#log-last");                                   // khung nhật ký đang gập: dòng mới nhất vẫn thấy được ở tiêu đề
+  if (last) { last.textContent = String(line).trim(); last.className = "ed-log-last" + (cls ? " " + cls : ""); }
 }
 
 function setConn(ok, text) {
@@ -164,7 +166,7 @@ async function loadDevices() {
   } catch (e) { toast("Lỗi tải thiết bị: " + e, "bad"); DEVICES = []; }
   renderDevices();
   renderDevicePicker();
-  if (GROUP) { renderMembers(); renderGroupAddDev(); }
+  if (GROUP) { renderMembers(); renderGroupAddDev(); renderScriptMachines(); }   // (tên hiển thị của máy trong dải «Chạy» cũng lấy từ danh sách này)
   updateCounts();
   try {
     IOS = await API().ios_list() || [];
@@ -1032,8 +1034,9 @@ function onScreenClick(e) {
   const img = $("#screen"), rect = img.getBoundingClientRect();
   const x = Math.round((e.clientX - rect.left) / rect.width * SCREEN.w);
   const y = Math.round((e.clientY - rect.top) / rect.height * SCREEN.h);
-  addStep({ type: "tap", x, y });
-  toast(`+ Tap (${x}, ${y})`, "ok");
+  addStep({ type: "tap", x, y }, PICK_AT);
+  if (PICK_AT != null) PICK_AT++;                                // bấm tiếp thì chèn nối tiếp ngay sau bước vừa thêm
+  toast(`Đã thêm bước: bấm tại (${x}, ${y})`, "ok");
 }
 
 async function bleStatus(btn) {
@@ -1076,114 +1079,243 @@ const STEP_LABEL = {
   swipe: "Vuốt", hold: "Bấm giữ", hold_text: "Giữ chữ",
 };
 
+// Loại bước → [nhóm (màu biểu tượng), biểu tượng]. Nhóm: touch = chạm · key = bàn phím · app = ứng dụng · wait = chờ và kiểm.
+const STEP_KIND = {
+  tap: ["touch", "tabler-pointer"], tap_text: ["touch", "tabler-hand-finger"], hold: ["touch", "tabler-hand-stop"],
+  hold_text: ["touch", "tabler-hand-stop"], swipe: ["touch", "tabler-hand-move"],
+  type: ["key", "tabler-keyboard"], key: ["key", "tabler-keyboard"], combo: ["key", "tabler-command"],
+  launch: ["app", "tabler-apps"], home: ["app", "tabler-home"],
+  wait: ["wait", "tabler-clock"], wait_text: ["wait", "tabler-eye"], assert_text: ["wait", "tabler-checks"],
+};
+// Phần do người dùng nhập của một bước: in đậm; {{biến}} thành nhãn riêng để thấy ngay chỗ nào lấy dữ liệu.
+function stepVal(v) {
+  return `<b>${esc(String(v ?? "")).replace(/\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g, "<code>{{$1}}</code>")}</b>`;
+}
+// Một bước viết thành MỘT CÂU đọc được: «Bấm vào chữ «Mua»», «Chờ thấy chữ «Shop» tối đa 15 giây».
+function stepSentence(s) {
+  const dim = (t) => ` <span class="flow-dim">${esc(t)}</span>`;
+  switch (s.type) {
+    case "tap": return `Bấm tại ${stepVal(`(${s.x}, ${s.y})`)}`;
+    case "tap_text": return `Bấm vào chữ ${stepVal(`«${s.text}»`)}`;
+    case "type": return `Gõ ${stepVal(s.text)}`;
+    case "key": return `Nhấn phím ${stepVal(s.name)}`;
+    case "combo": return `Nhấn tổ hợp ${stepVal(s.keys)}`;
+    case "launch": return `Mở app ${stepVal(s.app)}`;
+    case "home": return "Về màn hình chính";
+    case "wait": return `Chờ ${stepVal(`${s.seconds} giây`)}`;
+    case "wait_text": return `Chờ thấy chữ ${stepVal(`«${s.text}»`)}${dim(`tối đa ${s.timeout || 15} giây`)}`;
+    case "assert_text": return `Kiểm có chữ ${stepVal(`«${s.text}»`)}`;
+    case "swipe": return s.dir ? `Vuốt ${stepVal(SWIPE_DIR[s.dir] || s.dir)}` : `Vuốt từ ${stepVal(`(${s.x1}, ${s.y1})`)} tới ${stepVal(`(${s.x2}, ${s.y2})`)}`;
+    case "hold": return `Bấm giữ tại ${stepVal(`(${s.x}, ${s.y})`)}${dim(`trong ${s.seconds || 1} giây`)}`;
+    case "hold_text": return `Bấm giữ vào chữ ${stepVal(`«${s.text}»`)}${dim(`trong ${s.seconds || 1} giây`)}`;
+    default: return `${esc(STEP_LABEL[s.type] || s.type)} ${stepVal(stepText(s))}`;
+  }
+}
+
+let STEP_RES = new WeakMap();        // bước (đối tượng) → {ok, msg} của lần thử gần nhất. Sửa bước tạo đối tượng mới nên kết quả cũ tự mất.
+let ADD_AT = null;                   // bảng chọn hành động đang mở để CHÈN vào vị trí này (null = thêm vào cuối)
+let PICK_AT = null;                  // lần bấm lên ảnh kế tiếp chèn bước chạm vào vị trí này (null = thêm vào cuối)
+
+function updateDirty() {
+  const el = $("#ed-dirty");
+  if (el) el.hidden = !(GROUP_PAGE === "detail" && GROUP_SUB === "script" && groupDirty());
+}
+
+// Các bước vẽ thành LỘ TRÌNH: mỗi bước là một trạm đánh số trên đường ray; thử xong thì trạm đổi màu (xanh = được, đỏ = trượt) kèm lời báo.
 function renderSteps() {
-  const ol = $("#steps");
+  const ol = $("#steps"), pal = $("#step-palette"), n = FLOW.steps.length;
+  closePalette();                                                 // bảng chọn có thể đang nằm trong một <li> sắp bị vẽ lại → đưa về chỗ cũ trước
   ol.innerHTML = "";
-  $("#steps-empty").hidden = FLOW.steps.length > 0;
-  $("#step-count").textContent = FLOW.steps.length ? `(${FLOW.steps.length})` : "";
+  $("#steps-empty").hidden = n > 0;
+  $("#step-count").textContent = n ? String(n) : "";
+  $("#step-add-label").textContent = n ? "Thêm bước" : "Thêm bước đầu tiên";
   FLOW.steps.forEach((s, i) => {
+    const [kind, icon] = STEP_KIND[s.type] || ["", "tabler-point"];
+    const res = STEP_RES.get(s);
+    const editable = s.type !== "home";
     const li = document.createElement("li");
-    li.className = "step";
+    li.className = "flow-step" + (kind ? " k-" + kind : "") + (res ? (res.ok ? " is-ok" : " is-bad") : "");
     li.innerHTML = `
-      <span class="t">${esc(STEP_LABEL[s.type] || s.type)}</span>
-      <span class="v">${esc(stepText(s))}${s.optional ? ` <span class="opt-tag">bỏ qua nếu lỗi</span>` : ""}</span>
-      <span class="ops">
-        <button data-op="opt" class="${s.optional ? "on" : ""}" title="Bật/tắt «bỏ qua nếu lỗi»: bước này trượt (vd không thấy chữ) thì vẫn chạy tiếp bước sau">?</button>
-        <button data-op="up" title="Lên">▲</button>
-        <button data-op="down" title="Xuống">▼</button>
-        <button data-op="test" title="Chạy thử">▶</button>
-        <button data-op="del" title="Xoá">✕</button>
-      </span>`;
+      <span class="flow-node" aria-hidden="true">${res ? `<i class="ti ${res.ok ? "tabler-check" : "tabler-x"}"></i>` : i + 1}</span>
+      <div class="flow-body" ${editable ? `data-op="edit" role="button" tabindex="0" title="Bấm để sửa bước này"` : `style="cursor:default"`}>
+        <div class="flow-line"><i class="ti ${icon} flow-ico"></i><span class="flow-text">${stepSentence(s)}${s.optional ? `<span class="flow-tag">bỏ qua nếu lỗi</span>` : ""}</span></div>
+        ${res && res.msg ? `<div class="flow-result">${esc(res.msg)}</div>` : ""}
+      </div>
+      <div class="flow-ops">
+        <button data-op="test" title="Chạy thử bước này" aria-label="Chạy thử bước ${i + 1}"><i class="ti tabler-player-play"></i></button>
+        <button data-op="opt" class="${s.optional ? "on" : ""}" aria-pressed="${s.optional ? "true" : "false"}" title="Bỏ qua nếu lỗi: bước này trượt (vd không thấy chữ) thì vẫn chạy tiếp bước sau" aria-label="Bỏ qua nếu lỗi"><i class="ti tabler-arrow-forward-up"></i></button>
+        <button data-op="up" title="Đưa lên" aria-label="Đưa bước ${i + 1} lên" ${i === 0 ? "disabled" : ""}><i class="ti tabler-chevron-up"></i></button>
+        <button data-op="down" title="Đưa xuống" aria-label="Đưa bước ${i + 1} xuống" ${i === n - 1 ? "disabled" : ""}><i class="ti tabler-chevron-down"></i></button>
+        <button data-op="del" title="Xoá bước" aria-label="Xoá bước ${i + 1}"><i class="ti tabler-trash"></i></button>
+      </div>
+      <button class="flow-ins" data-op="ins" title="Chèn một bước vào sau bước ${i + 1}" aria-label="Chèn một bước vào sau bước ${i + 1}">+</button>`;
     $('[data-op=opt]', li).onclick = () => { if (s.optional) delete s.optional; else s.optional = true; renderSteps(); };
     $('[data-op=up]', li).onclick = () => { if (i > 0) { [FLOW.steps[i - 1], FLOW.steps[i]] = [FLOW.steps[i], FLOW.steps[i - 1]]; renderSteps(); } };
     $('[data-op=down]', li).onclick = () => { if (i < FLOW.steps.length - 1) { [FLOW.steps[i + 1], FLOW.steps[i]] = [FLOW.steps[i], FLOW.steps[i + 1]]; renderSteps(); } };
     $('[data-op=del]', li).onclick = () => { FLOW.steps.splice(i, 1); renderSteps(); };
+    $('[data-op=ins]', li).onclick = () => openPalette(i + 1, li);
+    if (editable) {
+      const body = $('[data-op=edit]', li);
+      const edit = async () => {
+        const ns = await stepPrompt(s.type, s);
+        const at = FLOW.steps.indexOf(s);                         // trong lúc hộp thoại mở, danh sách có thể đã đổi
+        if (ns && at >= 0) { FLOW.steps[at] = ns; renderSteps(); }
+      };
+      body.onclick = edit;
+      body.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); edit(); } };
+    }
     $('[data-op=test]', li).onclick = async (ev) => {
-      if (!SEL) { toast("Chọn máy", "warn"); return; }
+      if (!SEL) { toast("Chọn máy để thử ở khung màn hình", "warn"); return; }
       const b = ev.currentTarget; busy(b, true);
+      li.classList.remove("is-ok", "is-bad"); li.classList.add("is-run");
       log(`▶ thử ${STEP_LABEL[s.type] || s.type} ${stepText(s)}`);
+      let out = null;
       try {
         if (GROUP && GROUP.mode === "api") {            // cùng bộ chạy với lúc nạp thật (thế {{biến}})
           const res = await runApiSteps([s]);
-          if (res) res.forEach(x => log(`   ${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad"));
+          if (res) { res.forEach(x => log(`   ${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad")); if (res[0]) out = { ok: !!res[0].ok, msg: res[0].msg }; }
         } else {
           const r = await API().run_step(SEL, s);
           log(`   ${r.ok ? "✓" : "✗"} ${r.msg}`, r.ok ? "ok" : "bad");
+          out = { ok: !!r.ok, msg: r.msg };
         }
-      } catch (e) { log("   ✗ " + e, "bad"); }
+      } catch (e) { log("   ✗ " + e, "bad"); out = { ok: false, msg: String(e) }; }
       busy(b, false);
+      if (out) STEP_RES.set(s, out); else STEP_RES.delete(s);
+      renderSteps();
       if (["tap", "tap_text", "swipe", "hold", "hold_text"].includes(s.type)) setTimeout(() => shot(null), 900);
     };
     ol.appendChild(li);
   });
+  if (!n && pal) pal.hidden = false;                              // kịch bản trống: mở sẵn bảng chọn — màn hình trống là lời mời bắt đầu
   renderApiUi();
+  updateDirty();
 }
-function addStep(s) { FLOW.steps.push(s); renderSteps(); }
 
-async function addStepPrompt(type) {
-  const s = { type };
-  if (type === "home") { addStep(s); return; }
+/* ---- bảng chọn hành động: thêm vào cuối, hoặc chèn sau một bước ---- */
+function closePalette() {
+  const pal = $("#step-palette"), home = $("#flow-add");
+  if (!pal || !home) return;
+  pal.hidden = true;
+  if (pal.parentNode !== home) home.appendChild(pal);
+  ADD_AT = null;
+  $$(".flow-step.ins-open").forEach(x => x.classList.remove("ins-open"));
+  $("#btn-step-add").setAttribute("aria-expanded", "false");
+}
+function openPalette(at, host) {       // at = vị trí chèn (null = cuối); host = <li> để đặt bảng chọn ngay dưới bước đó
+  const pal = $("#step-palette");
+  const again = !pal.hidden && ADD_AT === at && FLOW.steps.length > 0;     // bấm lại đúng nút đang mở → đóng
+  closePalette();
+  if (again) return;
+  ADD_AT = at;
+  if (host) { host.appendChild(pal); host.classList.add("ins-open"); }
+  pal.hidden = false;
+  if (!host) $("#btn-step-add").setAttribute("aria-expanded", "true");
+  const first = $(".pal-item", pal);
+  if (first) first.focus();
+}
+async function pickAction(type) {
+  const at = ADD_AT;
+  closePalette();
+  if (type === "pick") { startPick(at); return; }
+  await addStepPrompt(type, at);
+}
+function startPick(at) {               // «Bấm theo vị trí trên ảnh»: bật chế độ bấm ảnh, bước chạm sẽ được chèn vào đúng vị trí đang chọn
+  PICK_AT = at;
+  $("#pick-mode").checked = true;
+  $("#screen").classList.add("pick");
+  if (SCREEN.w) { toast("Bấm lên ảnh màn hình để thêm bước chạm", "ok"); return; }
+  toast("Chụp màn hình rồi bấm lên ảnh để thêm bước chạm", "warn");
+  if (SEL) shot(null);
+}
+
+function addStep(s, at) {
+  if (at == null || at < 0 || at > FLOW.steps.length) FLOW.steps.push(s);
+  else FLOW.steps.splice(at, 0, s);
+  renderSteps();
+}
+
+// Hỏi tham số của một bước. `cur` = bước đang SỬA (điền sẵn giá trị cũ, giữ các trường khác) hoặc null khi thêm mới.
+// Trả về bước MỚI (một đối tượng khác), hoặc null nếu huỷ / nhập sai.
+async function stepPrompt(type, cur) {
+  const c = cur || {}, T = cur ? "Sửa bước: " : "Thêm bước: ";
+  const s = cur ? JSON.parse(JSON.stringify(cur)) : { type };
+  if (type === "home") return s;
+  const xy = (raw) => /^\s*\(?\s*(-?\d+)\s*[,; ]\s*(-?\d+)\s*\)?\s*$/.exec(raw || "");
 
   if (type === "type") {
-    const t = await askOne("Thêm bước: Gõ chữ", "Nội dung cần gõ", "", "Nội dung…");
-    if (t == null) return; s.text = t;
+    const t = await askOne(T + "Gõ chữ", "Nội dung cần gõ", c.text ?? "", "Nội dung…");
+    if (t == null) return null; s.text = t;
   } else if (type === "tap_text") {
-    const t = await askOne("Thêm bước: Tap chữ", "Chữ hiển thị trên màn (OCR)", "", "VD: Đăng nhập");
-    if (!t) return; s.text = t;
+    const t = await askOne(T + "Bấm vào chữ", "Chữ hiển thị trên màn (OCR)", c.text ?? "", "VD: Đăng nhập");
+    if (!t) return null; s.text = t;
+  } else if (type === "tap") {
+    const t = await askOne(T + "Bấm theo toạ độ", "Toạ độ x,y (pixel ảnh chụp)", cur ? `${c.x},${c.y}` : "", "375,820");
+    if (!t) return null;
+    const m = xy(t);
+    if (!m) { toast("Toạ độ phải có dạng x,y", "warn"); return null; }
+    s.x = Number(m[1]); s.y = Number(m[2]);
   } else if (type === "key") {
-    const t = await askOne("Thêm bước: Phím", "Phím (enter/tab/back/esc/space)", "enter");
-    if (!t) return; s.name = t.trim();
+    const t = await askOne(T + "Nhấn phím", "Phím (enter/tab/back/esc/space)", c.name ?? "enter");
+    if (!t) return null; s.name = t.trim();
   } else if (type === "combo") {
-    const t = await askOne("Thêm bước: Tổ hợp phím", "Tổ hợp (VD: gui h, gui space, ctrl space)", "gui h");
-    if (!t) return; s.keys = t.trim();
+    const t = await askOne(T + "Tổ hợp phím", "Tổ hợp (VD: gui h, gui space, ctrl space)", c.keys ?? "gui h");
+    if (!t) return null; s.keys = t.trim();
   } else if (type === "launch") {
-    const t = await askOne("Thêm bước: Mở app", "Tên app cần mở", "", "VD: efootball");
-    if (!t) return; s.app = t.trim();
+    const t = await askOne(T + "Mở app", "Tên app cần mở", c.app ?? "", "VD: efootball");
+    if (!t) return null; s.app = t.trim();
   } else if (type === "wait") {
-    const t = await askOne("Thêm bước: Chờ", "Số giây chờ", "1.5");
-    if (!t) return; s.seconds = parseFloat(t) || 0;
+    const t = await askOne(T + "Chờ", "Số giây chờ", String(c.seconds ?? "1.5"));
+    if (!t) return null; s.seconds = parseFloat(t) || 0;
   } else if (type === "wait_text") {
-    const r = await askForm("Thêm bước: Chờ chữ", "Chờ tới khi OCR thấy chữ.", [
-      { key: "text", label: "Chữ cần chờ", value: "", placeholder: "VD: Trang chủ" },
-      { key: "timeout", label: "Timeout (giây)", value: "15" },
+    const r = await askForm(T + "Chờ thấy chữ", "Chờ tới khi OCR thấy chữ.", [
+      { key: "text", label: "Chữ cần chờ", value: c.text ?? "", placeholder: "VD: Trang chủ" },
+      { key: "timeout", label: "Chờ tối đa (giây)", value: String(c.timeout ?? 15) },
     ]);
-    if (!r || !r.text) return; s.text = r.text; s.timeout = parseFloat(r.timeout) || 15;
+    if (!r || !r.text) return null; s.text = r.text; s.timeout = parseFloat(r.timeout) || 15;
   } else if (type === "assert_text") {
-    const t = await askOne("Thêm bước: Kiểm chữ", "Xác minh màn hình có chữ", "", "VD: Thành công");
-    if (!t) return; s.text = t;
+    const t = await askOne(T + "Kiểm có chữ", "Xác minh màn hình có chữ", c.text ?? "", "VD: Thành công");
+    if (!t) return null; s.text = t;
   } else if (type === "swipe") {
-    const r = await askForm("Thêm bước: Vuốt",
-      "Lật trang cần kéo gần hết bề ngang nên tool tự kéo dài. Cuộn chỉ là ước lượng — cuộn xong nên thêm bước «Chờ chữ» để biết đã tới đâu.", [
-      { key: "dir", label: "Hướng vuốt (theo ngón tay)", type: "select", value: "left", options: [
+    const byXy = !!cur && !c.dir;
+    const r = await askForm(T + "Vuốt",
+      "Lật trang cần kéo gần hết bề ngang nên tool tự kéo dài. Cuộn chỉ là ước lượng — cuộn xong nên thêm bước «Chờ thấy chữ» để biết đã tới đâu.", [
+      { key: "dir", label: "Hướng vuốt (theo ngón tay)", type: "select", value: byXy ? "xy" : (c.dir || "left"), options: [
         { value: "left", label: "Sang trái — lật sang trang sau" }, { value: "right", label: "Sang phải — về trang trước" },
         { value: "up", label: "Lên — cuộn nội dung xuống dưới" }, { value: "down", label: "Xuống — cuộn nội dung lên trên" },
         { value: "xy", label: "Tự nhập toạ độ đầu → cuối" }] },
-      { key: "xy", label: "Toạ độ (chỉ khi chọn «tự nhập»)", value: "", placeholder: "375,1000 > 375,400" },
+      { key: "xy", label: "Toạ độ (chỉ khi chọn «tự nhập»)", value: byXy ? `${c.x1},${c.y1} > ${c.x2},${c.y2}` : "", placeholder: "375,1000 > 375,400" },
     ]);
-    if (!r) return;
+    if (!r) return null;
+    ["dir", "x1", "y1", "x2", "y2"].forEach(k => delete s[k]);
     if (r.dir === "xy") {
       const m = /^\s*(-?\d+)\s*[,; ]\s*(-?\d+)\s*(?:>|→|->)\s*(-?\d+)\s*[,; ]\s*(-?\d+)\s*$/.exec(r.xy || "");
-      if (!m) { toast("Toạ độ phải có dạng x1,y1 > x2,y2", "warn"); return; }
+      if (!m) { toast("Toạ độ phải có dạng x1,y1 > x2,y2", "warn"); return null; }
       [s.x1, s.y1, s.x2, s.y2] = m.slice(1).map(Number);
     } else s.dir = r.dir;
   } else if (type === "hold" || type === "hold_text") {
     const byText = type === "hold_text";
-    const r = await askForm(byText ? "Thêm bước: Bấm giữ vào chữ" : "Thêm bước: Bấm giữ",
+    const r = await askForm(T + (byText ? "Bấm giữ vào chữ" : "Bấm giữ"),
       "Nhấn và giữ rồi nhả (mở menu ngữ cảnh, vào chế độ sửa màn hình chính…).", [
-      byText ? { key: "text", label: "Chữ hiển thị trên màn (OCR)", value: "", placeholder: "VD: Sách" }
-             : { key: "xy", label: "Toạ độ x,y (pixel ảnh chụp)", value: "", placeholder: "636,468" },
-      { key: "seconds", label: "Giữ bao lâu (giây)", value: "1.2" },
+      byText ? { key: "text", label: "Chữ hiển thị trên màn (OCR)", value: c.text ?? "", placeholder: "VD: Sách" }
+             : { key: "xy", label: "Toạ độ x,y (pixel ảnh chụp)", value: cur ? `${c.x},${c.y}` : "", placeholder: "636,468" },
+      { key: "seconds", label: "Giữ bao lâu (giây)", value: String(c.seconds ?? 1.2) },
     ]);
-    if (!r) return;
+    if (!r) return null;
     s.seconds = Math.min(10, Math.max(0.2, parseFloat(r.seconds) || 1));
-    if (byText) { if (!r.text) return; s.text = r.text; }
+    if (byText) { if (!r.text) return null; s.text = r.text; }
     else {
-      const m = /^\s*(-?\d+)\s*[,; ]\s*(-?\d+)\s*$/.exec(r.xy || "");
-      if (!m) { toast("Toạ độ phải có dạng x,y", "warn"); return; }
+      const m = xy(r.xy);
+      if (!m) { toast("Toạ độ phải có dạng x,y", "warn"); return null; }
       s.x = Number(m[1]); s.y = Number(m[2]);
     }
-  }
-  addStep(s);
+  } else return null;                                    // loại bước lạ: không có gì để hỏi
+  return s;
+}
+
+async function addStepPrompt(type, at) {
+  const s = await stepPrompt(type, null);
+  if (s) addStep(s, at);
 }
 
 /* =========================================================
@@ -1290,7 +1422,10 @@ function setGroupSub(sub) {
   $("#group-home").hidden = sub !== "home";
   $("#script-editor").hidden = sub !== "script";
   $("#group-config").hidden = sub === "script";          // đang sửa kịch bản: ẩn khung cấu hình nhóm cho gọn
+  $("#group-head").hidden = sub === "script";            // …và hàng đầu trang của nhóm: trình sửa có hàng riêng «‹ nhóm / tên kịch bản … Lưu»
+  closePalette();
   if (sub === "script") {
+    $("#ed-group-name").textContent = GROUP.name || "Nhóm";
     const api = GROUP.mode === "api";
     $("#script-name").closest("div").hidden = api;
     $("#script-phase-title").hidden = !api;
@@ -1307,6 +1442,7 @@ function setGroupSub(sub) {
     }
     bindSteps();
   }
+  updateDirty();
 }
 // «Chạy trên máy»: mỗi máy của nhóm một ô tích; máy đang chạy việc gì thì ghi rõ «nhóm · kịch bản» và không tích được
 function renderScriptMachines() {
@@ -1537,7 +1673,7 @@ function renderApiUi() {
   $("#api-phase-box").hidden = !api;
   $("#btn-save").innerHTML = `<i class="ti tabler-device-floppy me-1"></i>${api ? "Lưu nhóm" : "Lưu kịch bản"}`;
   if (!api) {
-    $("#steps-empty").textContent = "Chưa có bước nào. Thêm bước ở trên, hoặc bấm vào ảnh màn hình.";
+    $("#steps-empty").textContent = "Chưa có bước nào. Chọn một hành động bên dưới để bắt đầu.";
     return;
   }
   const gwSteps = (GW_POOL && GW_POOL.steps) || {};
@@ -1737,6 +1873,7 @@ async function saveGroup(btn) {
   if (saved) { toast("Đã lưu nhóm: " + saved.name, "ok"); await loadGroups(saved.id, true); }
   else toast("Lỗi lưu nhóm", "bad");
   busy(btn, false);
+  updateDirty();
 }
 
 async function delGroup() {
@@ -2002,6 +2139,7 @@ async function testFlow(btn) {
   if (api && !steps.length && GW_POOL) steps = (GW_POOL.steps || {})[API_PHASE] || [];
   if (!steps.length) { toast("Chưa có bước nào để thử", "warn"); return; }
   busy(btn, true);
+  STEP_RES = new WeakMap(); renderSteps();                       // lượt thử mới: xoá kết quả cũ trên lộ trình
   const what = api ? `giai đoạn «${API_PHASES.find(p => p[0] === API_PHASE)[1]}»` : "kịch bản";
   log(`▶ Chạy thử ${what} trên ${SEL}`);
   try {
@@ -2014,7 +2152,9 @@ async function testFlow(btn) {
     }
     if (results) {
       let okN = 0;
-      results.forEach(x => { if (x.ok) okN++; log(`   [${x.i + 1}] ${api ? "" : x.type + ": "}${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad"); });
+      results.forEach(x => { if (x.ok) okN++; log(`   [${x.i + 1}] ${api ? "" : x.type + ": "}${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad");
+        if (steps[x.i]) STEP_RES.set(steps[x.i], { ok: !!x.ok, msg: x.msg }); });
+      renderSteps();
       toast(`${SEL}: ${okN}/${steps.length} bước OK`, okN === steps.length ? "ok" : "warn");
       setTimeout(() => shot(null), 600);
     }
@@ -2040,6 +2180,7 @@ let RUN_SIG = "";                      // dấu vết trạng thái chạy lần
 async function pollStatus(force = true) {
   try { RUN_STATUS = await API().run_status() || {}; } catch (e) { return; }
   refreshGwSync();
+  updateDirty();
   const active = $(".view.active");
   DEVICES.forEach(d => {                                 // trang Thiết bị: «đang chạy {nhóm} · {kịch bản}» theo trạng thái mới nhất
     const st = RUN_STATUS[d.name];
@@ -2168,9 +2309,9 @@ function init() {
   $("#btn-group-save").onclick = (e) => saveGroup(e.currentTarget);
   $("#btn-script-new").onclick = addScript;
   $("#btn-script-back").onclick = () => closeScript();
-  $("#script-name").oninput = (e) => { const sc = currentScript(); if (sc) sc.name = e.target.value; };
-  $("#script-mode").onchange = (e) => { const sc = currentScript(); if (!sc) return; sc.mode = e.target.value === "loop" ? "loop" : "once"; sc.loops = sc.mode === "loop" ? 0 : 1; $("#script-loops").value = sc.loops; $("#script-loops-wrap").hidden = sc.mode !== "loop"; };
-  $("#script-loops").oninput = (e) => { const sc = currentScript(); if (sc) sc.loops = Math.max(0, Math.min(100000, parseInt(e.target.value) || 0)); };
+  $("#script-name").oninput = (e) => { const sc = currentScript(); if (sc) sc.name = e.target.value; updateDirty(); };
+  $("#script-mode").onchange = (e) => { const sc = currentScript(); if (!sc) return; sc.mode = e.target.value === "loop" ? "loop" : "once"; sc.loops = sc.mode === "loop" ? 0 : 1; $("#script-loops").value = sc.loops; $("#script-loops-wrap").hidden = sc.mode !== "loop"; updateDirty(); };
+  $("#script-loops").oninput = (e) => { const sc = currentScript(); if (sc) sc.loops = Math.max(0, Math.min(100000, parseInt(e.target.value) || 0)); updateDirty(); };
   $("#btn-script-run").onclick = (e) => runScript(e.currentTarget);
   $("#btn-script-stop").onclick = (e) => stopScript(e.currentTarget);
   $("#btn-group-del").onclick = delGroup;
@@ -2196,13 +2337,15 @@ function init() {
   $("#btn-shot").onclick = (e) => shot(e.currentTarget);
   $("#btn-ble").onclick = (e) => bleStatus(e.currentTarget);
   $("#screen").onclick = onScreenClick;
-  $("#pick-mode").onchange = (e) => $("#screen").classList.toggle("pick", e.target.checked);
+  $("#pick-mode").onchange = (e) => { $("#screen").classList.toggle("pick", e.target.checked); if (!e.target.checked) PICK_AT = null; };
 
   // trình dựng kịch bản
-  $$(".add-grid .chip").forEach(b => b.onclick = () => addStepPrompt(b.dataset.add));
+  $("#btn-step-add").onclick = () => openPalette(null, null);
+  $$("#step-palette .pal-item").forEach(b => b.onclick = () => pickAction(b.dataset.add));
+  $("#step-palette").onkeydown = (e) => { if (e.key === "Escape") { e.stopPropagation(); closePalette(); $("#btn-step-add").focus(); } };
   $("#btn-save").onclick = (e) => saveGroup(e.currentTarget);
   $("#btn-flow-test").onclick = (e) => testFlow(e.currentTarget);
-  $("#btn-clear-log").onclick = () => { $("#log").innerHTML = ""; };
+  $("#btn-clear-log").onclick = (e) => { e.preventDefault(); $("#log").innerHTML = ""; $("#log-last").textContent = ""; };   // preventDefault: nút nằm trong tiêu đề khung gập
 
   // initial load
   loadOverview();     // trang mặc định
