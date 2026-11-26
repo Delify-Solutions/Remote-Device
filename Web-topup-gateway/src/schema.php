@@ -188,11 +188,16 @@ final class Schema
                 'ALTER TABLE devices ADD COLUMN synced_at INT NULL',
                 "ALTER TABLE api_keys ADD COLUMN tool_info $txt NULL",
             ],
+
+            // Kịch bản NHẬN ĐƠN (soạn ở tool, cách chạy «orders»): tool khai nó phục vụ pool nào → gateway hiện «kịch bản nào phục vụ pool nào».
+            4 => [
+                'ALTER TABLE tool_scripts ADD COLUMN pool_code VARCHAR(40) NULL',
+            ],
         ];
     }
 
     /** Phiên bản migration mới nhất mà mã này cần. */
-    public const LATEST = 3;
+    public const LATEST = 4;
 
     private static ?int $version = null;
 

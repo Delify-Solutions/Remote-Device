@@ -302,11 +302,14 @@ def _note_ble(name, status):
 def _owes_order(name):
     """Máy còn ĐƠN DỞ trong sổ (apimode.Journal — bền qua lần khởi động lại): đã nhận đơn mà chưa báo xong kết quả. Trạng thái «dừng chờ
     kiểm tra» chỉ nằm trong bộ nhớ, nên sau khi app khởi động lại đây là dấu vết duy nhất cho biết máy chưa được phép coi là rảnh."""
+    j = RUNNER.journal
+    if j is None:
+        return False
     try:
-        j = RUNNER.journal.get(name) if RUNNER.journal is not None else None
+        e = j.peek(name) if hasattr(j, "peek") else j.get(name)      # peek: đọc CHẶT (sổ hỏng thì ném lỗi, không trả «không có gì»)
     except Exception:
         return True                                  # không đọc được sổ → không dám nói máy rảnh
-    return bool(j and j.get("job") and not j.get("delivered"))
+    return bool(e and e.get("job") and not e.get("delivered"))
 
 
 def _presence_facts():
@@ -919,21 +922,34 @@ class Api:
         """Bỏ máy khỏi MỘT nhóm."""
         return {"ok": bool(store.remove_device_from_group(name, group_id))}
 
+    @staticmethod
+    def _orders_ready(api, what):
+        """Cấu hình nhận đơn `api` (của nhóm nhận đơn hoặc của kịch bản nhận đơn) đủ để chạy chưa → None, hoặc câu báo thiếu gì."""
+        api = store.api_defaults(api)
+        if not api["pool"]:
+            return "%s chưa chọn pool của gateway." % what
+        try:
+            steps = apimode.effective_steps(_gateway().pool(api["pool"]), api["steps"])
+        except GatewayError as e:
+            return e.vi()
+        except apimode.ConfigError as e:
+            return "Cấu hình bước sai: %s" % e
+        if not steps["purchase"]:
+            return "Chưa có «các bước mua 1 gói» (cấu hình trên gateway hoặc trong %s)." % what.lower()
+        return None
+
+    @staticmethod
+    def _takes_orders(g, script=None):
+        """Lần chạy này có NHẬN ĐƠN CỦA KHÁCH không: nhóm nhận đơn kiểu cũ, hoặc kịch bản có cách chạy «nhận đơn từ gateway»."""
+        if g.get("mode") == "api":
+            return True
+        sc = store.pick_script(g, script)
+        return bool(sc and sc.get("mode") == "orders")
+
     def _runnable(self, g, script=None):
         """Nhóm (và kịch bản `script`) đủ điều kiện chạy chưa → None, hoặc câu báo thiếu gì."""
         if g.get("mode") == "api":
-            api = store.api_defaults(g.get("api"))
-            if not api["pool"]:
-                return "Nhóm chưa chọn pool của gateway."
-            try:
-                steps = apimode.effective_steps(_gateway().pool(api["pool"]), api["steps"])
-            except GatewayError as e:
-                return e.vi()
-            except apimode.ConfigError as e:
-                return "Cấu hình bước sai: %s" % e
-            if not steps["purchase"]:
-                return "Chưa có «các bước mua 1 gói» (cấu hình trên gateway hoặc trong nhóm)."
-            return None
+            return Api._orders_ready(g.get("api"), "Nhóm")
         scripts = g.get("scripts") or []
         if not scripts:
             return "Nhóm chưa có kịch bản nào."
@@ -942,6 +958,8 @@ class Api:
             if script:
                 return "Nhóm không có kịch bản «%s» (hoặc tên trùng nhau). Các kịch bản: %s." % (script, ", ".join(s["name"] for s in scripts))
             return "Nhóm có %d kịch bản — nói rõ chạy kịch bản nào (%s)." % (len(scripts), ", ".join(s["name"] for s in scripts))
+        if sc.get("mode") == "orders":
+            return Api._orders_ready(sc.get("orders"), "Kịch bản «%s»" % sc["name"])
         if not sc["steps"]:
             return "Kịch bản «%s» chưa có bước nào." % sc["name"]
         return None
@@ -957,14 +975,16 @@ class Api:
                 out[n] = what or "việc khác"
         return out
 
-    def _held_what(self, g, names):
+    def _held_what(self, g, names, script=None):
         """{tên máy: lý do} cho các máy trong `names` đang DỪNG CHỜ NGƯỜI KIỂM TRA mà nhóm `g` không được phép chạy đè lên (chỉ chính nhóm nhận đơn
         đã gây ra trạng thái đó mới «Chạy lại» được — và ở chế độ web thì không ai được: gỡ giữ là lời xác nhận của người vận hành)."""
         out = {}
         st = RUNNER.status()
         for n in names:
             hold = RUNNER.hold_reason(n)
-            same_api_group = g.get("mode") == "api" and (st.get(n) or {}).get("group_id") == g.get("id")
+            w = st.get(n) or {}
+            # «Chạy lại» chỉ dành cho CHÍNH lần nhận đơn đã để máy ở trạng thái giữ: cùng nhóm, và (với kịch bản nhận đơn) cùng kịch bản
+            same_api_group = Api._takes_orders(g, script) and w.get("group_id") == g.get("id") and w.get("script_id") == ((store.pick_script(g, script) or {}).get("id") if g.get("mode") != "api" else None)
             if hold and (WEBDEV is not None or not same_api_group):       # chế độ web: «Chạy lại» cũng là gỡ giữ → chỉ làm ở app cửa sổ
                 out[n] = hold
             elif not (st.get(n) or {}).get("running"):
@@ -979,7 +999,7 @@ class Api:
         g = store.get_group(group_id)
         if not g:
             return {"ok": False, "error": "nhóm không tồn tại"}
-        if g.get("mode") == "api" and not RUNNER.allow_api:
+        if Api._takes_orders(g, script) and not RUNNER.allow_api:
             return {"ok": False, "error": WEB_NO_ORDERS}
         why = self._runnable(g, script)
         if why:
@@ -989,7 +1009,7 @@ class Api:
         stray = [n for n in targets if n not in (g.get("devices") or [])]
         if stray:
             return {"ok": False, "error": "Máy không thuộc nhóm «%s»: %s." % (g.get("name"), ", ".join(map(str, stray)))}
-        held = self._held_what(g, targets)                # máy đang giữ chờ kiểm tra: KHÔNG khởi động (kể cả cố ý), báo lại cho người bấm
+        held = self._held_what(g, targets, script)        # máy đang giữ chờ kiểm tra: KHÔNG khởi động (kể cả cố ý), báo lại cho người bấm
         go = [n for n in targets if n not in held]
         started, why = CLAIMS.start(go, lambda: RUNNER.start_group(g, go, sc))
         if why:
@@ -1019,7 +1039,7 @@ class Api:
         g = store.get_group(group_id)
         if not g:
             return {"ok": False, "error": "nhóm không tồn tại"}
-        if g.get("mode") == "api" and not RUNNER.allow_api:
+        if Api._takes_orders(g, script) and not RUNNER.allow_api:
             return {"ok": False, "error": WEB_NO_ORDERS}
         why = self._runnable(g, script)
         if why:
@@ -1027,7 +1047,7 @@ class Api:
         sc = None if g.get("mode") == "api" else store.pick_script(g, script)
         if name not in (g.get("devices") or []):
             return {"ok": False, "error": "Máy «%s» không thuộc nhóm «%s»." % (name, g.get("name"))}
-        held = self._held_what(g, [name]).get(name)
+        held = self._held_what(g, [name], script).get(name)
         if held:
             return {"ok": False, "error": "Máy đang DỪNG CHỜ NGƯỜI KIỂM TRA (%s) — kiểm tra máy và xác nhận «Đã kiểm tra xong»%s rồi mới chạy việc khác trên máy này."
                                           % (held, " ở app dạng cửa sổ" if WEBDEV is not None else "")}
@@ -1125,7 +1145,7 @@ class Api:
                 except Exception as e:
                     ok, msg = False, "lỗi: %s" % e
                 results.append({"i": i, "type": st.get("type"), "ok": ok,
-                                "msg": apimode.describe(st, vars) + ("" if ok else " — " + msg)})
+                                "msg": apimode.describe(st, vars) + ((" — " + msg) if msg else "")})     # (bước có điều kiện: «đã bấm» hay «không thấy — bỏ qua»)
                 if not ok:
                     break
                 time.sleep(apimode.STEP_GAP)

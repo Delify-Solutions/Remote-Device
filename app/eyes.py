@@ -18,6 +18,7 @@ import subprocess, tempfile, os, sys, time, unicodedata
 import numpy as np
 import cv2
 import fastshot
+import ocr
 try:
     import pytesseract
 except ImportError:
@@ -280,31 +281,51 @@ class Eyes:
 
     def read_text(self, img=None, region=None, scale=2, lang=None, psm=None):
         """OCR: trả chuỗi text đọc được. region=(x0,y0,x1,y1) để giới hạn vùng.
-        psm=7: coi cả vùng là MỘT dòng chữ (đọc ô nhập liệu chính xác hơn hẳn)."""
-        if pytesseract is None:
-            raise RuntimeError("Thiếu pytesseract (pip install pytesseract) + tesseract (brew)")
+        psm=7: coi cả vùng là MỘT dòng chữ (đọc ô nhập liệu chính xác hơn hẳn) — kiểu đọc này giữ nguyên tesseract.
+        Không ép psm: GHÉP chữ của Apple Vision (đọc được chữ trên nền nhiều màu của game, thứ tesseract bỏ sót hoàn toàn) với chữ của
+        tesseract như trước — cái gì trước đây đọc được thì nay vẫn đọc được, chỉ đọc được THÊM."""
+        seen = ""
         if img is None:
             img = self.screenshot()
         if region:
             x0, y0, x1, y1 = region
             img = img[y0:y1, x0:x1]
+        if not psm:
+            try:
+                seen = ocr.text(img)                 # trên ảnh gốc (Vision tự lo cỡ chữ)
+            except Exception:
+                seen = ""
+        if pytesseract is None:
+            if seen or (not psm and ocr.available()):
+                return seen
+            raise RuntimeError("Thiếu pytesseract (pip install pytesseract) + tesseract (brew)")
         if scale != 1:
             img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         config = ("--psm %d" % int(psm)) if psm else ""
         try:
-            return pytesseract.image_to_string(gray, lang=lang or self.OCR_LANG, config=config).strip()
+            tess = pytesseract.image_to_string(gray, lang=lang or self.OCR_LANG, config=config).strip()
         except Exception:
-            return pytesseract.image_to_string(gray, config=config).strip()
+            tess = pytesseract.image_to_string(gray, config=config).strip()
+        return (seen + "\n" + tess).strip() if seen else tess
 
     def find_text(self, needle: str, img=None, scale=2):
         """Tìm nhãn chữ trên màn (OCR). Trả (cx, cy) = tâm của ĐÚNG CÁC CHỮ KHỚP (pixel ảnh
         gốc) hoặc None. So khớp không phân biệt hoa thường, bỏ dấu tiếng Việt, bỏ qua khoảng
-        trắng (OCR hay tách/gộp chữ). Nhiều chỗ khớp thì lấy chỗ đầu tiên theo thứ tự đọc."""
-        if pytesseract is None:
-            raise RuntimeError("Thiếu pytesseract")
+        trắng (OCR hay tách/gộp chữ). Nhiều chỗ khớp thì lấy chỗ đầu tiên theo thứ tự đọc.
+        Tìm bằng Apple Vision trước (đọc được chữ trên nền game); không thấy thì tìm bằng tesseract như trước."""
         if img is None:
             img = self.screenshot()
+        try:
+            hit = ocr.find(img, needle)
+        except Exception:
+            hit = None
+        if hit:
+            return (int(hit[0]), int(hit[1]))
+        if pytesseract is None:
+            if ocr.available():
+                return None
+            raise RuntimeError("Thiếu pytesseract")
         big = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
         gray = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY)
         try:

@@ -97,6 +97,8 @@ def unit_tests():
     ok([s["type"] for s in r["outline"]] == ["launch", "tap_text", "type", "key", "type", "type", "tap", "tap_text", "wait"]
        and r["outline"][0] == {"type": "launch", "note": "mở game", "optional": False} and r["outline"][4]["optional"] is True,
        "dàn ý: loại bước + ghi chú + cờ bỏ qua; bước rác / loại lạ bị bỏ", r["outline"])
+    ok(presence.step_vars([{"type": "tap_if", "timeout": 5, "cases": [{"text": "{{otp}}", "tap": "Hủy"}, {"text": "x", "tap": "{{package.name}}"}]}, {"type": "type", "text": "{{otp}}"}]) == ["otp", "package.name"],
+       "biến nằm trong các trường hợp của bước «nếu … thì bấm» cũng được tính (không lặp)")
     blob = json.dumps(rows, ensure_ascii=False)
     ok(SECRET_TEXT not in blob and "ten-app-rieng" not in blob and "987" not in blob and "Đăng nhập" not in blob,
        "chữ gõ, tên app, toạ độ, chữ cần bấm KHÔNG nằm trong danh mục gửi đi")
@@ -111,6 +113,26 @@ def unit_tests():
     ok(presence.catalog([])[0] == [] and presence.catalog(None)[0] == [] and presence.catalog([{"id": "g", "scripts": "rac"}, "x"])[0] == [], "dữ liệu rác không làm hỏng")
     ok(presence.script_uid("a1b2c3d4", "nap01") == "a1b2c3d4:nap01" and presence.script_uid("", "a") is None and presence.script_uid("a", "b:c") is None
        and presence.script_uid("a" * 41, "b") is None, "mã «nhóm:kịch bản» chỉ nhận ký tự gateway nhận")
+
+    # kịch bản NHẬN ĐƠN: gateway cần biết nó phục vụ pool nào; bước của nó chia theo giai đoạn của một đơn
+    go = [{"id": "g7", "name": "Theo đơn", "mode": "once", "devices": ["M1"], "scripts": [
+        {"id": "nd", "name": "Nạp theo đơn", "mode": "orders", "steps": [{"type": "type", "text": "KHONG-TINH"}], "loops": 1,
+         "orders": {"pool": "efootball-ios", "steps": {"login": [{"type": "launch", "app": "ten-app-rieng"}, {"type": "type", "text": "{{username}}"}],
+                                                       "purchase": [{"type": "tap_text", "text": "{{package.ocr_text}}", "optional": True}], "rac": [{"type": "home"}]}}},
+        {"id": "th", "name": "Thường", "mode": "once", "steps": [{"type": "home"}], "orders": {"pool": "khong-gui"}}]}]
+    ro = {r["uid"]: r for r in presence.catalog(go)[0]}
+    ok(ro["g7:nd"]["mode"] == "orders" and ro["g7:nd"]["pool"] == "efootball-ios" and ro["g7:nd"]["step_count"] == 3 and ro["g7:nd"]["vars"] == ["username", "package.ocr_text"]
+       and ro["g7:nd"]["outline"] == [{"type": "launch", "note": "", "optional": False, "phase": "login"}, {"type": "type", "note": "", "optional": False, "phase": "login"},
+                                      {"type": "tap_text", "note": "", "optional": True, "phase": "purchase"}],
+       "kịch bản nhận đơn trong danh mục: cách chạy «orders», pool, số bước = tổng các giai đoạn, dàn ý kèm giai đoạn (không tính bước của cách chạy khác)", ro["g7:nd"])
+    ok(ro["g7:th"]["mode"] == "once" and "pool" not in ro["g7:th"] and ro["g7:th"]["step_count"] == 1, "kịch bản thường không khai pool dù còn giữ cấu hình nhận đơn cũ")
+    ok("ten-app-rieng" not in json.dumps(list(ro.values()), ensure_ascii=False) and "KHONG-TINH" not in json.dumps(list(ro.values())), "…vẫn không gửi tên app / chữ gõ")
+    bo, _ = presence.build([fact("M1", running=True, run_mode="api", run_group_id="g7", run_script_id="nd", run_group="Theo đơn", run_script="Nạp theo đơn", iter=3),
+                            fact("M2", running=True, run_mode="api", run_group_id="gapi", run_group="Nhận đơn")], go)
+    do = {x["name"]: x for x in bo["devices"]}
+    ok(do["M1"]["status"] == "orders" and do["M1"]["running"] == {"group": "Theo đơn", "script": "Nạp theo đơn", "uid": "g7:nd"} and do["M1"]["scripts"] == ["g7:nd", "g7:th"],
+       "máy đang nhận đơn bằng một KỊCH BẢN → báo «orders» kèm kịch bản đang chạy (không kèm số vòng)", do["M1"])
+    ok(do["M2"]["status"] == "orders" and "running" not in do["M2"], "máy của nhóm nhận đơn kiểu cũ (không có kịch bản) → chỉ báo «orders»")
 
     print("== 2. Trạng thái một máy ==")
     S = presence.device_status
@@ -344,11 +366,20 @@ def wiring_tests():
         gui.RUNNER.journal.state = {"M1": {"job": "J1", "ref": "NG1", "phase": "finished", "delivered": True}}
         ok(st("M1") == "idle", "đơn trong sổ đã báo xong → máy lại rảnh")
 
-        class BrokenJournal:
-            def get(self, name):
-                raise OSError("đĩa lỗi")
-        gui.RUNNER.journal = BrokenJournal()
-        ok(st("M1") == "hold", "không đọc được sổ → không dám báo rảnh")
+        # sổ đơn THẬT (apimode.Journal): tệp hỏng phải bị coi là «không biết» → không báo rảnh; tệp chưa có = chưa từng có đơn
+        import apimode
+        jdir = tempfile.mkdtemp(prefix="presence-journal-")
+        try:
+            gui.RUNNER.journal = apimode.Journal(jdir)
+            ok(st("M1") == "idle", "sổ đơn chưa có tệp (chưa từng nhận đơn) → máy rảnh bình thường")
+            gui.RUNNER.journal.set("M1", job="J9", ref="NG9", phase="claimed", delivered=False)
+            ok(st("M1") == "hold", "sổ thật ghi máy đang giữ một đơn chưa báo xong → không rảnh")
+            open(os.path.join(jdir, "api_state.json"), "w").write('{"M1": {"job": "J9", "deliv')          # tệp ghi dở / hỏng
+            ok(gui.RUNNER.journal.get("M1") is None and st("M1") == "hold", "sổ đơn HỎNG: đọc thường trả «không có gì», nhưng luồng tự báo đọc chặt → không dám báo rảnh", st("M1"))
+            open(os.path.join(jdir, "api_state.json"), "w").write('["khong", "phai", "so"]')
+            ok(st("M1") == "hold", "sổ đơn sai dạng → cũng không báo rảnh")
+        finally:
+            shutil.rmtree(jdir, ignore_errors=True)
         gui.RUNNER.journal = FakeJournal(); FakeJournal.state = {}
 
         # Bluetooth: trạng thái vừa đọc được từ board được ghi lại ngay (không chờ lượt quét sau)

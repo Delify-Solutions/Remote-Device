@@ -15,7 +15,7 @@ import json, os, secrets, threading, time
 
 import cv2
 
-import apimode, store
+import apimode, ocr, store
 from eyes import Eyes, norm_text
 from mcpserver import Remote, Result, Tool, ToolError, cancel_requested, image, text
 
@@ -34,7 +34,8 @@ INSTRUCTIONS = (
     "All coordinates are pixels of the full-size screenshot (origin top-left), exactly as returned by read_screen. "
     "Pointer actions are slow (a tap takes several seconds) and are verified: a tap is only performed when the pointer was "
     "measured at the target. type_text can only type printable ASCII. The phone UI may be in Vietnamese. "
-    "start_run on a group in «api» mode makes the phone process REAL paid top-up orders — only start it when the user asks. "
+    "start_run on a group in «api» mode, or on a script whose mode is «orders» (listed as NHẬN ĐƠN THẬT), makes the phone process REAL paid "
+    "top-up orders — only start it when the user asks. "
     "A device shown as ON HOLD stopped in the middle of a paid order and is waiting for a human to reconcile it: do not touch it, "
     "do not try to clear it (stop_run is refused for such a device; only the human can, in the app) and do not restart it."
 )
@@ -131,8 +132,19 @@ class Claims:
 
 
 # ====================== đọc chữ kèm toạ độ ======================
-def ocr_lines(img, lang: str = Eyes.OCR_LANG, scale: int = 2, min_conf: float = 30.0) -> list:
-    """Các DÒNG chữ trên ảnh: [{text, x, y, w, h}] — (x,y) là TÂM dòng chữ, đơn vị pixel của ảnh gốc."""
+def ocr_lines(img, lang: str = Eyes.OCR_LANG, scale: int = 2, min_conf: float = 30.0, engine: str = "auto") -> list:
+    """Các DÒNG chữ trên ảnh: [{text, x, y, w, h}] — (x,y) là TÂM dòng chữ, đơn vị pixel của ảnh gốc.
+    engine «auto»: Apple Vision (đọc được chữ trên nền game); Vision không có / không đọc ra dòng nào thì dùng tesseract như trước.
+    engine «tesseract»: chỉ tesseract."""
+    if engine != "tesseract":
+        try:
+            seen = [{k: r[k] for k in ("text", "x", "y", "w", "h")} for r in ocr.lines(img)]
+        except Exception:
+            seen = []
+        if seen:
+            return seen
+        if pytesseract is None and ocr.available():
+            return []
     if pytesseract is None:
         raise ToolError("Thiếu pytesseract/tesseract nên không đọc được chữ (vẫn xem được ảnh).")
     big = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC) if scale != 1 else img
@@ -341,7 +353,11 @@ class Control:
         want = [norm_text(a).replace(" ", "") for a in apimode.alternatives(text)]
         if not want:
             raise ToolError("Chưa nêu chữ cần tìm.")
-        hits = [r for r in ocr_lines(eyes.screenshot()) if any(a in norm_text(r["text"]).replace(" ", "") for a in want)]
+        shot = eyes.screenshot()
+        match = lambda rows: [r for r in rows if any(a in norm_text(r["text"]).replace(" ", "") for a in want)]
+        hits = match(ocr_lines(shot))
+        if not hits and pytesseract is not None:        # bộ đọc chính không thấy → hỏi thêm tesseract (thứ gì trước đây tìm được thì nay vẫn tìm được)
+            hits = match(ocr_lines(shot, engine="tesseract"))
         if not hits:
             return Result("Không thấy chữ «%s» trên màn hình máy %s." % (text, name), {"device": name, "matches": []})
         return Result("\n".join("(%d,%d) %s" % (r["x"], r["y"], r["text"]) for r in hits), {"device": name, "matches": hits})
@@ -477,7 +493,8 @@ class Control:
                     ok, why = False, str(e)
                 except apimode.Aborted:
                     ok, why = False, "đã dừng theo yêu cầu huỷ"
-                out.append({"step": i + 1, "ok": bool(ok), "what": what(st), "why": "" if ok else why})
+                # bước có điều kiện xong theo HAI kiểu (đã bấm / không thấy nên bỏ qua) → người gọi phải biết kiểu nào; các bước khác xong thì không kèm lời
+                out.append({"step": i + 1, "ok": bool(ok), "what": what(st), "why": why if (not ok or st.get("type") == "tap_if") else ""})
                 if not ok and not st.get("optional"):
                     break
                 time.sleep(apimode.STEP_GAP)
@@ -516,7 +533,8 @@ class Control:
             if g["mode"] == "api":
                 return ""
             sc = g.get("scripts") or []
-            return " — kịch bản: " + (", ".join("«%s» (%d bước, %s)" % (s["name"], s["steps"], "lặp" if s["mode"] == "loop" else "1 lần") for s in sc) or "chưa có")
+            how = lambda s: ("NHẬN ĐƠN THẬT từ pool «%s»" % (s.get("pool") or "chưa chọn")) if s["mode"] == "orders" else ("lặp" if s["mode"] == "loop" else "1 lần")
+            return " — kịch bản: " + (", ".join("«%s» (%d bước, %s)" % (s["name"], s["steps"], how(s)) for s in sc) or "chưa có")
         return Result("\n".join("%s (id %s) — máy: %s%s%s" % (
             g["name"], g["id"], ", ".join(g["devices"]) or "chưa có", (" — nhận đơn từ pool «%s»" % g["pool"]) if g["mode"] == "api" else "", scripts_txt(g)) for g in groups),
             {"groups": groups})
@@ -659,9 +677,12 @@ def build_tools(c: Control) -> list:
              {"app": {"type": "string", "description": "App name as typed into search (ASCII), e.g. \"Settings\"."}, "device": _DEV}, ("app",),
              fn=c.open_app, destructive=True, cli="open", positional=("device", "app"), help="Mở app qua ô tìm kiếm (Spotlight)"),
         Tool("run_steps", "Run a list of steps",
-             "Run several steps in order on one device and stop at the first failure. Step types: tap {x,y}, tap_text {text}, "
-             "hold {x,y,seconds}, hold_text {text,seconds}, swipe {dir} or {x1,y1,x2,y2}, type {text}, key {name}, combo {keys}, "
-             "launch {app}, home, wait {seconds}, wait_text {text,timeout}, assert_text {text}. Add \"optional\": true to skip a step on failure.",
+             "Run several steps in order on one device and stop at the first failure. Step types: tap {x,y}, tap_text {text,timeout} "
+             "(`timeout` = seconds to wait for the text to appear before giving up; omit to look once — game screens take 1-3 s to change), "
+             "hold {x,y,seconds}, hold_text {text,seconds,timeout}, swipe {dir} or {x1,y1,x2,y2}, type {text}, key {name}, combo {keys}, "
+             "launch {app}, home, wait {seconds}, wait_text {text,timeout}, assert_text {text}, tap_if {text,tap,timeout} (if `text` shows up within "
+             "`timeout` seconds tap the text `tap`, else do nothing and continue — for dialogs that only sometimes appear). "
+             "Add \"optional\": true to skip a step on failure.",
              {"steps": {"type": "array", "items": {"type": "object"}, "description": "Steps to run."}, "device": _DEV,
               "vars": {"type": "object", "description": "Values for {{placeholders}} used in step texts."}}, ("steps",),
              fn=c.run_steps, destructive=True, cli="run", positional=("device", "steps"), help="Chạy một chuỗi bước (JSON hoặc @tệp.json)"),
@@ -672,7 +693,8 @@ def build_tools(c: Control) -> list:
              fn=c.list_groups, read_only=True, idempotent=True, cli="groups", help="Danh sách nhóm máy"),
         Tool("start_run", "Start a script of a group on its machines",
              "Run one script of a group on all its devices (or just one). A machine runs ONE script at a time — a busy machine is skipped. "
-             "In «api» mode the machines take REAL paid top-up orders from the gateway — only start when the user explicitly asks.",
+             "A group in «api» mode, and any script whose mode is «orders» (list_groups shows it as NHẬN ĐƠN THẬT), takes REAL paid top-up orders "
+             "from the gateway — only start those when the user explicitly asks.",
              {"group": {"type": "string", "description": "Group name or id (see list_groups)."}, "device": dict(_DEV, description="Only this device of the group (optional)."),
               "script": {"type": "string", "description": "Script name or id (see list_groups). Optional when the group has exactly one script; not used in api mode."}},
              ("group",), fn=c.start_run, destructive=True, cli="start", positional=("group", "device"), help="Cho một kịch bản của nhóm (trên mọi máy, hoặc một máy) chạy; --script tên"),
@@ -847,8 +869,18 @@ def group_view(g: dict) -> dict:
     api = g.get("api") or {}
     return {"id": g.get("id"), "name": g.get("name") or g.get("id"), "mode": g.get("mode") or "loop",
             "devices": list(g.get("devices") or []), "pool": api.get("pool") or None,
-            "scripts": [{"id": s.get("id"), "name": s.get("name"), "steps": len(s.get("steps") or []), "mode": s.get("mode") or "once",
-                         "loops": s.get("loops", 0)} for s in (g.get("scripts") or [])]}
+            "scripts": [script_view(s) for s in (g.get("scripts") or [])]}
+
+
+def script_view(s: dict) -> dict:
+    """Một kịch bản cho AI/CLI: tên, số bước, cách chạy — không kèm nội dung bước. Kịch bản NHẬN ĐƠN (mode «orders») kèm pool nó phục vụ;
+    số bước của nó là tổng các giai đoạn."""
+    out = {"id": s.get("id"), "name": s.get("name"), "steps": len(s.get("steps") or []), "mode": s.get("mode") or "once", "loops": s.get("loops", 0)}
+    if out["mode"] == "orders":
+        o = s.get("orders") or {}
+        out["pool"] = o.get("pool") or None
+        out["steps"] = sum(len(v or []) for v in (o.get("steps") or {}).values())
+    return out
 
 
 # ====================== app đang mở thì gọi sang app, không thì tự làm ======================

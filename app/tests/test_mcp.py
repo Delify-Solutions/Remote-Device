@@ -327,6 +327,10 @@ def run_all(tmp, real_ocr):
     ok(r["result"]["isError"] is True and "✗ 1." in body(r) and "2." not in body(r), "run_steps dừng ở bước lỗi đầu tiên và nói rõ bước nào", body(r))
     ok(call(server, "run_steps", {"device": "iPhoneFarm-01", "steps": [{"type": "swipe", "value": "cheo"}]})["result"]["isError"] is True
        and call(server, "run_steps", {"device": "iPhoneFarm-01", "steps": []})["result"]["isError"] is True, "bước sai cấu hình / danh sách rỗng → từ chối trước khi chạm vào máy")
+    r = call(server, "run_steps", {"device": "iPhoneFarm-01", "steps": [{"type": "tap_if", "text": "Hộp thoại không có", "tap": "Hủy", "timeout": 0}, {"type": "home"}]})
+    res_if = r["result"]["structuredContent"]["results"]
+    ok(r["result"]["isError"] is False and res_if[0]["ok"] is True and "bỏ qua" in res_if[0]["why"] and res_if[1]["why"] == "" and "không thấy «Hộp thoại không có» — bỏ qua" in body(r),
+       "run_steps: bước có điều kiện nói rõ ĐÃ BẤM hay BỎ QUA (xong theo hai kiểu); các bước khác xong thì không kèm lời", body(r))
 
     gl = body(call(server, "list_groups"))
     ok("Nhóm eFootball (id g1)" in gl and "nhận đơn từ pool «game-test»" in gl, "danh sách nhóm nhận đơn", gl)
@@ -635,6 +639,14 @@ def run_all(tmp, real_ocr):
             gv2 = ah.groups()[0]
             ok(gv2["scripts"] == [{"id": "a", "name": "Đăng nhập", "steps": 2, "mode": "loop", "loops": 0}] and "MAT-KHAU" not in json.dumps(gv2),
                "kịch bản cho AI: chỉ tên / số bước / cách chạy — KHÔNG lộ nội dung bước (có thể có mật khẩu gõ vào)", gv2)
+            control.store.get_groups = lambda: [{"id": "g8", "name": "Theo đơn", "mode": "once", "devices": ["iPhoneFarm-01"], "scripts": [
+                {"id": "nd", "name": "Nạp theo đơn", "mode": "orders", "loops": 1, "steps": [],
+                 "orders": {"pool": "game-test", "steps": {"login": [{"type": "type", "text": "MAT-KHAU-BI-MAT"}, {"type": "home"}], "purchase": [{"type": "tap_text", "text": "Mua"}]}}}]}]
+            gv3 = ah.groups()[0]
+            ok(gv3["scripts"] == [{"id": "nd", "name": "Nạp theo đơn", "steps": 3, "mode": "orders", "loops": 1, "pool": "game-test"}] and "MAT-KHAU" not in json.dumps(gv3),
+               "kịch bản NHẬN ĐƠN cho AI: cách chạy «orders» + pool + tổng số bước của các giai đoạn — vẫn không lộ nội dung bước", gv3)
+            listed = "".join(c.get("text", "") for c in control.Control(ah).list_groups().content)
+            ok("NHẬN ĐƠN THẬT từ pool «game-test»" in listed and "MAT-KHAU" not in listed, "list_groups ghi rõ kịch bản nào NHẬN ĐƠN THẬT (để AI không tự ý chạy)", listed)
             control.store.get_groups = groups_nhom_a
             # cầu nối AI cũng nhận ra máy của khách theo MÁY THẬT (iPhone ghi lúc bắt đầu chạy), không chỉ theo tên board
             runner.conflict = lambda name, udid=None, port=None: "may-cua-khach" if udid == "UDID-iPhoneFarm-02" else None

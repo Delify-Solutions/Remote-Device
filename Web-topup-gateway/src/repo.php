@@ -542,6 +542,8 @@ final class Tools
         'offline' => ['chưa sẵn sàng', 'secondary'],
     ];
     public const FRESH = 90;            // giây: tool im quá chừng này thì lời báo cũ không còn đáng tin
+    /** giai đoạn của một đơn (kịch bản nhận đơn chia bước theo các giai đoạn này) → nhãn */
+    public const PHASES = ['login', 'otp', 'nav', 'purchase', 'after', 'finish'];
     public const MAX_BODY = 1048576;
     public const MAX_DEVICES = 200;
     public const MAX_SCRIPTS = 300;
@@ -562,7 +564,7 @@ final class Tools
 
     public static function sync(array $key, array $in): array
     {
-        if (Schema::version() < 3) {
+        if (Schema::version() < Schema::LATEST) {
             return [503, self::err('needs_migration', 'Gateway cần cập nhật CSDL: chạy php bin/setup.php')];
         }
         $kid = (int) $key['id'];
@@ -708,7 +710,11 @@ final class Tools
                 if (preg_match('/^[a-z][a-z_]{0,19}$/D', $type) !== 1) {
                     continue;
                 }
-                $outline[] = ['type' => $type, 'note' => clean($s['note'] ?? '', 120), 'optional' => !empty($s['optional'])];
+                $row = ['type' => $type, 'note' => clean($s['note'] ?? '', 120), 'optional' => !empty($s['optional'])];
+                if (is_string($s['phase'] ?? null) && in_array($s['phase'], self::PHASES, true)) {
+                    $row['phase'] = $s['phase'];                 // kịch bản nhận đơn: bước thuộc giai đoạn nào của đơn
+                }
+                $outline[] = $row;
                 if (count($outline) >= self::MAX_OUTLINE) {
                     break;
                 }
@@ -726,7 +732,9 @@ final class Tools
             $data = [
                 'group_id' => $gid, 'group_name' => clean($r['group'] ?? '', 160), 'script_id' => $sid,
                 'name' => clean($r['name'] ?? '', 160) ?: $sid,
-                'run_mode' => ($r['mode'] ?? '') === 'loop' ? 'loop' : 'once',
+                'run_mode' => in_array($r['mode'] ?? '', ['loop', 'orders'], true) ? $r['mode'] : 'once',
+                // chỉ kịch bản NHẬN ĐƠN mới phục vụ một pool; mã pool lưu nguyên như tool khai (pool có thể chưa tồn tại — trang quản trị sẽ nói rõ)
+                'pool_code' => ($r['mode'] ?? '') === 'orders' ? (strtolower(clean($r['pool'] ?? '', 40)) ?: null) : null,
                 'loops' => max(0, min(1000000, (int) (is_numeric($r['loops'] ?? null) ? $r['loops'] : 1))),
                 'step_count' => max(0, min(100000, (int) (is_numeric($r['step_count'] ?? null) ? $r['step_count'] : count($outline)))),
                 'vars' => jenc($vars), 'outline' => jenc($outline),
@@ -840,6 +848,26 @@ final class Tools
                 continue;                               // khoá Tool chưa từng gọi sync
             }
             $out[] = ['key' => $k, 'info' => $info, 'fresh' => (int) ($info['synced_at'] ?? 0) > $now - self::FRESH, 'scripts' => $scripts, 'devices' => $devices];
+        }
+        return $out;
+    }
+
+    /**
+     * mã pool → các kịch bản NHẬN ĐƠN (do tool khai) đang phục vụ pool đó, kèm số máy đang rảnh ở kịch bản ấy ngay lúc này.
+     * @return array<string, list<array{name: string, tool: string, idle: int, fresh: bool}>>
+     */
+    public static function scriptsByPool(): array
+    {
+        if (Schema::version() < 4) {
+            return [];
+        }
+        $out = [];
+        foreach (self::board() as $t) {
+            foreach ($t['scripts'] as $s) {
+                if ($s['run_mode'] === 'orders' && (string) ($s['pool_code'] ?? '') !== '') {
+                    $out[$s['pool_code']][] = ['name' => $s['name'], 'tool' => $t['key']['name'], 'idle' => count($s['idle']), 'fresh' => $t['fresh']];
+                }
+            }
         }
         return $out;
     }

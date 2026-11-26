@@ -25,7 +25,56 @@ def _dist(a, b) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
+class Frame:
+    """Hướng của ẢNH CHỤP so với HỆ TRỤC CỦA CHUỘT.
+
+    Chuột Bluetooth luôn chạy theo hệ trục DỌC của máy: lệnh «về góc» ghim con trỏ ở góc trên-trái của máy cầm dọc, +x là sang phải,
+    +y là xuống. Khi một app xoay NGANG (game), ảnh chụp màn hình xoay theo giao diện nhưng con trỏ thì KHÔNG — đo thật trên iPhone 8 đang
+    mở eFootball: «về góc» đưa con trỏ lên góc trên-PHẢI của ảnh ngang, di +x làm con trỏ đi XUỐNG trên ảnh, di +y làm nó đi sang TRÁI.
+    Mọi phép đo con trỏ vì vậy làm trong hệ trục của chuột: ảnh chụp được quay về hệ đó (`dev`), điểm cần bấm được đổi sang (`pt`),
+    quãng kéo được đổi sang (`vec`); ảnh đưa cho hàm kiểm của bên gọi thì quay trả lại như ảnh chụp (`raw`).
+
+    rot = 0      ảnh chụp cùng chiều với hệ trục của chuột (máy dọc);
+    rot = "ccw"  quay ảnh 90° NGƯỢC chiều kim đồng hồ thì về hệ trục của chuột (góc «về» nằm ở trên-phải của ảnh ngang);
+    rot = "cw"   quay ảnh 90° THEO chiều kim đồng hồ (góc «về» nằm ở dưới-trái của ảnh ngang)."""
+
+    def __init__(self, rot=0, w: int = 0, h: int = 0):
+        self.rot, self.w, self.h = rot, int(w), int(h)       # w, h = cỡ ẢNH CHỤP
+
+    def dev(self, img):
+        if self.rot == "ccw":
+            return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        if self.rot == "cw":
+            return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        return img
+
+    def raw(self, img):
+        if self.rot == "ccw":
+            return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        if self.rot == "cw":
+            return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        return img
+
+    def pt(self, x, y):
+        """Điểm (x, y) trên ảnh chụp → điểm trong hệ trục của chuột."""
+        if self.rot == "ccw":
+            return int(y), int(self.w - 1 - x)
+        if self.rot == "cw":
+            return int(self.h - 1 - y), int(x)
+        return int(x), int(y)
+
+    def vec(self, dx, dy):
+        """Quãng (dx, dy) trên ảnh chụp → quãng di của chuột."""
+        if self.rot == "ccw":
+            return dy, -dx
+        if self.rot == "cw":
+            return -dy, dx
+        return dx, dy
+
+
 class Nav:
+    _fr = Frame()         # hướng ảnh chụp ↔ hệ trục chuột của lần đưa con trỏ gần nhất (vuốt / lật trang dùng để đổi hướng kéo)
+
     def __init__(self, port: str, udid: str):
         self.h = Hands(port, reset=False)
         self.e = Eyes(udid)
@@ -194,6 +243,37 @@ class Nav:
                 return True
         return False
 
+    def _frame(self, raw, verbose=False):
+        """Hướng của ảnh chụp `raw` (chụp lúc con trỏ đang ghim ở góc) so với hệ trục của chuột. Gọi NGAY SAU khi đã ra lệnh rời góc
+        (50, 50). Ảnh dọc: cùng chiều. Ảnh ngang: chụp thêm một ảnh rồi xem con trỏ vừa hiện ra ở gần góc nào — thử cả ba cách quay,
+        phải có ĐÚNG MỘT cách cho thấy con trỏ nằm ở chỗ nó phải nằm (cách góc «về» chừng 50 đơn vị theo đường chéo). Không phân định
+        được → None (bên gọi không bấm)."""
+        H, W = raw.shape[:2]
+        if H >= W:
+            return Frame(0, W, H)
+        time.sleep(self.TRACK_SETTLE)
+        try:
+            raw2 = self.e.screenshot()
+        except Exception:
+            raw2 = None
+        if raw2 is None or raw2.shape != raw.shape:
+            if verbose: print("  (máy đang xoay ngang nhưng không chụp được ảnh để xem con trỏ nằm góc nào)")
+            return None
+        hits = []
+        for rot in ("ccw", "cw", 0):
+            fr = Frame(rot, W, H)
+            a, b = fr.dev(raw), fr.dev(raw2)
+            D = self.e.pointer_size(a)
+            for x, y, _ in self.e.pointer_blobs(a, b, [(0, 0, int(D * 0.7), int(D * 0.7))]):
+                if 20 <= x <= 120 and 20 <= y <= 120 and abs(x - y) <= 30:      # ~50 đơn vị theo đường chéo, tính từ góc «về»
+                    hits.append(fr)
+                    break
+        if len(hits) != 1:
+            if verbose: print("  (máy đang xoay ngang: %s → KHÔNG bấm)" % ("không thấy con trỏ rời góc nào" if not hits else "con trỏ có vẻ ở nhiều góc cùng lúc"))
+            return None
+        if verbose: print("  (máy đang xoay ngang: hệ trục chuột = ảnh quay %s)" % {"ccw": "90° ngược chiều kim đồng hồ", "cw": "90° theo chiều kim đồng hồ", 0: "0°"}[hits[0].rot])
+        return hits[0]
+
     def tap_at(self, px: int, py: int, tol: int = 12, iters: int = 34,
                click=True, verbose=False, verify=None):
         """Đưa con trỏ tới pixel (px,py) rồi click. Trả True nếu con trỏ ĐÃ tới nơi.
@@ -211,10 +291,20 @@ class Nav:
 
         `verify(ảnh) -> bool`: gọi MỘT lần ngay trước khi báo «tới nơi», trên ảnh chụp gần nhất mà con
         trỏ chưa che đích. Trả False = thứ cần bấm không còn ở đó (màn hình đã đổi trong lúc đưa con
-        trỏ tới) → không bấm, trả False."""
+        trỏ tới) → không bấm, trả False.
+
+        (px, py) và ảnh đưa cho `verify` là toạ độ / ảnh CỦA ẢNH CHỤP như bên gọi thấy. Bên trong, mọi thứ làm trong HỆ TRỤC CỦA CHUỘT
+        (xem Frame): máy đang xoay ngang thì ảnh được quay về hệ đó trước khi đo."""
         tol = max(int(tol), 12)            # nhịp di nhỏ hơn 10 đơn vị không dùng làm bằng chứng chuyển động được
+        fr = None                          # hướng ảnh chụp ↔ hệ trục chuột, xác định ở lần ghim góc đầu tiên
+
+        def grab():
+            """Chụp màn hình, trả ảnh đã quay về hệ trục của chuột."""
+            return fr.dev(self.e.screenshot())
+
         def anchor():
-            """Ghim con trỏ về góc trên-trái, chụp ảnh NỀN (con trỏ không che gì), rồi nhích ra cho con trỏ hiện."""
+            """Ghim con trỏ về góc trên-trái (của hệ trục chuột), chụp ảnh NỀN (con trỏ không che gì), rồi nhích ra cho con trỏ hiện."""
+            nonlocal fr
             self.home()
             time.sleep(self.PRE_SETTLE)
             try:
@@ -222,14 +312,25 @@ class Nav:
             except Exception:
                 shot = None
             self.h.move(50, 50)            # rời góc để con trỏ hiện (ở góc là nửa hình, khó thấy)
-            return shot
+            if shot is None:
+                return None
+            if fr is None:
+                fr = self._frame(shot, verbose)
+                if fr is None:
+                    return None
+            return fr.dev(shot)
 
         ref = anchor()
         anchors = 1
         if ref is None:
-            if verbose: print("  (không chụp được ảnh nền) -> KHÔNG click")
+            if verbose: print("  (không chụp được ảnh nền / không rõ hướng màn hình) -> KHÔNG click")
             return False
+        self._fr = fr
+        px, py = fr.pt(px, py)             # từ đây (px, py) là điểm đích TRONG HỆ TRỤC CỦA CHUỘT
         H, W = ref.shape[:2]
+        if not (0 <= px < W and 0 <= py < H):
+            if verbose: print("  (điểm cần bấm nằm ngoài màn hình) -> KHÔNG click")
+            return False
         D = self.e.pointer_size(ref)
         corner = [(0, 0, int(D * 0.7), int(D * 0.7))]       # phần tư con trỏ ghim ở góc trong ảnh nền
         clear = ref if _dist((px, py), (0, 0)) > 1.5 * D else None    # ảnh đích chưa bị con trỏ che
@@ -317,7 +418,7 @@ class Nav:
 
         for i in range(iters):
             time.sleep(self.TRACK_SETTLE)
-            img = self.e.screenshot()
+            img = grab()
             now = [c[:2] for c in self.e.pointer_blobs(ref, img, corner)]
             # `vis` = các vệt KHÔNG nằm gần vật đã biết là đứng yên / cựa quậy tại chỗ (cỡ một icon, ~30px). Chỉ dùng `vis` để chọn
             # «chỗ con trỏ có thể đang đứng» và để xét «mất dấu» — đừng di chuột theo vệt kim đồng hồ (đo thật: con trỏ bị đẩy sát
@@ -388,7 +489,7 @@ class Nav:
                 # Làm ở đây chứ không ở đích: iOS làm con trỏ mờ dần / chuyển sang vùng sáng của icon khi nó đứng yên trên icon
                 # (đo thật: để con trỏ «đứng chờ» trên icon đích → bộ dò mất dấu, bấm chậm 10–25 s hoặc hỏng).
                 time.sleep(self.TRACK_SETTLE)
-                still_img = self.e.screenshot()
+                still_img = grab()
                 now2 = [c[:2] for c in self.e.pointer_blobs(ref, still_img, corner)]
                 if not any(_dist(c, p) <= self.STILL for c in now2):
                     if verbose: print("     (vệt đã dời đi dù không có lệnh nào → không phải con trỏ, đo lại)")
@@ -423,7 +524,7 @@ class Nav:
                     if verbose: print("     (tới đích → phép thử đi–về: nhích %s)" % (move,))
                     expect = (p[0] + move[0] * self.gain, p[1] + move[1] * self.gain) if self.gain else (p[0] + move[0], p[1] + move[1])
                     continue
-                if verify is not None and not verify(clear if clear is not None else img):
+                if verify is not None and not verify(fr.raw(clear if clear is not None else img)):      # bên gọi kiểm trên ảnh như ảnh chụp
                     if verbose: print("  (tới nơi nhưng thứ cần bấm không còn ở đó) -> KHÔNG click")
                     return False
                 if verbose: print("     (đã qua phép thử đi–về (đi → đứng yên → về) → %s)" % ("bấm" if click else "tới nơi, không bấm"))
@@ -455,7 +556,8 @@ class Nav:
         Quãng kéo thực tế chỉ xấp xỉ (xem SWIPE_GAIN). Con trỏ không tới được điểm đầu thì không làm gì."""
         if not self.tap_at(x1, y1, click=False):
             return False
-        return self.h.swipe(round((x2 - x1) * self.SWIPE_GAIN), round((y2 - y1) * self.SWIPE_GAIN))
+        dx, dy = self._fr.vec(x2 - x1, y2 - y1)          # hướng kéo trên ảnh chụp → hướng di của chuột (máy xoay ngang thì khác nhau)
+        return self.h.swipe(round(dx * self.SWIPE_GAIN), round(dy * self.SWIPE_GAIN))
 
     def flick(self, direction: str, at: float | None = None) -> bool:
         """Vuốt cả trang theo hướng ngón tay: "left" | "right" (lật trang) | "up" | "down" (cuộn).
@@ -467,11 +569,11 @@ class Nav:
         if direction in ("left", "right"):
             y = int(H * (0.52 if at is None else at))
             x, dx = (int(W * 0.93), -int(W * 1.2)) if direction == "left" else (int(W * 0.07), int(W * 1.2))
-            return self.tap_at(x, y, click=False) and self.h.swipe(dx, 0)
+            return self.tap_at(x, y, click=False) and self.h.swipe(*self._fr.vec(dx, 0))
         if direction in ("up", "down"):
             x = int(W * (0.5 if at is None else at))
             y, dy = (int(H * 0.75), -int(H * 0.32)) if direction == "up" else (int(H * 0.32), int(H * 0.5))
-            return self.tap_at(x, y, click=False) and self.h.swipe(0, dy)
+            return self.tap_at(x, y, click=False) and self.h.swipe(*self._fr.vec(0, dy))
         raise ValueError("hướng vuốt lạ: %s" % direction)
 
     # Chuỗi thử bàn phím + thứ nó biến thành khi đi qua bộ gõ tiếng Việt (đã bỏ dấu, bỏ khoảng trắng).

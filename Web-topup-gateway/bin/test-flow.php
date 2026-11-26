@@ -474,7 +474,7 @@ $cat = [
      'vars' => ['username', 'package.name', 'co dau cach', 'username', '9batdau'],
      'outline' => [['type' => 'launch', 'note' => 'mở game', 'optional' => false, 'app' => 'TEN-APP-BI-MAT'],
                    ['type' => 'type', 'note' => '', 'optional' => true, 'text' => 'MAT-KHAU-GO-THANG'], ['type' => 'DROP TABLE', 'note' => 'x'], ['type' => "tap\n", 'note' => 'xuống dòng thừa'], 'rac']],
-    ['uid' => $U2, 'group' => 'Nhóm 1', 'name' => 'Đăng nhập', 'mode' => 'once', 'loops' => 1, 'step_count' => 0, 'vars' => [], 'outline' => []],
+    ['uid' => $U2, 'group' => 'Nhóm 1', 'name' => 'Đăng nhập', 'mode' => 'once', 'loops' => 1, 'step_count' => 0, 'vars' => [], 'outline' => [], 'pool' => 'efootball-ios'],
     ['uid' => 'thieu-dau-hai-cham', 'name' => 'bỏ'],
     ['uid' => $U1, 'name' => 'trùng uid → bỏ'],
 ];
@@ -485,6 +485,8 @@ ok($r1 && $r1['group_id'] === 'g1' && $r1['script_id'] === 'nap' && $r1['run_mod
     && jdec($r1['vars']) === ['username', 'package.name']
     && jdec($r1['outline']) === [['type' => 'launch', 'note' => 'mở game', 'optional' => false], ['type' => 'type', 'note' => '', 'optional' => true]],
     'kịch bản lưu đúng: nhóm, cách chạy, số bước, biến hợp lệ, dàn ý chỉ gồm loại bước + ghi chú', $r1);
+ok(Db::val('SELECT pool_code FROM tool_scripts WHERE tool_key_id=? AND uid=?', [$kid, $U2]) === null && Db::val('SELECT run_mode FROM tool_scripts WHERE tool_key_id=? AND uid=?', [$kid, $U2]) === 'once',
+    'kịch bản thường có gửi kèm `pool` → không được ghi là phục vụ pool nào (chỉ kịch bản nhận đơn mới gắn pool)');
 ok(!str_contains(json_encode(Db::all('SELECT * FROM tool_scripts')), 'MAT-KHAU-GO-THANG') && !str_contains(json_encode(Db::all('SELECT * FROM tool_scripts')), 'TEN-APP-BI-MAT'),
     'nội dung gõ / tên app trong bước KHÔNG được lưu ở gateway (chỉ nhận dàn ý)');
 $dA = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-A']);
@@ -623,6 +625,30 @@ ok(!str_contains($page['text'], "\u{FFFD}") && !str_contains($dash['text'], "\u{
     'tên tiếng Việt (nhóm «…VIP», kịch bản «…tỷ», khoá «…Thuỷ») hiện nguyên vẹn — không bị cắt nhầm byte khi ghép bằng dấu «·»');
 ok(http('GET', '/admin/scripts')['code'] === 302, '/admin/scripts chưa đăng nhập → chuyển về trang đăng nhập');
 
+// KỊCH BẢN NHẬN ĐƠN: tool khai kịch bản phục vụ pool nào → gateway lưu, hiện ở trang kịch bản và trang pool
+$UO = 'g1:nhan-don';
+$rev4 = hash('sha256', 'danh-muc-4');
+$catO = [$cat2[0],
+    ['uid' => $UO, 'group' => 'Nhóm 1', 'name' => 'Nạp eFootball theo đơn', 'mode' => 'orders', 'pool' => 'EFootball-iOS', 'step_count' => 3, 'vars' => ['username', 'otp'],
+     'outline' => [['type' => 'launch', 'note' => '', 'optional' => false, 'phase' => 'login'], ['type' => 'type', 'note' => '', 'phase' => 'otp'], ['type' => 'tap_text', 'note' => '', 'phase' => 'giai-doan-la']]],
+    ['uid' => 'g1:pool-ma', 'group' => 'Nhóm 1', 'name' => 'Đơn của pool không có', 'mode' => 'orders', 'pool' => 'pool-ma', 'step_count' => 0, 'vars' => [], 'outline' => []]];
+$so = http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev4, 'scripts' => $catO, 'devices' => [['name' => 'Farm-A', 'status' => 'idle', 'scripts' => [$U1, $UO]],
+    ['name' => 'Farm-B', 'status' => 'orders', 'scripts' => [$UO], 'running' => ['uid' => $UO, 'group' => 'Nhóm 1', 'script' => 'Nạp eFootball theo đơn']]]]);
+$ro = Db::one('SELECT * FROM tool_scripts WHERE tool_key_id=? AND uid=?', [$kid, $UO]);
+ok($so['code'] === 200 && $ro && $ro['run_mode'] === 'orders' && $ro['pool_code'] === 'efootball-ios'
+    && jdec($ro['outline']) === [['type' => 'launch', 'note' => '', 'optional' => false, 'phase' => 'login'], ['type' => 'type', 'note' => '', 'optional' => false, 'phase' => 'otp'], ['type' => 'tap_text', 'note' => '', 'optional' => false]],
+    'kịch bản nhận đơn: lưu cách chạy «orders», mã pool (chữ thường), giai đoạn của từng bước (giai đoạn lạ bị bỏ)', $ro);
+$byPool = Tools::scriptsByPool();
+ok(array_column($byPool['efootball-ios'] ?? [], 'name') === ['Nạp eFootball theo đơn'] && ($byPool['efootball-ios'][0]['idle'] ?? -1) === 1 && isset($byPool['pool-ma']),
+    'gateway biết kịch bản nào đang phục vụ pool nào, kèm số máy đang rảnh ở kịch bản đó', $byPool);
+$page = http('GET', '/admin/scripts', null, null, ['Cookie: ' . $cookie, 'X-Forwarded-For: 203.0.113.50']);
+ok(str_contains($page['text'], 'nhận đơn') && str_contains($page['text'], "/admin/pools/$poolId") && str_contains($page['text'], 'pool-ma') && str_contains($page['text'], 'không có')
+    && str_contains($page['text'], 'đang nhận đơn') && str_contains($page['text'], 'Nhóm 1 · Nạp eFootball theo đơn'),
+    'trang «Kịch bản & máy»: kịch bản nhận đơn kèm pool (có liên kết), báo rõ pool không tồn tại, máy đang nhận đơn bằng kịch bản nào', mb_substr(strip_tags($page['text']), 0, 300));
+$pp = http('GET', '/admin/pools', null, null, ['Cookie: ' . $cookie, 'X-Forwarded-For: 203.0.113.50']);
+ok($pp['code'] === 200 && str_contains($pp['text'], 'Nạp eFootball theo đơn') && str_contains($pp['text'], '1 máy rảnh'), 'trang Pool hiện kịch bản nhận đơn đang phục vụ pool + số máy rảnh', $pp['code']);
+http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev2, 'scripts' => $cat2]);            // trả danh mục về như cũ cho các kiểm tra sau
+
 // xoá một khoá Tool → danh mục kịch bản + máy do khoá đó báo cũng đi theo
 http('POST', '/api/tool/sync', $tool2['plain'], ['scripts_rev' => $rev2, 'scripts' => $cat2]);
 $t2 = (int) $tool2['id'];
@@ -650,6 +676,11 @@ $key = Keys::find((int) $k['id']);
 Devices::touch((int) $k['id'], 'May-cu', 'p', 'free', null);
 $out = ['version' => Schema::version(), 'sync' => Tools::sync($key, ['devices' => [['name' => 'x', 'status' => 'idle']]]),
         'devices' => array_column(Devices::all(), 'name'), 'board' => Tools::board(), 'names' => Tools::scriptNames(), 'state' => Tools::state(Devices::all()[0])[0]];
+foreach ($all[3] as $sql) { Db::pdo()->exec($sql); }
+Db::insert('schema_version', ['version' => 3, 'applied_at' => time()]);
+$r3 = new ReflectionProperty(Schema::class, 'version'); $r3->setAccessible(true); $r3->setValue(null, null);     // (bỏ giá trị đã nhớ: bài thử vừa tự áp một phiên bản)
+$out['v3'] = ['version' => Schema::version(), 'sync' => Tools::sync(Keys::find((int) $k['id']), ['devices' => []])[0], 'board' => Tools::board(), 'byPool' => Tools::scriptsByPool(),
+              'devices' => array_column(Devices::all(), 'name')];
 $out['applied'] = Schema::migrate();
 $out['version_after'] = Schema::version();
 $out['after'] = Tools::sync(Keys::find((int) $k['id']), ['devices' => [['name' => 'x', 'status' => 'idle']]]);
@@ -663,7 +694,9 @@ $v = json_decode($v2out, true) ?? [];
 ok(($v['version'] ?? 0) === 2 && ($v['sync'][0] ?? 0) === 503 && ($v['sync'][1]['error'] ?? '') === 'needs_migration' && ($v['devices'] ?? null) === ['May-cu']
     && ($v['board'] ?? null) === [] && ($v['names'] ?? null) === [] && ($v['state'] ?? '') === 'free',
     'CSDL chưa áp migration 3: sync trả 503 needs_migration; bảng máy / trang kịch bản vẫn chạy (không lỗi SQL)', mb_substr($v2out, 0, 300));
-ok(($v['applied'] ?? null) === [3] && ($v['version_after'] ?? 0) === Schema::LATEST && ($v['after'][0] ?? 0) === 200 && ($v['again'] ?? null) === [],
+ok(($v['v3']['version'] ?? 0) === 3 && ($v['v3']['sync'] ?? 0) === 503 && ($v['v3']['board'] ?? null) === [] && ($v['v3']['byPool'] ?? null) === [] && ($v['v3']['devices'] ?? null) === ['May-cu'],
+    'CSDL ở bản 3 (chưa có cột pool của kịch bản): sync vẫn báo cần cập nhật, các trang vẫn chạy', $v['v3'] ?? null);
+ok(($v['applied'] ?? null) === [4] && ($v['version_after'] ?? 0) === Schema::LATEST && ($v['after'][0] ?? 0) === 200 && ($v['again'] ?? null) === [],
     'chạy migrate trên CSDL cũ → lên bản mới nhất, sync dùng được ngay; chạy lại lần nữa không làm gì', [$v['applied'] ?? null, $v['after'][0] ?? null]);
 
 echo "\n== Trang quản trị + tài liệu ==\n";

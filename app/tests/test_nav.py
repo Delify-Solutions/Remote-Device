@@ -873,6 +873,95 @@ def main():
     n, w = rig(visible=False)
     ok(n.swipe(375, 1000, 375, 400) is False and w.gestures == [], "vuốt theo toạ độ cũng vậy: không tới điểm đầu → không nhấn nút", w.gestures)
 
+    print("\n== 3e. Máy xoay NGANG (game): chuột vẫn chạy theo trục dọc của máy, ảnh chụp thì xoay theo giao diện ==")
+    # Đo thật trên iPhone 8 đang mở eFootball: «về góc» đưa con trỏ lên góc trên-PHẢI của ảnh ngang; +x của chuột = đi XUỐNG trên ảnh.
+    from nav import Frame
+
+    class Landscape(FakeEyes):
+        """Mắt của máy đang xoay ngang: thế giới giả vẫn tính trong hệ trục của chuột (dọc); ảnh chụp là ảnh đó QUAY đi."""
+        def __init__(self, world, rot):
+            super().__init__(world)
+            self.fr = Frame(rot, H, W)                      # ảnh chụp ngang: rộng H, cao W
+            self.verified = []
+
+        def screenshot(self):
+            return self.fr.raw(self.w.render())
+
+        def to_img(self, u, v):                             # điểm trong hệ trục chuột → điểm trên ảnh chụp ngang
+            return (H - 1 - v, u) if self.fr.rot == "ccw" else (v, W - 1 - u)
+
+        def find_text(self, needle, img=None, scale=2):
+            if img is not None:
+                self.verified.append(img.shape[:2])
+            if needle != "Wi-Fi" or (self.w.label_until is not None and self.w.shots > self.w.label_until):
+                return None
+            return self.to_img(*self.LABEL_AT)
+
+    def lrig(rot, **kw):
+        n, w = rig(**kw)
+        n.e = Landscape(w, rot)
+        return n, w
+    fr = Frame("ccw", H, W)
+    ok(fr.pt(*Landscape(World(), "ccw").to_img(186, 831)) == (186, 831) and Frame("cw", H, W).pt(*Landscape(World(), "cw").to_img(186, 831)) == (186, 831)
+       and fr.vec(100, 0) == (0, -100) and fr.vec(0, 100) == (100, 0) and Frame("cw", H, W).vec(100, 0) == (0, 100) and Frame(0, W, H).pt(5, 6) == (5, 6) and Frame(0).vec(3, 4) == (3, 4),
+       "đổi điểm / quãng kéo giữa ảnh chụp và hệ trục của chuột (hai chiều xoay ngang + máy dọc)")
+    probe = np.arange(H * W * 3, dtype=np.uint32).astype(np.uint8).reshape(W, H, 3)       # một ảnh ngang bất kỳ
+    ok(all((Frame(r, H, W).raw(Frame(r, H, W).dev(probe)) == probe).all() for r in ("ccw", "cw", 0)) and Frame("ccw", H, W).dev(probe).shape[:2] == (H, W),
+       "quay ảnh về hệ trục chuột rồi quay trả lại → đúng ảnh cũ")
+    for rot in ("ccw", "cw"):
+        side = "trên-phải" if rot == "ccw" else "dưới-trái"
+        for name, (u, v) in {"giữa màn": (186, 831), "gần đáy": (400, 1150), "sát mép": (700, 600)}.items():
+            n, w = lrig(rot)
+            X, Y = n.e.to_img(u, v)
+            got = n.tap_at(X, Y)
+            c = w.clicks[0] if w.clicks else None
+            ok(got is True and len(w.clicks) == 1 and abs(c[0] - u) <= 14 and abs(c[1] - v) <= 14 and n._fr.rot == rot,
+               "máy ngang (góc «về» ở %s của ảnh), điểm %s: tự nhận ra hướng, bấm đúng 1 lần đúng chỗ" % (side, name), {"ok": got, "clicks": w.clicks, "rot": n._fr.rot})
+        n, w = lrig(rot)
+        got = n.tap_text("Wi-Fi")
+        ok(got is True and len(w.clicks) == 1 and abs(w.clicks[0][0] - 186) <= 14 and abs(w.clicks[0][1] - 831) <= 14 and n.e.verified and all(sz == (W, H) for sz in n.e.verified),
+           "máy ngang (%s): bấm vào chữ — toạ độ tìm trên ảnh ngang, hàm kiểm «chữ còn đó không» nhận lại ảnh NGANG như ảnh chụp" % side, (w.clicks, n.e.verified[:2]))
+        n, w = lrig(rot, label_until=2)
+        ok(n.tap_text("Wi-Fi") is False and w.clicks == [], "máy ngang (%s): chữ biến mất trước khi con trỏ tới → KHÔNG bấm" % side, w.clicks)
+        n, w = lrig(rot)
+        X, Y = n.e.to_img(636, 468)
+        ok(n.hold_at(X, Y, 1.3) is True and w.gestures and w.gestures[0][0] == "hold" and abs(w.gestures[0][1] - 636) <= 14 and abs(w.gestures[0][2] - 468) <= 14,
+           "máy ngang (%s): bấm giữ đúng chỗ" % side, w.gestures)
+        # vuốt: hướng nói theo ẢNH (trái / phải / lên / xuống như người nhìn màn hình ngang), chuột phải kéo theo hệ trục của nó
+        for d, ui in {"left": (-1, 0), "right": (1, 0), "up": (0, -1), "down": (0, 1)}.items():
+            n, w = lrig(rot)
+            got = n.flick(d)
+            g = w.gestures[0] if w.gestures else None
+            want = Frame(rot, H, W).vec(*ui)                # hướng chuột phải kéo
+            good = got is True and g and g[0] == "swipe" and (g[3] * want[0] > 0 or (want[0] == 0 and g[3] == 0)) and (g[4] * want[1] > 0 or (want[1] == 0 and g[4] == 0))
+            ok(good, "máy ngang (%s): vuốt %s trên màn hình → chuột kéo đúng hướng theo trục của nó %s" % (side, d, want), g)
+        n, w = lrig(rot)
+        x1, y1 = n.e.to_img(375, 600)
+        n.swipe(x1, y1, x1 + 300, y1)                       # kéo 300px sang PHẢI trên ảnh ngang
+        g = w.gestures[0] if w.gestures else None
+        want = Frame(rot, H, W).vec(300, 0)
+        ok(g and g[0] == "swipe" and (g[3], g[4]) == (round(want[0] * Nav.SWIPE_GAIN), round(want[1] * Nav.SWIPE_GAIN)) and abs(g[1] - 375) <= 14 and abs(g[2] - 600) <= 14,
+           "máy ngang (%s): vuốt theo toạ độ — điểm đầu đúng chỗ, quãng kéo đổi sang trục của chuột" % side, g)
+    n, w = lrig("ccw", visible=False)
+    ok(n.tap_at(600, 300) is False and w.clicks == [], "máy ngang mà KHÔNG thấy con trỏ rời góc nào (không biết ảnh xoay chiều nào) → không bấm", w.clicks)
+    n, w = lrig("ccw")
+    ok(n.tap_at(H + 50, 20) is False and n.tap_at(20, W + 50) is False and w.clicks == [], "điểm cần bấm nằm ngoài màn hình → không bấm")
+    n, w = lrig("ccw")
+    n.tap_at(*n.e.to_img(186, 831))
+    n.e = FakeEyes(w)                                       # app trở lại màn hình dọc
+    w.clicks.clear()
+    ok(n.tap_at(186, 831) is True and n._fr.rot == 0 and abs(w.clicks[0][0] - 186) <= 14 and abs(w.clicks[0][1] - 831) <= 14, "xoay ngang rồi về lại dọc: mỗi lần bấm tự xác định lại hướng", (n._fr.rot, w.clicks))
+
+    class Both(Landscape):                                  # ảnh gây nhầm: «con trỏ» hiện ở cả hai góc cùng lúc
+        def screenshot(self):
+            img = super().screenshot().copy()
+            if self.w.shots >= 2:
+                cv2.circle(img, (60, W - 60), R, (70, 70, 70), -1)
+            return img
+    n, w = lrig("ccw")
+    n.e = Both(w, "ccw")
+    ok(n.tap_at(600, 300) is False and w.clicks == [], "không phân định được hướng (dấu hiệu con trỏ ở hai góc) → KHÔNG bấm, không đoán", w.clicks)
+
     print("\n== 3d. Lệnh xuống board: gửi liền mạch, bấm giữ luôn nhả, không bấm đôi ==")
     class FakeSerial:
         """Cổng serial giả: trả "OK <lệnh>" cho mỗi dòng nhận được. `feed` = các MẨU dữ liệu board «nhả» dần

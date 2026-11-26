@@ -275,7 +275,51 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   — bị bỏ qua và báo rõ; ô «Chạy trên máy» hiện «⚠ dừng chờ kiểm tra» và không tích được. Chỉ «Chạy lại» của chính nhóm nhận đơn đó (tự đăng xuất + kiểm game
   sạch trước; nếu lần chạy lại dừng sớm trước khi kiểm xong thì máy vẫn đang giữ), hoặc người vận hành bấm **«Đã kiểm tra xong»** trên máy đó, mới gỡ được.
   **Bấm Dừng không còn là lời xác nhận** (trước đây Dừng trên máy đã dừng = xác nhận); xoá nhóm còn máy đang giữ bị từ chối.
-- Nhóm ở chế độ **nhận đơn API** (cũ, nhận đơn từ gateway) vẫn hoạt động như trước; giao diện hiện chưa có chỗ tạo loại nhóm này.
+- **Kịch bản nhận đơn** (cách chạy thứ ba của kịch bản: «nhận đơn từ gateway»): lộ trình của nó là cả vòng đời một đơn —
+  ① **Chờ đơn từ gateway** (chọn pool mà kịch bản phục vụ) → ② **Giữ chỗ cho máy** (tool xin đơn; gateway giao cho đúng một máy) → các giai đoạn
+  **Đăng nhập · Nhập OTP · Vào danh sách gói · Mua một gói · Sau mỗi lần mua** → **Báo kết quả cho gateway** → **Kết thúc đơn**.
+  Hai trạm đầu và trạm «báo kết quả» là việc tool tự làm với gateway (không sửa / xoá được); mỗi giai đoạn có danh sách bước riêng, nút
+  «Thêm bước» và «Thử» riêng. Giai đoạn chưa có bước riêng thì máy chạy bước cấu hình ở pool trên gateway («dùng N bước của gateway»); luật nhận
+  diện (chưa đăng nhập / đăng nhập thành công / nạp thành công…) và gói nạp vẫn lấy từ pool.
+  - Nó chạy bằng **đúng bộ máy của chế độ nhận đơn** (`Runner._run_api`): cùng vòng xin đơn, sổ đơn, «dừng chờ kiểm tra», nhịp tim — nên **bản web
+    không chạy được** (từ chối như nhóm nhận đơn), máy đang nhận đơn bằng kịch bản được coi là máy của khách, và máy đang giữ chỉ «Chạy lại» được
+    bằng CHÍNH kịch bản đó. Bấm «Chạy» ở app cửa sổ có hỏi lại vì máy sẽ nhận ĐƠN THẬT. `list_groups` (AI / dòng lệnh) ghi «NHẬN ĐƠN THẬT từ pool …».
+  - Đổi kịch bản thường sang «nhận đơn»: các bước đang có thành giai đoạn «Đăng nhập». Đổi ngược lại: nếu chỉ «Đăng nhập» có bước thì chúng quay
+    về làm danh sách bước thường; cấu hình nhận đơn đã soạn vẫn được giữ.
+  - «Thử» giai đoạn «Mua một gói» có hỏi lại (bấm mua thật). Thời gian chờ đăng nhập / chờ kết quả mua hiện dùng mặc định (45 / 60 giây).
+  - **Dữ liệu của đơn (tài khoản, mật khẩu, OTP, gói)** đi vào bước qua ô bấm **«Lấy từ đơn»** trong hộp thoại «Gõ chữ»: bấm «Email Konami ID» là
+    bước gõ `{{username}}`, «Mật khẩu» là `{{password}}` — lúc chạy tool thay bằng giá trị trong đơn của khách (nhật ký chỉ ghi tên, không ghi giá
+    trị). Các ô này chính là **«trường đăng nhập» của pool trên gateway** (trang quản trị → Pool); muốn thêm trường thì thêm ở đó. Chưa đọc được
+    pool thì tool không đoán tên (bước dùng một trường mà đơn không có sẽ làm dừng đơn). Giai đoạn «Nhập OTP» có thêm `{{otp}}`; «Mua một gói» và
+    «Sau mỗi lần mua» có thêm `{{package.ocr_text}}` / `{{package.price_text}}` / `{{package.name}}` — các bước «tìm chữ» ở hai giai đoạn đó cũng có ô
+    bấm cho chữ của gói (không bao giờ gợi ý tài khoản / mật khẩu cho bước tìm chữ). «Thử» một bước / giai đoạn có dùng dữ liệu của đơn thì tool
+    hỏi giá trị thử (không lưu).
+- **«Bấm vào chữ» / «Bấm giữ vào chữ» chờ chữ hiện ra** (`"timeout": N` giây, tối đa 60): chữ chưa có thì máy nhìn lại mỗi giây tới hết N giây rồi
+  mới báo không thấy; thấy ở lần nhìn lại thì chờ màn hình đứng yên rồi mới lấy vị trí. Bước **mới** thêm trong trình sửa mặc định chờ 5 giây; bước
+  cũ không ghi gì vẫn nhìn đúng một lần (không tự đổi hành vi của kịch bản đang chạy đơn). Lý do — đo trên eFootball (iPhone 8):
+  - màn hình game chuyển cảnh mất 1–3 giây: bấm «Data Transfer» xong, 0,9 giây sau màn kế chưa vẽ xong nên bước bấm chữ kế tiếp «không thấy chữ»;
+  - khởi động mới, game mất **~24 giây** mới tới màn tiêu đề (màn đen → logo KONAMI → «THE PITCH IS OURS» → tiêu đề). Bước bấm theo **toạ độ** luôn
+    báo ✓ dù bấm vào đâu, nên trước nó phải có «Chờ thấy chữ» của màn hình cần tới (vd `Konami Digital Entertainment`, tối đa 60 giây);
+  - **«Mở app» chỉ đưa game ra trước, không khởi động lại**: game đang nằm ở màn nào từ lượt trước thì vẫn ở màn đó (vd «Data Transfer»), kịch bản
+    chờ màn tiêu đề sẽ hết giờ. Hiện chưa có bước «đóng hẳn app» — kịch bản phải tự đưa game về màn đầu (vd bấm «Back») ở giai đoạn «Kết thúc đơn».
+- **Bước có điều kiện «Nếu thấy chữ … thì bấm …»** (`tap_if`) — cho thứ lúc có lúc không ngay sau một bước (hộp thoại Game Center, hỏi mật khẩu,
+  thông báo, quảng cáo). Một bước chứa được NHIỀU trường hợp, gõ mỗi dòng một cái: `thấy chữ gì => bấm chữ gì` (bỏ «=> …» thì bấm chính chữ đó;
+  nhiều cách viết ngăn bằng `|`). Máy nhìn màn hình tối đa «chờ … giây»: không thấy trường hợp nào → bước XONG, kịch bản đi tiếp; thấy → bấm rồi nhìn
+  tiếp cho tới khi không còn gì (các hộp thoại hay hiện nối nhau). Một trường hợp chỉ tính là «xảy ra» khi thấy **cả chữ của nó lẫn chữ cần bấm**:
+  thấy chữ mà chưa có nút thì xét trường hợp kế và nhìn lại; hết thời gian chờ vẫn vậy, hoặc bấm 2 lần vẫn còn → bước hỏng (màn hình đang bị chắn,
+  đi tiếp là bấm nhầm). Vì thế **mỗi trang ghi một dòng với chữ riêng của trang đó** — đo trên iPhone 8: lần đầu mở eFootball, iOS hiện «Tính năng
+  mới trong Game Center» (chỉ có «Tiếp tục») rồi mới tới «Chào mừng đến Game Center» (có «Hủy»); ghi chung một dòng «Game Center => Hủy» thì trang
+  đầu không có gì để bấm. Dữ liệu: `{"type":"tap_if","cases":[{"text":"Tính năng mới","tap":"Tiếp tục"},{"text":"Chào mừng đến","tap":"Hủy"}],"timeout":8}`
+  (một trường hợp thì ghi gọn `text` / `tap`). iOS thôi hỏi Game Center sau vài lần bấm «Hủy» cho cùng một game, nên máy đã chạy lâu sẽ không còn
+  gặp — khi đó bước tốn trọn thời gian chờ rồi bỏ qua. Trong kịch bản nhận đơn, bước này ở đầu giai đoạn «Đăng nhập» được coi là thuộc **đoạn mở game** —
+  nó cũng chạy khi máy kiểm «game chưa đăng nhập» trước lúc nhận đơn (không dọn hộp thoại thì không nhìn thấy gì). Đừng dùng nó để bấm vào thứ đụng
+  tới tài khoản của khách.
+- **Máy xoay NGANG (game)**: chuột Bluetooth luôn chạy theo trục DỌC của máy — «về góc» ghim con trỏ ở góc trên-phải (hoặc dưới-trái) của ảnh chụp
+  ngang, di +x làm con trỏ đi xuống trên ảnh. `nav.tap_at` tự nhận ra hướng ở mỗi lần bấm (xem con trỏ rời góc nào), quay ảnh về hệ trục của chuột để
+  đo, đổi điểm cần bấm và hướng vuốt sang hệ đó (`nav.Frame`). Không phân định được hướng → không bấm. Đo trên iPhone 8 đang mở eFootball: tới đích
+  giữa màn hình ngang trong ~6 giây. Toạ độ trong kịch bản vẫn là toạ độ của ảnh chụp như người dùng thấy.
+- Nhóm ở chế độ **nhận đơn API** (kiểu cũ: cả nhóm nhận đơn, bước chia 6 giai đoạn ở mức nhóm) vẫn hoạt động như trước; giao diện không còn chỗ
+  tạo loại nhóm này — dùng «kịch bản nhận đơn» thay thế.
 - **Tool tự báo cho gateway** (`app/presence.py` → `POST /api/tool/sync`; gateway ở ngoài mạng nên chỉ tool gọi lên được): cứ ~20 giây và ngay khi có
   thay đổi, tool gửi (a) **máy nào đang rảnh ở kịch bản nào** — trạng thái từng máy + các kịch bản của mọi nhóm máy đang ở — và (b) **danh mục kịch bản**
   (tên, nhóm, cách chạy, số bước, tên các `{{biến}}`, dàn ý loại bước + ghi chú; chỉ gửi khi đổi).
@@ -294,11 +338,11 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
     - tiến trình đang báo chỉ biết việc của CHÍNH NÓ: mở bản web trước rồi mới mở app cửa sổ thì app cửa sổ không báo, và gateway không thấy máy nào
       app cửa sổ đang chạy kịch bản / đang dừng (chỉ đơn dở trong sổ là thấy). Khi chạy thật chỉ mở MỘT trong hai;
     - sổ đơn (`api_state.json`) bị hỏng thì bị đọc như «không có đơn dở» (ghi sổ là ghi trọn nên hiếm; gateway vẫn tự chặn máy nó biết đang giữ đơn).
-  - Kiểm bằng `app/tests/test_presence.py` (107 mục, có chạy với gateway thật). Hiện mới là BÁO TIN: gateway chưa giao việc theo kịch bản,
+  - Kiểm bằng `app/tests/test_presence.py` (115 mục, có chạy với gateway thật). Hiện mới là BÁO TIN: gateway chưa giao việc theo kịch bản,
     và kịch bản chạy tay chưa thế `{{biến}}` bằng dữ liệu.
 - MCP / CLI: `list_groups` liệt kê kịch bản (tên, số bước, cách chạy — không lộ nội dung bước); `start_run` nhận `script` (bỏ trống được khi nhóm
   chỉ có 1 kịch bản; nhóm nhiều kịch bản mà không nêu thì bị từ chối).
-- Kiểm bằng `./.venv/bin/python app/tests/test_groups.py` (111 mục: lưu / chuẩn hoá kịch bản, máy nhiều nhóm, một máy một kịch bản, dừng máy / tiếp tục (cả lúc máy đang nghỉ), dừng đúng việc, dừng tất cả, máy đang giữ chờ kiểm tra). Bộ nút trên giao diện: `app/tests/test_ui_controls.py` (12 mục, chạy mã `app.js` bằng `node` trên mọi tổ hợp trạng thái).
+- Kiểm bằng `./.venv/bin/python app/tests/test_groups.py` (133 mục: lưu / chuẩn hoá kịch bản, kịch bản nhận đơn, máy nhiều nhóm, một máy một kịch bản, dừng máy / tiếp tục (cả lúc máy đang nghỉ), dừng đúng việc, dừng tất cả, máy đang giữ chờ kiểm tra). Bộ nút trên giao diện: `app/tests/test_ui_controls.py` (12 mục, chạy mã `app.js` bằng `node` trên mọi tổ hợp trạng thái).
 
 ### Cách hoạt động
 - **App đang mở** → mọi lệnh của AI/CLI được chuyển cho app thực hiện (app là nơi DUY NHẤT giữ cổng serial của board).
@@ -338,6 +382,7 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
 | `app/control.py` | bộ công cụ dùng chung (đọc màn hình, bấm, gõ, vuốt, chạy nhóm…), máy chủ trong app, chế độ tự mở cổng |
 | `app/cli.py`, `farm` | dòng lệnh |
 | `app/fastshot.py` | chụp màn hình qua một kết nối giữ mở (~0,33s/ảnh thay vì ~1,3s) |
+| `app/ocr.py` | đọc chữ bằng bộ có sẵn của macOS (Apple Vision, nạp bằng pyobjc-core, không cài thêm). Tesseract không đọc được chữ trên nền nhiều màu của game (màn hình tiêu đề eFootball: 0 dòng) còn Vision đọc được (~0,3–0,4s). `eyes.read_text` GHÉP hai bộ (riêng kiểu đọc một dòng `psm` — phép thử bàn phím — giữ tesseract); `find_text` / `ocr_lines` dùng Vision trước, không thấy thì hỏi tesseract. Vision không «sửa chính tả». Đặt `IPF_OCR=tesseract` để tắt Vision. |
 | `app/web/ai.js` | trang «Kết nối AI» |
 
 ### Kiểm thử
@@ -346,6 +391,8 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
 ./.venv/bin/python app/tests/test_nav.py          # định vị con trỏ, bấm vòng kín, lệnh xuống board
 ./.venv/bin/python app/tests/test_api_mode.py     # chế độ nhận đơn (gateway tạm + iPhone giả)
 ./.venv/bin/python app/tests/test_presence.py     # tool tự báo gateway: máy rảnh ở kịch bản nào + danh mục kịch bản (gateway tạm nếu có php)
+./.venv/bin/python app/tests/test_ocr.py          # bộ đọc chữ: Apple Vision (chữ trên nền màu của game) ghép với tesseract
+./.venv/bin/python app/tests/test_ui_steps.py     # trình sửa kịch bản (chạy mã giao diện bằng node): câu của từng bước, ô «Lấy từ đơn», đổi cách chạy
 uv run --python 3.12 --with mcp app/tests/interop_sdk.py     # kiểm chéo với client của SDK MCP chính thức
 ./.venv/bin/python app/tests/smoke_device.py iPhoneFarm-01   # máy THẬT (tắt app trước): các bước của chế độ nhận đơn
 ./.venv/bin/python app/tests/device_gestures.py iPhoneFarm-01  # máy THẬT (tắt app trước): bấm, lật trang, cuộn, bấm giữ

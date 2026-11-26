@@ -35,11 +35,11 @@ final class Admin
         }
         if ($a === 'scripts' && $m === 'GET' && !isset($s[1])) {
             view('scripts', ['user' => $user, 'nav' => 'scripts', 'title' => 'Kịch bản & máy', 'tools' => Tools::board(),
-                             'migrated' => Schema::version() >= 3, 'hasToolKey' => (int) Db::val("SELECT COUNT(*) FROM api_keys WHERE kind='tool'") > 0]);
+                             'migrated' => Schema::version() >= Schema::LATEST, 'pools' => array_column(Pools::all(), null, 'code'), 'hasToolKey' => (int) Db::val("SELECT COUNT(*) FROM api_keys WHERE kind='tool'") > 0]);
         }
         if ($a === 'pools') {
             if ($m === 'GET' && !isset($s[1])) {
-                view('pools', ['user' => $user, 'nav' => 'pools', 'title' => 'Pool', 'pools' => Pools::all()]);
+                view('pools', ['user' => $user, 'nav' => 'pools', 'title' => 'Pool', 'pools' => Pools::all(), 'served' => Tools::scriptsByPool()]);
             }
             if ($m === 'GET' && ($s[1] ?? '') === 'new') {
                 self::poolForm($user, null);

@@ -395,7 +395,7 @@
                     <input id="script-name" class="ed-name" placeholder="Tên kịch bản" maxlength="80" aria-label="Tên kịch bản" title="Bấm để đổi tên kịch bản">
                   </div>
                   <div id="script-phase-title" class="ed-phase" hidden></div>
-                  <span class="ed-dirty" id="ed-dirty" hidden>Có thay đổi chưa lưu</span>
+                  <span class="ed-dirty" id="ed-dirty" title="Có thay đổi chưa lưu" hidden>Có thay đổi chưa lưu</span>
                   <button class="btn btn-sm btn-primary" id="btn-save"><i class="ti tabler-device-floppy me-1"></i>Lưu kịch bản</button>
                 </header>
 
@@ -406,6 +406,7 @@
                     <select id="script-mode" class="form-select form-select-sm ed-run-mode" aria-label="Cách chạy">
                       <option value="once">1 lần</option>
                       <option value="loop">lặp lại</option>
+                      <option value="orders">nhận đơn từ gateway</option>
                     </select>
                     <span class="ed-run-loops" id="script-loops-wrap" hidden>
                       <input id="script-loops" type="number" min="0" max="100000" value="0" class="form-control form-control-sm" aria-label="Số vòng (0 = lặp vô hạn)" title="Số vòng — 0 là lặp vô hạn">
@@ -433,6 +434,8 @@
                       <div class="api-hint mb-3" id="api-phase-hint"></div>
                     </div>
 
+                    <!-- kịch bản nhận đơn: còn thiếu gì thì máy chưa nhận đơn được -->
+                    <div class="api-warn mb-3" id="orders-warn" hidden></div>
                     <ol id="steps" class="flow"></ol>
                     <p class="flow-empty" id="steps-empty">Chưa có bước nào. Chọn một hành động bên dưới để bắt đầu.</p>
 
@@ -445,6 +448,7 @@
                           <div class="pal-title">Chạm</div>
                           <button class="pal-item" data-add="tap_text"><i class="ti tabler-hand-finger"></i>Bấm vào chữ</button>
                           <button class="pal-item" data-add="pick" title="Bật «bấm vào ảnh» rồi bấm lên ảnh màn hình để lấy toạ độ"><i class="ti tabler-pointer"></i>Bấm theo vị trí trên ảnh</button>
+                          <button class="pal-item" data-add="tap_if" title="Cho thứ lúc có lúc không: hộp thoại, thông báo, quảng cáo…"><i class="ti tabler-arrows-split"></i>Nếu thấy chữ thì bấm</button>
                           <button class="pal-item" data-add="hold_text"><i class="ti tabler-hand-stop"></i>Bấm giữ vào chữ</button>
                           <button class="pal-item" data-add="hold"><i class="ti tabler-hand-stop"></i>Bấm giữ theo toạ độ</button>
                           <button class="pal-item" data-add="swipe" title="Lật trang / cuộn"><i class="ti tabler-hand-move"></i>Vuốt</button>

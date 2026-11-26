@@ -175,10 +175,11 @@ def save_settings(patch):
 # đoạn đó dùng các bước cấu hình trên gateway (pool), có thì ghi đè riêng cho nhóm máy này.
 def api_defaults(api=None):
     """Chuẩn hoá khối cấu hình API của nhóm (thiếu gì bù mặc định)."""
-    api = dict(api or {})
-    steps = dict(api.get("steps") or {})
+    api = dict(api) if isinstance(api, dict) else {}
+    steps = api.get("steps") if isinstance(api.get("steps"), dict) else {}
     api["pool"] = str(api.get("pool") or "")
-    api["steps"] = {ph: list(steps.get(ph) or []) for ph in API_PHASES}
+    # mỗi giai đoạn là một DANH SÁCH các bước (dict); dữ liệu rác (chuỗi, số, phần tử không phải bước) bị bỏ — không để nó tới bộ chạy
+    api["steps"] = {ph: [x for x in steps.get(ph) if isinstance(x, dict)] if isinstance(steps.get(ph), list) else [] for ph in API_PHASES}
 
     def _num(key, default, lo, hi):
         try:
@@ -193,7 +194,10 @@ def api_defaults(api=None):
 
 def norm_scripts(group):
     """Chuẩn hoá danh sách kịch bản của nhóm. MỖI kịch bản tự mang cách chạy của nó:
-         {id, name, steps:[...], mode:"once"|"loop", loops:int (chỉ khi lặp; 0 = vô hạn)}.
+         {id, name, steps:[...], mode:"once"|"loop"|"orders", loops:int (chỉ khi lặp; 0 = vô hạn)}.
+    Cách chạy «orders» = KỊCH BẢN NHẬN ĐƠN từ gateway: máy đứng chờ → gateway có đơn → tool giữ chỗ (xin đơn) cho máy → chạy các bước theo
+    giai đoạn của đơn. Cấu hình nằm ở khoá `orders` (cùng dạng với `api` của nhóm nhận đơn: pool + bước từng giai đoạn + thời gian chờ) và
+    được giữ lại cả khi kịch bản tạm chuyển sang cách chạy khác.
     Nhóm cũ (chỉ có `steps`, chưa có khoá `scripts`) → thành 1 kịch bản «Kịch bản 1» (id cố định «k1»; chạy theo `mode`/`loops` cũ của nhóm).
     Có khoá `scripts` (kể cả rỗng) thì danh sách đó là chuẩn — không dựng lại từ `steps` cũ. Nhóm không còn `steps` / `active_script`."""
     raw = group.get("scripts")
@@ -211,12 +215,15 @@ def norm_scripts(group):
         seen.add(sid)
         name = str(s.get("name") or "").strip()[:80] or "Kịch bản %d" % (len(scripts) + 1)
         steps = s.get("steps")
-        mode = "loop" if s.get("mode") == "loop" else "once"
+        mode = s.get("mode") if s.get("mode") in ("loop", "orders") else "once"
         try:
             loops = max(0, min(100000, int(s.get("loops", 0 if mode == "loop" else 1))))
         except (TypeError, ValueError):
             loops = 0 if mode == "loop" else 1
-        scripts.append({"id": sid, "name": name, "steps": list(steps) if isinstance(steps, list) else [], "mode": mode, "loops": loops})
+        sc = {"id": sid, "name": name, "steps": list(steps) if isinstance(steps, list) else [], "mode": mode, "loops": loops}
+        if mode == "orders" or isinstance(s.get("orders"), dict):
+            sc["orders"] = api_defaults(s.get("orders") if isinstance(s.get("orders"), dict) else None)
+        scripts.append(sc)
     group["scripts"] = scripts
     group.pop("steps", None)
     group.pop("active_script", None)

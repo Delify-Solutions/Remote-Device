@@ -4,6 +4,7 @@
  * @var list<array> $tools  Tools::board()
  * @var bool $migrated
  * @var bool $hasToolKey
+ * @var array<string, array> $pools  mã pool → pool (để nói rõ kịch bản nhận đơn đang phục vụ pool nào)
  */
 $now = time();
 $machine = static function (array $d): string {
@@ -47,7 +48,12 @@ $machine = static function (array $d): string {
       <tr>
         <td><span class="fw-medium text-heading"><?= e($s['name']) ?></span>
           <div class="small text-body-secondary">nhóm <?= e($s['group_name'] ?: $s['group_id']) ?> · <span class="mono"><?= e($s['uid']) ?></span></div></td>
-        <td class="small text-nowrap"><?= $s['run_mode'] === 'loop' ? 'lặp ' . ((int) $s['loops'] > 0 ? (int) $s['loops'] . ' vòng' : 'vô hạn') : '1 lần' ?></td>
+        <td class="small"><?php if ($s['run_mode'] === 'orders'): $pc = (string) ($s['pool_code'] ?? ''); $pl = $pools[$pc] ?? null; ?>
+            <span class="badge bg-label-info">nhận đơn</span>
+            <?php if ($pc === ''): ?><div class="text-warning">chưa chọn pool</div>
+            <?php elseif (!$pl): ?><div class="text-danger" title="Tool khai kịch bản này phục vụ pool «<?= e($pc) ?>» nhưng gateway không có pool đó.">pool <span class="mono"><?= e($pc) ?></span> không có</div>
+            <?php else: ?><div>pool <a class="mono" href="/admin/pools/<?= (int) $pl['id'] ?>"><?= e($pc) ?></a><?= (int) $pl['active'] ? '' : ' <span class="text-warning">(tạm dừng)</span>' ?></div><?php endif; ?>
+          <?php else: ?><span class="text-nowrap"><?= $s['run_mode'] === 'loop' ? 'lặp ' . ((int) $s['loops'] > 0 ? (int) $s['loops'] . ' vòng' : 'vô hạn') : '1 lần' ?></span><?php endif; ?></td>
         <td><?php if ($ready): ?><span title="<?= e(implode(' → ', array_column($s['outline'], 'type'))) ?>"><?= (int) $s['step_count'] ?></span>
             <?php else: ?><span class="badge bg-label-warning" title="Kịch bản chưa có bước nào nên chưa chạy được.">chưa có bước</span><?php endif; ?></td>
         <td class="small"><?php if ($s['vars']): foreach ($s['vars'] as $v): ?><span class="badge bg-label-secondary mono me-1">{{<?= e($v) ?>}}</span><?php endforeach; else: ?><span class="text-body-secondary">—</span><?php endif; ?></td>

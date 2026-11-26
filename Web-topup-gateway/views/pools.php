@@ -8,7 +8,9 @@
   <table class="table table-hover mb-0"><thead><tr><th>Pool</th><th>Mã (dùng trong API)</th><th>Đăng nhập</th><th>OTP</th><th>Gói</th><th>Hàng đợi</th><th>Trạng thái</th><th></th></tr></thead><tbody>
   <?php foreach ($pools as $p): ?>
     <tr>
-      <td><a class="fw-medium" href="/admin/pools/<?= (int) $p['id'] ?>"><?= e($p['name']) ?></a><div class="small text-body-secondary"><?= e($p['game']) ?></div></td>
+      <td><a class="fw-medium" href="/admin/pools/<?= (int) $p['id'] ?>"><?= e($p['name']) ?></a><div class="small text-body-secondary"><?= e($p['game']) ?></div>
+        <?php foreach (($served[$p['code']] ?? []) as $sv): ?><div class="small" title="Kịch bản nhận đơn do tool «<?= e($sv['tool']) ?>» khai là phục vụ pool này"><i class="ti tabler-device-mobile-code me-1"></i><?= e($sv['name']) ?>
+          <span class="text-body-secondary">· <?= $sv['fresh'] ? (int) $sv['idle'] . ' máy rảnh' : 'tool mất kết nối' ?></span></div><?php endforeach; ?></td>
       <td class="mono"><?= e($p['code']) ?></td>
       <td class="small"><?= e(implode(', ', array_column($p['cfg']['login_fields'], 'label')) ?: '—') ?></td>
       <td><?= $p['cfg']['otp']['enabled'] ? '<span class="badge bg-label-warning">có · ' . (int) $p['cfg']['otp']['timeout'] . 's</span>' : '<span class="badge bg-label-secondary">không</span>' ?></td>

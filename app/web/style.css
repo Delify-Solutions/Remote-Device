@@ -100,6 +100,7 @@
 .modal-select { width: 100%; padding: .5rem .7rem; border: 1px solid var(--bs-border-color);
   border-radius: 8px; background: var(--bs-body-bg); color: var(--bs-body-color); font-size: .9rem; }
 .modal-select:focus { outline: none; border-color: var(--bs-primary); }
+.modal-area { font-family: var(--bs-font-monospace); font-size: .85rem; line-height: 1.5; resize: vertical; min-height: 5.5rem; white-space: pre; }
 
 /* ---- compact table (two-up device/iphone layout) ---- */
 .table-compact > :not(caption) > * > * { padding: .5rem .75rem; vertical-align: middle; }
@@ -317,6 +318,17 @@
   border-radius: var(--bs-border-radius); background: var(--bs-body-bg); color: var(--bs-body-color);
 }
 .modal-box input:focus { outline: none; border-color: var(--bs-primary); }
+/* Hàng ô bấm «Lấy từ đơn» dưới một ô nhập: bấm là chèn dữ liệu của đơn (tài khoản, mật khẩu…) vào chỗ con trỏ */
+.modal-vars { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin-top: .5rem; }
+.modal-vars-title { font-size: .8rem; color: var(--bs-secondary-color); margin-right: .1rem; }
+.modal-vars-note { font-size: .8rem; color: var(--bs-secondary-color); }
+.var-chip {
+  display: inline-flex; align-items: center; gap: .3rem; padding: .2rem .65rem; font-size: .82rem; line-height: 1.4; cursor: pointer;
+  border: 1px solid var(--bs-border-color); border-radius: 999px; background: transparent; color: var(--bs-body-color);
+}
+.var-chip .ti { font-size: .85rem; color: var(--bs-secondary-color); }
+.var-chip:hover, .var-chip:focus-visible { border-color: var(--bs-primary); background: var(--bs-primary-bg-subtle); color: var(--bs-primary); outline: 0; }
+.var-chip:hover .ti, .var-chip:focus-visible .ti { color: var(--bs-primary); }
 
 /* ---- overview (tổng quan) ---- */
 .ov-os {
@@ -465,6 +477,11 @@ html.ipf-menu-off.layout-navbar-fixed .layout-navbar.navbar-detached { inline-si
 .ed-phase { flex: 1 1 8rem; min-width: 0; font-size: 1.05rem; font-weight: 600; color: var(--bs-heading-color); }
 .ed-dirty { font-size: .8rem; color: var(--bs-warning); white-space: nowrap; }
 .ed-dirty::before { content: ""; display: inline-block; width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; margin-right: .35rem; vertical-align: .05rem; }
+.ed-head .btn { white-space: nowrap; flex: 0 0 auto; }
+@container (max-width: 640px) {                       /* khung hẹp: chỉ còn chấm cam (rê chuột xem chữ) để tên kịch bản không bị bóp */
+  .ed-dirty { font-size: 0; }
+  .ed-dirty::before { margin-right: 0; width: .55rem; height: .55rem; }
+}
 
 /* ---- dải «Chạy [1 lần] trên [máy…]» ---- */
 .ed-run { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem 1rem; flex-wrap: wrap;
@@ -546,6 +563,28 @@ html.ipf-menu-off.layout-navbar-fixed .layout-navbar.navbar-detached { inline-si
 .flow-step:last-child .flow-ins { display: none; }                      /* sau bước cuối đã có nút «Thêm bước» */
 .flow-empty { margin: 0 0 .6rem; color: var(--bs-secondary-color); font-size: .9rem; }
 
+/* ---- kịch bản NHẬN ĐƠN: trạm cố định của gateway + đầu mỗi giai đoạn của đơn ---- */
+.flow-fixed .flow-node { border-color: var(--bs-info); color: var(--bs-info); }
+.flow-fixed .flow-ico { color: var(--bs-info); }
+.flow-fixed .flow-body { cursor: default; }
+.flow-fixed:hover { background: transparent; }
+.flow-note { margin: .2rem 0 0 1.55rem; font-size: .8rem; color: var(--bs-secondary-color); }
+.flow-pool { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: .35rem 0 0 1.55rem; font-size: .85rem; }
+.flow-pool .form-select { width: auto; max-width: 100%; }
+.flow-sec { position: relative; padding: .15rem .35rem .85rem 2.6rem; }
+.flow-sec::before { content: ""; position: absolute; left: calc(.1rem + .875rem - 1px); top: -.1rem; bottom: -.1rem; width: 2px; background: var(--bs-border-color); }
+.flow-sec-row { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; font-size: .82rem; }
+.flow-sec-title { font-size: .95rem; font-weight: 600; color: var(--bs-heading-color); }
+.flow-sec-acts { margin-left: auto; display: inline-flex; gap: .25rem; }
+.flow-sec-btn { display: inline-flex; align-items: center; gap: .25rem; border: 0; background: transparent; color: var(--bs-primary); font-size: .82rem;
+  padding: .12rem .45rem; border-radius: .4rem; white-space: nowrap; }
+.flow-sec-btn:hover, .flow-sec-btn:focus-visible { background: var(--bs-primary-bg-subtle); outline: 0; }
+.flow-sec-help { margin-top: .15rem; font-size: .78rem; color: var(--bs-secondary-color); max-width: 60ch; }
+.flow-slot { position: relative; list-style: none; }
+.flow-slot.open { padding: 0 .35rem 1rem 0; }
+.flow-slot.open::before { content: ""; position: absolute; left: calc(.1rem + .875rem - 1px); top: -.1rem; bottom: -.1rem; width: 2px; background: var(--bs-border-color); }
+.flow-slot > .palette { margin-top: 0; }
+
 /* nút «Thêm bước» — trạm cuối của lộ trình */
 .flow-add { position: relative; }
 .flow-add-btn { display: inline-flex; align-items: center; gap: .75rem; border: 0; background: transparent; padding: .1rem .6rem .1rem .1rem;
@@ -570,6 +609,10 @@ html.ipf-menu-off.layout-navbar-fixed .layout-navbar.navbar-detached { inline-si
 .ed-screen #screen { max-height: min(62vh, 560px); }
 .ed-screen-foot { display: flex; flex-direction: column; gap: .35rem; margin-top: .8rem; font-size: .85rem; }
 .ed-screen-foot .form-check-label { font-size: .85rem; }
+/* ảnh chụp NGANG (game chạy ngang): khung màn hình lên trên, chiếm cả bề ngang — ảnh đủ lớn để bấm chọn vị trí */
+.ed-grid.is-landscape { grid-template-columns: minmax(0, 1fr); }
+.ed-grid.is-landscape .ed-screen { order: -1; position: static; }
+.ed-grid.is-landscape .ed-screen #screen { max-height: min(56vh, 460px); }
 
 /* ---- nhật ký gập ---- */
 .ed-log { margin-top: 1.25rem; }

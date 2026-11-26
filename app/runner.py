@@ -208,6 +208,10 @@ class Runner:
     def start_machine(self, name, group, script=None):
         """Cho máy `name` chạy: nhóm nhận đơn API → chạy chế độ API; còn lại chạy KỊCH BẢN `script` của nhóm (cách chạy 1 lần / lặp N vòng
         nằm trong kịch bản). Máy đang chạy việc gì (kể cả của nhóm / kịch bản khác) → False: một máy chỉ chạy MỘT kịch bản một lúc."""
+        if script and script.get("mode") == "orders" and group.get("mode") != "api":
+            # KỊCH BẢN NHẬN ĐƠN: từ đây nó là một lần chạy «api» đúng nghĩa — cùng vòng xin đơn, cùng sổ đơn, cùng luật «dừng chờ kiểm tra»,
+            # cùng lệnh cấm ở bản web. Chuyển TRƯỚC mọi phép kiểm bên dưới để không phép kiểm nào của chế độ nhận đơn bị bỏ sót.
+            group = dict(group, mode="api", api=store.api_defaults(script.get("orders")))
         with self.lock:
             if self.is_running(name):
                 return False
@@ -222,14 +226,15 @@ class Runner:
                 # Tên này đang trỏ vào CÙNG iPhone / board với một máy của khách (đang làm đơn / đang dừng chờ kiểm tra) dưới tên khác:
                 # chạy gì lên nó cũng là đọc / bấm lên máy của khách → không chạy.
                 return False
-            same_api_group = group.get("mode") == "api" and group.get("id") is not None and held is not None and held.get("group_id") == group.get("id")
+            same_api_group = (group.get("mode") == "api" and group.get("id") is not None and held is not None
+                              and held.get("group_id") == group.get("id") and held.get("script_id") == (script or {}).get("id"))
             if held is not None and held.get("hold") and not same_api_group:
                 # Máy đang DỪNG CHỜ NGƯỜI KIỂM TRA sau đơn của khách (màn hình giữ nguyên, game có thể còn đăng nhập tài khoản của khách).
                 # Chỉ «Chạy lại» của CHÍNH nhóm nhận đơn đó mới được chạy tiếp (đường đó tự đăng xuất + kiểm game sạch trước). Nhóm / kịch bản
                 # khác không được chạy đè lên: người vận hành phải xác nhận «Đã kiểm tra xong» (ack_hold) trước.
                 return False
             if group.get("mode") != "api":
-                if script:        # cách chạy của kịch bản chỉ có «1 lần» / «lặp» — không bao giờ thành chế độ nhận đơn
+                if script:        # tới đây kịch bản chỉ còn «1 lần» / «lặp» (kịch bản nhận đơn đã thành chế độ api ở đầu hàm) — giá trị lạ coi là «1 lần»
                     group = dict(group, steps=list(script.get("steps") or []), mode="loop" if script.get("mode") == "loop" else "once", loops=script.get("loops", 0))
                 elif not group.get("steps"):
                     return False                      # không có kịch bản nào để chạy (nhóm thật luôn truyền `script`; `steps` trần chỉ còn ở dữ liệu thử)

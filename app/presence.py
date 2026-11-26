@@ -24,6 +24,7 @@ VAR_OK = re.compile(r"^[A-Za-z][A-Za-z0-9_.]{0,59}$")
 ID_OK = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
 STEP_TYPE_OK = re.compile(r"^[a-z][a-z_]{0,19}$")
 MAX_OUTLINE = 80
+ORDER_PHASES = ("login", "otp", "nav", "purchase", "after", "finish")      # giai đoạn của một đơn (cùng thứ tự với apimode.PHASES)
 MAX_DEVICES, MAX_SCRIPTS = 200, 300      # trần của gateway cho một khoá Tool
 MAX_CATALOG_BYTES = 600_000              # danh mục lớn hơn chừng này thì bỏ dàn ý (gateway chỉ nhận thân tối đa 1 MB)
 MAX_BODY_BYTES = 950_000
@@ -41,14 +42,21 @@ def script_uid(group_id, script_id):
 def step_vars(steps) -> list:
     """Tên các {{biến}} mà kịch bản cần dữ liệu, theo thứ tự xuất hiện, không lặp."""
     out = []
+
+    def walk(v, depth=0):
+        if isinstance(v, str):
+            for k in PLACEHOLDER.findall(v):
+                if VAR_OK.fullmatch(k) and k not in out:
+                    out.append(k)
+        elif depth < 4 and isinstance(v, dict):          # (bước «nếu … thì bấm» có danh sách trường hợp lồng bên trong)
+            for x in v.values():
+                walk(x, depth + 1)
+        elif depth < 4 and isinstance(v, list):
+            for x in v:
+                walk(x, depth + 1)
     for st in steps or []:
-        if not isinstance(st, dict):
-            continue
-        for v in st.values():
-            if isinstance(v, str):
-                for k in PLACEHOLDER.findall(v):
-                    if VAR_OK.fullmatch(k) and k not in out:
-                        out.append(k)
+        if isinstance(st, dict):
+            walk(st)
     return out[:40]
 
 
@@ -80,9 +88,22 @@ def catalog(groups) -> tuple:
                 loops = max(0, min(1000000, int(sc.get("loops", 1))))
             except (TypeError, ValueError):
                 loops = 1
-            rows.append({"uid": uid, "group": str(g.get("name") or g.get("id"))[:160], "name": str(sc.get("name") or sc.get("id"))[:160],
-                         "mode": "loop" if sc.get("mode") == "loop" else "once", "loops": loops,
-                         "step_count": len(steps), "vars": step_vars(steps), "outline": outline(steps)})
+            row = {"uid": uid, "group": str(g.get("name") or g.get("id"))[:160], "name": str(sc.get("name") or sc.get("id"))[:160],
+                   "mode": sc.get("mode") if sc.get("mode") in ("loop", "orders") else "once", "loops": loops}
+            if row["mode"] == "orders":
+                # KỊCH BẢN NHẬN ĐƠN: gateway cần biết nó phục vụ pool nào; các bước của nó chia theo giai đoạn của một đơn
+                o = sc.get("orders") if isinstance(sc.get("orders"), dict) else {}
+                phases = o.get("steps") if isinstance(o.get("steps"), dict) else {}
+                steps, lines = [], []
+                for ph in ORDER_PHASES:
+                    part = phases.get(ph) if isinstance(phases.get(ph), list) else []
+                    steps += part
+                    lines += [dict(x, phase=ph) for x in outline(part)]
+                row["pool"] = str(o.get("pool") or "")[:40]
+                row.update(step_count=len(steps), vars=step_vars(steps), outline=lines[:MAX_OUTLINE])
+            else:
+                row.update(step_count=len(steps), vars=step_vars(steps), outline=outline(steps))
+            rows.append(row)
     rows.sort(key=lambda r: r["uid"])
     rows = rows[:MAX_SCRIPTS]                               # gateway từ chối CẢ lời báo nếu vượt trần → tự cắt cho vừa
     blob = _blob(rows)
@@ -145,12 +166,13 @@ def build(devices, groups, tool=None) -> tuple:
             entry["label"] = label
         if note:
             entry["note"] = note
-        if f.get("running") and f.get("run_mode") != "api":
+        if f.get("running") and (f.get("run_mode") != "api" or f.get("run_script_id")):
+            # đang chạy kịch bản — kể cả KỊCH BẢN NHẬN ĐƠN (chế độ api nhưng có kịch bản): gateway thấy máy đang nhận đơn bằng kịch bản nào
             run = {"group": str(f.get("run_group") or "")[:160], "script": str(f.get("run_script") or "")[:160]}
             uid = script_uid(f.get("run_group_id"), f.get("run_script_id"))
             if uid:
                 run["uid"] = uid
-            if f.get("iter"):
+            if f.get("iter") and f.get("run_mode") != "api":
                 run["iter"] = int(f["iter"])
             entry["running"] = run
         out.append(entry)

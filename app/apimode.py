@@ -36,8 +36,8 @@ GW_LISTS = {"login": "login_steps", "otp": "otp_steps", "nav": "nav_steps",
 PHASE_LABEL = {"login": "Đăng nhập", "otp": "Nhập OTP", "nav": "Vào danh sách gói",
                "purchase": "Mua 1 gói", "after": "Sau khi mua", "finish": "Kết thúc đơn"}
 DEFAULT_OTP_STEPS = [{"type": "type", "text": "{{otp}}"}, {"type": "key", "name": "enter"}]
-INPUT_TYPES = ("tap", "tap_text", "type", "key", "combo", "launch", "home",
-               "swipe", "hold", "hold_text")                                    # bước có gửi thao tác vào máy
+INPUT_TYPES = ("tap", "tap_text", "tap_if", "type", "key", "combo", "launch", "home",
+               "swipe", "hold", "hold_text")                                    # bước có (thể) gửi thao tác vào máy
 SWIPE_DIRS = {"left": "trái", "right": "phải", "up": "lên", "down": "xuống"}
 KEYS = ("enter", "return", "tab", "esc", "back", "space")
 COMBO_MODS = ("gui", "cmd", "ctrl", "alt", "shift")
@@ -201,6 +201,10 @@ def _describe(step: dict, vars: dict) -> str:
     if t in ("tap_text", "wait_text", "assert_text"):
         name = {"tap_text": "Tap chữ", "wait_text": "Chờ chữ", "assert_text": "Kiểm chữ"}[t]
         return f"{name} «{show(str(step.get('text') or ''), vars)}»"
+    if t == "tap_if":
+        cases = step.get("cases") if isinstance(step.get("cases"), list) and step.get("cases") else [step]
+        return "; ".join("Nếu thấy chữ «%s» thì bấm «%s»" % (show(str(c.get("text") or ""), vars), show(str(c.get("tap") or "") or str(c.get("text") or ""), vars))
+                         for c in cases if isinstance(c, dict))
     if t == "type":
         return f"Gõ «{show(str(step.get('text') or ''), vars)}»"
     if t == "key":
@@ -349,6 +353,44 @@ def _screen_text(nav) -> str:
     return norm_text(nav.e.read_text(nav.e.screenshot()))
 
 
+TEXT_WAIT_MAX = 60.0     # bước «bấm / giữ vào chữ» chịu chờ chữ hiện ra tối đa chừng này giây (trường `timeout` của bước)
+
+
+def _text_wait(tmpl: dict, what: str) -> float:
+    """Số giây một bước «bấm / giữ vào chữ» chịu chờ cho chữ HIỆN RA. Không ghi `timeout` (hoặc 0) = nhìn đúng một lần, như trước giờ."""
+    try:
+        return max(0.0, min(float(tmpl.get("timeout") or 0), TEXT_WAIT_MAX))
+    except (TypeError, ValueError):
+        raise ConfigError("bước «%s»: thời gian chờ chữ hiện ra phải là số giây" % what)
+
+
+def _find_wait(nav, alts: list, wait: float, abort=None):
+    """Tìm một trong các cách viết `alts` trên màn hình; chưa thấy thì nhìn lại mỗi giây cho tới hết `wait` giây. Trả (x, y) hoặc None.
+    Màn hình game chuyển cảnh mất 1–3 giây nên nhìn MỘT lần ngay sau bước trước thường hụt (đo trên eFootball: bấm «Data Transfer»
+    xong, 0,9 giây sau màn kế chưa vẽ xong). Thấy ở lần nhìn LẠI thì chữ có thể còn đang trượt vào → chờ màn hình đứng yên rồi lấy lại
+    vị trí (lần nhìn đầu thì bên gọi đã chờ đứng yên sẵn)."""
+    def look():
+        img = nav.e.screenshot()
+        return next((p for p in (nav.e.find_text(a, img) for a in alts) if p), None)
+    end = time.time() + wait
+    again = False
+    while True:
+        pos = look()
+        if pos and again:
+            _sleep(LOOK_SETTLE, abort)
+            pos = look()
+        if pos:
+            return pos
+        if time.time() >= end:
+            return None
+        again = True
+        _sleep(1.0, abort)
+
+
+def _not_seen(label: str, wait: float) -> str:
+    return ("chờ %gs không thấy chữ «%s» trên màn hình" % (wait, label)) if wait else "không thấy chữ «%s» trên màn hình" % label
+
+
 def exec_step(nav, tmpl: dict, vars: dict, abort=None):
     """Chạy 1 bước (mẫu chưa thế biến). Trả (ok, lý do, acted). Lý do không chứa giá trị bí mật."""
     if abort and abort():
@@ -366,12 +408,11 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
         if t != "wait_text":                    # bước chờ thì tự nhìn lại nhiều lần, không cần chờ trước
             _sleep(LOOK_SETTLE, abort)
         if t == "tap_text":
-            img = nav.e.screenshot()
-            for a in alts:
-                pos = nav.e.find_text(a, img)
-                if pos:
-                    return _tap(nav, pos[0], pos[1], verify=_still_there(nav, alts, pos))
-            return False, "không thấy chữ «%s» trên màn hình" % label, False
+            wait = _text_wait(tmpl, "Bấm vào chữ")
+            pos = _find_wait(nav, alts, wait, abort)
+            if not pos:
+                return False, _not_seen(label, wait), False
+            return _tap(nav, pos[0], pos[1], verify=_still_there(nav, alts, pos))
         if t == "assert_text":
             txt = _screen_text(nav)
             ok = any(text_has(txt, a) for a in alts)
@@ -385,6 +426,58 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
             if time.time() >= end:
                 return False, "chờ %ds không thấy chữ «%s»" % (int(timeout), label), False
             _sleep(1.0, abort)
+
+    if t == "tap_if":
+        # «NẾU thấy chữ A THÌ bấm chữ B» — cho thứ LÚC CÓ LÚC KHÔNG ngay sau một bước (hộp thoại Game Center, hỏi mật khẩu, thông báo,
+        # quảng cáo…). Một bước có thể mang NHIỀU trường hợp (`cases`); mỗi lần nhìn màn hình, trường hợp nào thấy trước thì xử lý trước.
+        #   • chờ tối đa `timeout` giây xem có trường hợp nào hiện ra không; KHÔNG thấy gì → bước XONG, không làm gì;
+        #   • thấy → bấm chữ của trường hợp đó, rồi nhìn tiếp (hộp thoại này đóng thì hộp thoại khác mới hiện) với cùng thời gian chờ;
+        #   • hết thời gian chờ mà vẫn thấy chữ của một trường hợp nhưng không có chữ cần bấm, hoặc bấm rồi vẫn thấy mãi → bước HỎNG
+        #     (màn hình đang bị chắn — đi tiếp là bấm nhầm).
+        cases = if_cases(tmpl, vars)
+        try:
+            timeout = max(0.0, min(float(tmpl.get("timeout") or 0), 120.0))
+        except (TypeError, ValueError):
+            raise ConfigError("bước «Nếu thấy chữ … thì bấm»: thời gian chờ phải là số giây")
+        done, hits, acted_any = [], [0] * len(cases), False
+        end = time.time() + timeout
+        _sleep(LOOK_SETTLE, abort)
+        while True:
+            img = nav.e.screenshot()
+            txt = norm_text(nav.e.read_text(img))
+            # Một trường hợp chỉ «xảy ra» khi thấy CẢ chữ của nó LẪN chữ cần bấm. Thấy chữ mà chưa thấy nút (hộp thoại đang trượt vào, hoặc
+            # đây là một màn hình khác cũng có chữ đó — vd «Tính năng mới trong Game Center» chỉ có nút «Tiếp tục») thì xét trường hợp
+            # kế; không trường hợp nào đủ thì NHÌN LẠI cho tới hết thời gian chờ rồi mới báo hỏng.
+            k, pos, blocked = None, None, None
+            for i, c in enumerate(cases):
+                if not any(text_has(txt, a) for a in c["alts"]):
+                    continue
+                pos = next((p for p in (nav.e.find_text(a, img) for a in c["tap_alts"]) if p), None)
+                if pos:
+                    k = i
+                    break
+                blocked = blocked or c
+            if k is None:
+                if time.time() >= end:
+                    if blocked:
+                        return False, "thấy chữ «%s» nhưng không thấy chữ «%s» để bấm" % (blocked["label"], blocked["tap_label"]), acted_any
+                    msg = ("đã bấm " + ", ".join(done)) if done else "không thấy %s — bỏ qua" % " / ".join("«%s»" % c["label"] for c in cases)
+                    return True, msg, acted_any
+                _sleep(1.0, abort)
+                continue
+            c = cases[k]
+            hits[k] += 1
+            if hits[k] > IF_REPEAT or len(done) >= IF_MAX_TAPS:
+                return False, "đã bấm «%s» mà vẫn còn thấy «%s» (hộp thoại không đóng)" % (c["tap_label"], c["label"]), acted_any
+            ok, why, acted = _tap(nav, pos[0], pos[1], verify=_still_there(nav, c["tap_alts"], pos))
+            acted_any = acted_any or acted
+            if not ok:
+                return False, why, acted_any
+            done.append("«%s» (thấy «%s»)" % (c["tap_label"], c["label"]))
+            if len(cases) == 1:                       # chỉ một trường hợp: bấm xong là xong, không chờ thêm
+                return True, "thấy «%s» → đã bấm «%s»" % (c["label"], c["tap_label"]), acted_any
+            _sleep(IF_AFTER_TAP, abort)               # cho hộp thoại vừa bấm kịp đóng / hộp thoại kế kịp hiện
+            end = time.time() + timeout
 
     if t == "type":
         text = typable(str(tmpl.get("text") or ""), vars)
@@ -452,15 +545,36 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
         if not alts:
             raise ConfigError("bước «Bấm giữ vào chữ» đang để trống chữ cần tìm")
         sec = max(0.2, min(float(tmpl.get("seconds") or 1.0), 10.0))
+        wait = _text_wait(tmpl, "Bấm giữ vào chữ")
         _sleep(LOOK_SETTLE, abort)
-        img = nav.e.screenshot()
-        for a in alts:
-            pos = nav.e.find_text(a, img)
-            if pos:
-                return gesture(nav, "bấm giữ", lambda: nav.hold_at(pos[0], pos[1], sec, verify=_still_there(nav, alts, pos)))
-        return False, "không thấy chữ «%s» trên màn hình" % show(raw, vars), False
+        pos = _find_wait(nav, alts, wait, abort)
+        if not pos:
+            return False, _not_seen(show(raw, vars), wait), False
+        return gesture(nav, "bấm giữ", lambda: nav.hold_at(pos[0], pos[1], sec, verify=_still_there(nav, alts, pos)))
 
     raise ConfigError("loại bước lạ: %s" % t)
+
+
+IF_REPEAT = 2            # cùng một trường hợp của bước «nếu … thì bấm» được bấm tối đa chừng này lần (bấm rồi vẫn thấy mãi = hộp thoại không đóng)
+IF_MAX_TAPS = 6          # tổng số lần bấm tối đa của một bước «nếu … thì bấm»
+IF_AFTER_TAP = 1.2       # nghỉ sau mỗi lần bấm rồi mới nhìn lại
+
+
+def if_cases(tmpl: dict, vars: dict) -> list:
+    """Các trường hợp của bước «nếu thấy chữ … thì bấm …»: [{alts, tap_alts, label, tap_label}].
+    Bước ghi `cases: [{text, tap}, …]` (nhiều trường hợp) hoặc `text` / `tap` (một trường hợp). `tap` để trống = bấm chính chữ vừa thấy."""
+    raw_cases = tmpl.get("cases") if isinstance(tmpl.get("cases"), list) and tmpl.get("cases") else [{"text": tmpl.get("text"), "tap": tmpl.get("tap")}]
+    out = []
+    for c in raw_cases[:12]:
+        if not isinstance(c, dict):
+            raise ConfigError("bước «Nếu thấy chữ … thì bấm»: mỗi trường hợp phải ghi chữ cần thấy")
+        raw = str(c.get("text") or "")
+        alts = alternatives(subst(raw, vars))
+        if not alts:
+            raise ConfigError("bước «Nếu thấy chữ … thì bấm» đang để trống chữ cần thấy")
+        tap_raw = str(c.get("tap") or "") or raw
+        out.append({"alts": alts, "tap_alts": alternatives(subst(tap_raw, vars)) or alts, "label": show(raw, vars), "tap_label": show(tap_raw, vars)})
+    return out
 
 
 def typable(raw: str, vars: dict) -> str:
@@ -578,7 +692,10 @@ def _is_credential(st: dict) -> bool:
 def open_prefix(login: list) -> list:
     """«Đoạn mở game» của danh sách đăng nhập: các bước ĐẦU chỉ mở/chờ, chưa bấm vào đâu và chưa gõ gì của
     khách (mở app, tổ hợp phím, gõ chữ cố định, phím, chờ…). Dừng ở bước bấm đầu tiên hoặc bước gõ {{biến}}.
-    Chạy lại đoạn này bao nhiêu lần cũng không làm game đổi trạng thái đăng nhập."""
+    Chạy lại đoạn này bao nhiêu lần cũng không làm game đổi trạng thái đăng nhập.
+    Ngoại lệ có chủ ý: bước «nếu thấy chữ … thì bấm» (tap_if) VẪN thuộc đoạn mở game — nó dùng để dọn thứ chắn màn hình ngay sau khi
+    mở app (hộp thoại Game Center, thông báo…); không dọn thì bước kiểm «game chưa đăng nhập» không nhìn thấy gì và máy không nhận đơn.
+    Đừng dùng nó để bấm vào thứ đụng tới tài khoản của khách."""
     out = []
     for st in login or []:
         t = st.get("type")
@@ -1091,6 +1208,19 @@ class Journal:
     def get(self, device: str):
         with self.lock:
             return self._read().get(device)
+
+    def peek(self, device: str):
+        """Như get() nhưng đọc CHẶT: tệp sổ chưa có = chưa từng có đơn (None); tệp có mà không đọc được / hỏng → NÉM LỖI thay vì trả «không có gì».
+        Chỉ để HỎI (không dùng trong luồng làm đơn): nơi mà trả lời nhầm «máy không còn đơn dở» là nguy hiểm — luồng tự báo gateway."""
+        with self.lock:
+            try:
+                with open(self.state_file, "r", encoding="utf-8") as f:
+                    d = json.load(f)
+            except FileNotFoundError:
+                return None
+            if not isinstance(d, dict):
+                raise ValueError("sổ đơn không đúng dạng")
+            return d.get(device)
 
     def set(self, device: str, **fields):
         with self.lock:

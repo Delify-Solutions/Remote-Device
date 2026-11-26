@@ -4,7 +4,7 @@ engine.py — chạy flow (danh sách bước) trên 1 thiết bị (Nav).
 
 Mỗi bước là dict JSON, ví dụ:
   {"type":"tap","x":300,"y":400}
-  {"type":"tap_text","text":"Mua"}
+  {"type":"tap_text","text":"Mua"}                      # thêm "timeout":5 = chữ chưa hiện thì chờ tối đa 5 giây (không ghi = nhìn một lần)
   {"type":"type","text":"hello"}
   {"type":"key","name":"enter"}
   {"type":"combo","keys":"gui h"}
@@ -17,13 +17,14 @@ Mỗi bước là dict JSON, ví dụ:
   {"type":"swipe","x1":375,"y1":1000,"x2":375,"y2":400} # vuốt theo toạ độ (quãng thực tế chỉ xấp xỉ)
   {"type":"hold","x":636,"y":468,"seconds":1.2}         # bấm giữ
   {"type":"hold_text","text":"Sách","seconds":1.2}
+  {"type":"tap_if","text":"Game Center","tap":"Hủy","timeout":8}   # nếu (trong 8 giây) thấy chữ «Game Center» thì bấm «Hủy»; không thấy → xong
 """
 from __future__ import annotations
 import time
 
 import apimode
 
-STEP_TYPES = ["tap", "tap_text", "type", "key", "combo", "home",
+STEP_TYPES = ["tap", "tap_text", "tap_if", "type", "key", "combo", "home",
               "launch", "wait", "wait_text", "assert_text", "swipe", "hold", "hold_text"]
 
 
@@ -34,6 +35,12 @@ def run_step(nav, step, log=print):
         if t == "tap":
             ok = nav.tap_at(int(step["x"]), int(step["y"]))
             return ok, f"tap ({step['x']},{step['y']}) {'OK' if ok else 'con trỏ không tới nơi → KHÔNG bấm'}"
+        if t == "tap_if":                           # cùng MỘT cách làm với lúc nhận đơn (dò chữ nhiều cách viết, bấm có kiểm lại)
+            ok, why, _ = apimode.exec_step(nav, step, {})
+            return ok, why or ("xong" if ok else "không thực hiện được")
+        if t in ("tap_text", "hold_text") and step.get("timeout"):      # có ghi «chờ chữ hiện ra»: cùng MỘT cách làm với lúc nhận đơn
+            ok, why, _ = apimode.exec_step(nav, step, {})
+            return ok, apimode.describe(step, {}) + ((" — " + why) if why else "")
         if t == "tap_text":
             ok = nav.tap_text(step["text"])
             return ok, f"tap_text '{step['text']}' {'OK' if ok else 'không thấy chữ / con trỏ không tới nơi → KHÔNG bấm'}"
