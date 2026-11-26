@@ -33,6 +33,10 @@ final class Admin
         if ($a === '') {
             self::dashboard($user);
         }
+        if ($a === 'scripts' && $m === 'GET' && !isset($s[1])) {
+            view('scripts', ['user' => $user, 'nav' => 'scripts', 'title' => 'Kịch bản & máy', 'tools' => Tools::board(),
+                             'migrated' => Schema::version() >= 3, 'hasToolKey' => (int) Db::val("SELECT COUNT(*) FROM api_keys WHERE kind='tool'") > 0]);
+        }
         if ($a === 'pools') {
             if ($m === 'GET' && !isset($s[1])) {
                 view('pools', ['user' => $user, 'nav' => 'pools', 'title' => 'Pool', 'pools' => Pools::all()]);
@@ -165,6 +169,7 @@ final class Admin
             'doneToday'   => (int) Db::val("SELECT COUNT(*) FROM jobs WHERE status='done' AND finished_at>=?", [$today]),
             'failedToday' => (int) Db::val("SELECT COUNT(*) FROM jobs WHERE status='failed' AND finished_at>=?", [$today]),
             'devices'     => Devices::all(),
+            'scriptNames' => Tools::scriptNames(),
             'recent'      => Db::all('SELECT j.*, p.name AS pool_name FROM jobs j LEFT JOIN pools p ON p.id=j.pool_id ORDER BY j.id DESC LIMIT 12'),
             'whFailed'    => (int) Db::val("SELECT COUNT(*) FROM webhooks WHERE status='failed' AND created_at>?", [time() - 86400]),
             'whPending'   => (int) Db::val("SELECT COUNT(*) FROM webhooks WHERE status='pending'"),
@@ -295,6 +300,9 @@ final class Admin
                     Flash::set('Khoá đã gắn với đơn nên không xoá được — hãy khoá nó lại.', 'bad');
                 } else {
                     Db::run('DELETE FROM devices WHERE tool_key_id=?', [$id]);
+                    if (Schema::version() >= 3) {
+                        Db::run('DELETE FROM tool_scripts WHERE tool_key_id=?', [$id]);      // danh mục kịch bản do khoá này báo lên
+                    }
                     Db::run('DELETE FROM api_keys WHERE id=?', [$id]);
                     Flash::set('Đã xoá khoá.');
                 }
@@ -379,6 +387,13 @@ function status_badge(string $status): string
 {
     $cls = ['done' => 'success', 'failed' => 'danger', 'need_otp' => 'warning', 'review' => 'primary', 'claimed' => 'info', 'running' => 'info'][$status] ?? 'secondary';
     return '<span class="badge bg-label-' . $cls . '">' . e(Jobs::LABEL[$status] ?? $status) . '</span>';
+}
+
+/** Nhãn trạng thái của một máy (ưu tiên lời tool vừa báo qua sync; xem Tools::state). */
+function device_badge(array $d): string
+{
+    [, $label, $color, $note] = Tools::state($d);
+    return '<span class="badge bg-label-' . $color . '"' . ($note !== '' ? ' title="' . e($note) . '"' : '') . '>' . e($label) . '</span>';
 }
 
 function nav_counts(): array

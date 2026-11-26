@@ -276,6 +276,26 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   sạch trước; nếu lần chạy lại dừng sớm trước khi kiểm xong thì máy vẫn đang giữ), hoặc người vận hành bấm **«Đã kiểm tra xong»** trên máy đó, mới gỡ được.
   **Bấm Dừng không còn là lời xác nhận** (trước đây Dừng trên máy đã dừng = xác nhận); xoá nhóm còn máy đang giữ bị từ chối.
 - Nhóm ở chế độ **nhận đơn API** (cũ, nhận đơn từ gateway) vẫn hoạt động như trước; giao diện hiện chưa có chỗ tạo loại nhóm này.
+- **Tool tự báo cho gateway** (`app/presence.py` → `POST /api/tool/sync`; gateway ở ngoài mạng nên chỉ tool gọi lên được): cứ ~20 giây và ngay khi có
+  thay đổi, tool gửi (a) **máy nào đang rảnh ở kịch bản nào** — trạng thái từng máy + các kịch bản của mọi nhóm máy đang ở — và (b) **danh mục kịch bản**
+  (tên, nhóm, cách chạy, số bước, tên các `{{biến}}`, dàn ý loại bước + ghi chú; chỉ gửi khi đổi).
+  - Máy chỉ báo **«rảnh»** khi: board còn cắm, iPhone đang cắm **USB**, lần đọc Bluetooth gần nhất là **đã nối**, không chạy gì, không bị «Dừng máy»,
+    không «dừng chờ kiểm tra», sổ đơn (`api_state.json`) không còn đơn dở chưa báo xong, không ai điều khiển tay, không đang nạp firmware / dò máy.
+    Tên khác trỏ vào cùng iPhone / board với một máy của khách cũng không rảnh. **Không chắc thì không báo rảnh.**
+  - **Không rời khỏi máy**: chữ gõ / toạ độ / tên app trong các bước, UDID, cổng serial, lý do «dừng chờ kiểm tra».
+  - Chạy ở cả app cửa sổ lẫn bản web (bản web báo kèm «không nhận đơn»), nhưng mỗi bản cài chỉ **một tiến trình** được báo (tệp khoá
+    `app/data/presence.lock`): mở cả hai cùng lúc thì bên mở sau không báo và nói rõ ở dòng trạng thái.
+  - Dòng trạng thái nằm ở đầu trang **Nhóm & Kịch bản** («Đã báo gateway lúc … · báo ngay»); phía gateway xem ở **Kịch bản & máy**.
+    Lỗi mạng lùi 30 giây; sai khoá / gateway bản cũ / lời báo bị từ chối lùi 5 phút (gateway chặn IP sai khoá nhiều lần). Đang quét board thì bỏ nhịp;
+    tệp máy / nhóm đọc lỗi thì không gửi gì (không bao giờ báo nhầm «hết máy / hết kịch bản»).
+  - **Giới hạn đã biết** (phải xử lý trước khi gateway dùng «máy rảnh» để giao việc):
+    - trạng thái Bluetooth lấy từ lần quét board / lần bấm «BLE?», «Khởi động lại», «Huỷ kết nối BT» gần nhất — Bluetooth rớt SAU đó mà chưa quét
+      lại thì máy vẫn còn được báo rảnh cho tới lượt quét kế;
+    - tiến trình đang báo chỉ biết việc của CHÍNH NÓ: mở bản web trước rồi mới mở app cửa sổ thì app cửa sổ không báo, và gateway không thấy máy nào
+      app cửa sổ đang chạy kịch bản / đang dừng (chỉ đơn dở trong sổ là thấy). Khi chạy thật chỉ mở MỘT trong hai;
+    - sổ đơn (`api_state.json`) bị hỏng thì bị đọc như «không có đơn dở» (ghi sổ là ghi trọn nên hiếm; gateway vẫn tự chặn máy nó biết đang giữ đơn).
+  - Kiểm bằng `app/tests/test_presence.py` (107 mục, có chạy với gateway thật). Hiện mới là BÁO TIN: gateway chưa giao việc theo kịch bản,
+    và kịch bản chạy tay chưa thế `{{biến}}` bằng dữ liệu.
 - MCP / CLI: `list_groups` liệt kê kịch bản (tên, số bước, cách chạy — không lộ nội dung bước); `start_run` nhận `script` (bỏ trống được khi nhóm
   chỉ có 1 kịch bản; nhóm nhiều kịch bản mà không nêu thì bị từ chối).
 - Kiểm bằng `./.venv/bin/python app/tests/test_groups.py` (111 mục: lưu / chuẩn hoá kịch bản, máy nhiều nhóm, một máy một kịch bản, dừng máy / tiếp tục (cả lúc máy đang nghỉ), dừng đúng việc, dừng tất cả, máy đang giữ chờ kiểm tra). Bộ nút trên giao diện: `app/tests/test_ui_controls.py` (12 mục, chạy mã `app.js` bằng `node` trên mọi tổ hợp trạng thái).
@@ -325,6 +345,7 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
 ./.venv/bin/python app/tests/test_mcp.py          # giao thức + lõi điều khiển + CLI (máy giả)
 ./.venv/bin/python app/tests/test_nav.py          # định vị con trỏ, bấm vòng kín, lệnh xuống board
 ./.venv/bin/python app/tests/test_api_mode.py     # chế độ nhận đơn (gateway tạm + iPhone giả)
+./.venv/bin/python app/tests/test_presence.py     # tool tự báo gateway: máy rảnh ở kịch bản nào + danh mục kịch bản (gateway tạm nếu có php)
 uv run --python 3.12 --with mcp app/tests/interop_sdk.py     # kiểm chéo với client của SDK MCP chính thức
 ./.venv/bin/python app/tests/smoke_device.py iPhoneFarm-01   # máy THẬT (tắt app trước): các bước của chế độ nhận đơn
 ./.venv/bin/python app/tests/device_gestures.py iPhoneFarm-01  # máy THẬT (tắt app trước): bấm, lật trang, cuộn, bấm giữ

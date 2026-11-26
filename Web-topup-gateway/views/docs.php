@@ -275,6 +275,7 @@ while True:
         else: chạy finish_steps                    # đăng xuất — hỏng thì DỪNG MÁY
 PY) ?>
       <p class="text-body-secondary small mt-3">Trong lúc chạy, cứ ~30–60 giây gọi <code>POST /api/tool/heartbeat</code> với <code>active</code> = các đơn đang giữ để gateway biết tool còn sống. Mất mạng lúc báo kết quả thì <b>gửi lại y nguyên</b> cho tới khi nhận 200 hoặc 409 — đừng nhận đơn mới khi đơn cũ chưa báo xong.</p>
+      <p class="text-body-secondary small mb-0">Song song với vòng lặp trên, tool gọi <code>POST /api/tool/sync</code> mỗi ~20 giây (và ngay khi có thay đổi) để báo <b>máy nào đang rảnh ở kịch bản nào</b> cùng <b>danh mục kịch bản</b> soạn trong tool. Gateway không gọi được vào tool (tool nằm trong mạng nội bộ) nên đây là nguồn duy nhất của trang <b>Kịch bản &amp; máy</b>.</p>
     </section>
   </div>
 </div>

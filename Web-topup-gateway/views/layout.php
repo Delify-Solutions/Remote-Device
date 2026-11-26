@@ -51,6 +51,7 @@ $initial = mb_strtoupper(mb_substr((string) ($user['username'] ?? 'A'), 0, 1));
         <li class="menu-header small"><span class="menu-header-text">Vận hành</span></li>
         <?= $item('home', '/admin', 'tabler-layout-dashboard', 'Tổng quan') ?>
         <?= $item('jobs', '/admin/jobs', 'tabler-receipt', 'Đơn nạp', $cnt['review'], 'Đơn chờ đối soát') ?>
+        <?= $item('scripts', '/admin/scripts', 'tabler-device-mobile-code', 'Kịch bản & máy') ?>
         <li class="menu-header small"><span class="menu-header-text">Cấu hình</span></li>
         <?= $item('pools', '/admin/pools', 'tabler-packages', 'Pool & gói nạp') ?>
         <?= $item('keys', '/admin/keys', 'tabler-key', 'Khoá API & webhook') ?>

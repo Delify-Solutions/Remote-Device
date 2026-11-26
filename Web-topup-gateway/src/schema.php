@@ -158,7 +158,55 @@ final class Schema
             // Bản cài MySQL/MariaDB tạo bằng migration 1 cũ (collation *_ci) → chuyển sang so khớp chính xác.
             // Bản cài mới (bảng đã là utf8mb4_bin) và SQLite: không đổi gì.
             2 => $sqlite ? [] : array_map(static fn (string $t): string => "ALTER TABLE $t CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin", $tables),
+
+            // Tool TỰ BÁO qua POST /api/tool/sync: danh mục kịch bản (soạn ở tool) + máy nào đang rảnh ở kịch bản nào.
+            // Gateway nằm ngoài mạng, tool nằm trong mạng nội bộ → chỉ tool gọi lên được; gateway chỉ nạp những gì tool gửi.
+            3 => [
+                "CREATE TABLE tool_scripts (
+                    id $pk,
+                    tool_key_id $ref NOT NULL,
+                    uid VARCHAR(100) NOT NULL,
+                    group_id VARCHAR(40) NOT NULL DEFAULT '',
+                    group_name VARCHAR(160) NOT NULL DEFAULT '',
+                    script_id VARCHAR(40) NOT NULL DEFAULT '',
+                    name VARCHAR(160) NOT NULL,
+                    run_mode VARCHAR(10) NOT NULL DEFAULT 'once',
+                    loops INT NOT NULL DEFAULT 1,
+                    step_count INT NOT NULL DEFAULT 0,
+                    vars $txt NULL,
+                    outline $txt NULL,
+                    first_seen_at INT NOT NULL,
+                    updated_at INT NOT NULL,
+                    UNIQUE (tool_key_id, uid)
+                )$opt",
+                // devices.state / job_pid / pool_code vẫn do heartbeat + claim ghi (việc của ĐƠN). Các cột dưới đây do sync ghi (việc của MÁY).
+                'ALTER TABLE devices ADD COLUMN label VARCHAR(120) NULL',
+                'ALTER TABLE devices ADD COLUMN status VARCHAR(12) NULL',
+                'ALTER TABLE devices ADD COLUMN status_note VARCHAR(200) NULL',
+                "ALTER TABLE devices ADD COLUMN scripts $txt NULL",
+                "ALTER TABLE devices ADD COLUMN running $txt NULL",
+                'ALTER TABLE devices ADD COLUMN synced_at INT NULL',
+                "ALTER TABLE api_keys ADD COLUMN tool_info $txt NULL",
+            ],
         ];
+    }
+
+    /** Phiên bản migration mới nhất mà mã này cần. */
+    public const LATEST = 3;
+
+    private static ?int $version = null;
+
+    /** Phiên bản CSDL đang có (0 = chưa cài). Mã mới chạy trên CSDL cũ phải tự nhận ra thay vì lỗi SQL. */
+    public static function version(): int
+    {
+        if (self::$version === null) {
+            try {
+                self::$version = (int) Db::val('SELECT MAX(version) FROM schema_version');
+            } catch (Throwable) {
+                self::$version = 0;
+            }
+        }
+        return self::$version;
     }
 
     /** Áp các migration chưa chạy. Trả danh sách phiên bản vừa áp. */
@@ -172,12 +220,29 @@ final class Schema
             if (in_array($version, $done, true)) {
                 continue;
             }
-            foreach ($statements as $sql) {
-                Db::pdo()->exec($sql);
+            // SQLite cho phép đặt cả lệnh tạo / sửa bảng trong giao dịch → một phiên bản áp TRỌN hoặc không áp gì (chạy dở vẫn chạy lại được).
+            // MySQL / MariaDB tự chốt sau mỗi lệnh DDL nên không bọc được.
+            $tx = $driver === 'sqlite';
+            if ($tx) {
+                Db::pdo()->beginTransaction();
             }
-            Db::insert('schema_version', ['version' => $version, 'applied_at' => time()]);
+            try {
+                foreach ($statements as $sql) {
+                    Db::pdo()->exec($sql);
+                }
+                Db::insert('schema_version', ['version' => $version, 'applied_at' => time()]);
+                if ($tx) {
+                    Db::pdo()->commit();
+                }
+            } catch (Throwable $e) {
+                if ($tx && Db::pdo()->inTransaction()) {
+                    Db::pdo()->rollBack();
+                }
+                throw $e;
+            }
             $applied[] = $version;
         }
+        self::$version = null;
         return $applied;
     }
 

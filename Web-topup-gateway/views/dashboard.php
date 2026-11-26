@@ -43,17 +43,19 @@ $stats = [
   <div class="col-xl-6">
     <div class="card h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="card-title mb-0">Máy nạp</h5><small class="text-body-secondary">do tool khai qua heartbeat / claim</small>
+        <h5 class="card-title mb-0">Máy nạp</h5><a href="/admin/scripts" class="small">Kịch bản &amp; máy <i class="ti tabler-chevron-right icon-xs"></i></a>
       </div>
       <?php if (!$devices): ?><div class="empty">Chưa có máy nào gọi vào.</div><?php else: ?>
       <div class="table-responsive">
-        <table class="table table-hover mb-0"><thead><tr><th>Máy</th><th>Pool</th><th>Trạng thái</th><th>Gọi lần cuối</th></tr></thead><tbody>
-        <?php foreach ($devices as $d): $online = (int) $d['last_seen_at'] > time() - 120; ?>
+        <table class="table table-hover mb-0"><thead><tr><th>Máy</th><th>Kịch bản / pool</th><th>Trạng thái</th><th>Gọi lần cuối</th></tr></thead><tbody>
+        <?php foreach ($devices as $d): [$st, , , $note] = Tools::state($d); $uids = jdec($d['scripts'] ?? null); ?>
           <tr>
-            <td><span class="live-dot <?= $online ? 'on' : '' ?>"></span><span class="fw-medium text-heading"><?= e($d['name']) ?></span><div class="small text-body-secondary"><?= e($d['key_name']) ?></div></td>
-            <td class="mono"><?= e($d['pool_code'] ?: '—') ?></td>
-            <td><?php if (!$online): ?><span class="badge bg-label-secondary">mất kết nối</span>
-                <?php elseif ($d['state'] === 'busy'): ?><span class="badge bg-label-info">đang nạp</span><?php else: ?><span class="badge bg-label-success">trống</span><?php endif; ?>
+            <td><span class="live-dot <?= $st !== 'lost' ? 'on' : '' ?>"></span><span class="fw-medium text-heading"><?= e($d['name']) ?></span>
+              <div class="small text-body-secondary"><?= e(implode(' · ', array_filter([(string) ($d['label'] ?? ''), (string) $d['key_name']], 'strlen'))) ?></div></td>
+            <td class="small"><?php foreach ($uids as $u): $sc = $scriptNames[$d['tool_key_id'] . '|' . $u] ?? null; ?><span class="badge <?= $sc && $sc['steps'] > 0 ? 'bg-label-primary' : 'bg-label-secondary' ?> me-1"><?= e($sc ? $sc['name'] : $u) ?></span><?php endforeach; ?>
+                <?php if ($d['pool_code']): ?><span class="mono"><?= e($d['pool_code']) ?></span><?php elseif (!$uids): ?>—<?php endif; ?></td>
+            <td><?= device_badge($d) ?>
+                <?php if ($note !== ''): ?><div class="small text-body-secondary"><?= e($note) ?></div><?php endif; ?>
                 <?php if ($d['job_pid']): ?><div class="mono small text-body-secondary"><?= e($d['job_pid']) ?></div><?php endif; ?></td>
             <td class="small text-body-secondary text-nowrap"><?= e(ago((int) $d['last_seen_at'])) ?></td>
           </tr>

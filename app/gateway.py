@@ -133,6 +133,11 @@ class Gateway:
     def heartbeat(self, devices: list, active: list) -> dict:
         return self._call("POST", "/api/tool/heartbeat", {"devices": devices, "active": active})
 
+    def sync(self, body: dict, timeout: float = 12.0) -> dict:
+        """Tự báo cho gateway: máy nào rảnh ở kịch bản nào (+ danh mục kịch bản khi gateway đòi). Xem presence.py.
+        Trả nguyên phản hồi: {scripts_rev, need_scripts, devices, scripts}."""
+        return self._call("POST", "/api/tool/sync", body, timeout=timeout)
+
     def claim(self, device: str, pool: str) -> dict:
         """Máy trống xin việc. Trả nguyên phản hồi: {job|None, paused, resumed?}."""
         return self._call("POST", "/api/tool/claim", {"device": device, "pool": pool})

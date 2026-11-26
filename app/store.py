@@ -42,6 +42,16 @@ def _read(path):
         return []
 
 
+def _read_strict(path):
+    """Như _read nhưng KHÔNG nuốt lỗi: tệp không đọc được / hỏng thì ném lỗi thay vì trả []. Dùng ở nơi mà «danh sách rỗng» và «đọc lỗi»
+    phải tách bạch (vd luồng tự báo gateway: báo nhầm «không còn máy / kịch bản nào» thì gateway xoá sạch dữ liệu của tool)."""
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError("%s không phải một danh sách" % os.path.basename(path))
+    return data
+
+
 def _write(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -53,6 +63,10 @@ def _write(path, data):
 # ---- devices ----
 def get_devices():
     _ensure(); return _read(DEVICES_FILE)
+
+
+def get_devices_strict():
+    _ensure(); return _read_strict(DEVICES_FILE)
 
 
 def save_devices(devices):
@@ -222,6 +236,10 @@ def pick_script(group, ref=None):
 
 def get_groups():
     _ensure(); return [norm_scripts(g) for g in _read(GROUPS_FILE)]
+
+
+def get_groups_strict():
+    _ensure(); return [norm_scripts(g) for g in _read_strict(GROUPS_FILE)]
 
 
 def get_group(group_id):

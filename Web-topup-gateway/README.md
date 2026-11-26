@@ -70,6 +70,19 @@ Tool đã cài sẵn vòng lặp ở mục «Vòng lặp mẫu của tool» củ
 4. Pool phải có **ba luật bắt buộc** ở mục 3 — «Màn hình CHƯA đăng nhập», «Đăng nhập THÀNH CÔNG», «Nạp gói THÀNH CÔNG» — và đủ bước đăng nhập / mua / kết thúc; thiếu thì máy không nhận đơn (trang Pool hiện nhãn «thiếu cấu hình»).
 5. Trước mỗi lần xin đơn, máy mở game và kiểm là **chưa ai đăng nhập** (còn thì tự đăng xuất). Tool tự dừng máy và chờ người khi: có đơn cần đối soát, không đăng xuất được, pool thiếu cấu hình, bàn phím iPhone đang ở Telex/VNI, hoặc 2 đơn liên tiếp lỗi do máy.
 
+## Tool tự báo: máy nào rảnh ở kịch bản nào + danh mục kịch bản (`POST /api/tool/sync`)
+
+Gateway đặt ngoài Internet, tool nằm trong mạng nội bộ → **gateway không gọi được vào tool**; mọi thứ gateway biết về máy và kịch bản đều do tool tự gửi lên.
+
+- Tool (cả app cửa sổ lẫn bản web dev) gọi `POST /api/tool/sync` **mỗi ~20 giây và ngay khi có thay đổi** (máy bắt đầu / xong việc, bị «Dừng máy», sửa kịch bản). Xem ở trang **Kịch bản & máy** (`/admin/scripts`) và cột «Kịch bản / pool» của trang Tổng quan.
+- `devices` = ảnh chụp **toàn bộ** máy: trạng thái (`idle` rảnh · `running` đang chạy kịch bản · `orders` đang nhận đơn · `paused` người vận hành dừng · `hold` dừng chờ kiểm tra · `manual` đang điều khiển tay · `offline` chưa sẵn sàng + lý do) và **các kịch bản máy đó chạy được** (kịch bản của mọi nhóm máy đang ở). Máy chỉ được tính là rảnh khi tool báo `idle`, lời báo chưa quá 90 giây, **và** gateway không còn ghi máy đó đang đứng tên một đơn (`Tools::idleFor()` — mọi việc «giao cho máy rảnh» sau này phải đi qua hàm này).
+- `scripts` = danh mục kịch bản soạn ở tool (**Nhóm & Kịch bản**): tên, nhóm, cách chạy, số bước, tên các `{{biến}}` cần dữ liệu, và **dàn ý** (loại từng bước + ghi chú). Chỉ gửi khi đổi (`scripts_rev` / `need_scripts`). **Nội dung gõ, toạ độ, tên app của các bước không rời khỏi tool.**
+- Bản web dev của tool báo `accepting: false` → trang hiện «tool không nhận đơn (bản web dev)». Không gửi `accepting` = không rõ (gateway không tự coi là đang nhận đơn).
+- Lời báo bị từ chối (4xx) thì không ghi gì. Máy tool thôi không khai nữa bị xoá khỏi bảng (trừ khi còn đứng tên một đơn — giữ lại tới khi đơn đó xong). Xoá một khoá Tool thì kịch bản + máy của khoá đó cũng bị xoá.
+- API này chỉ **báo tin**: không giao đơn, không đụng tới đơn đang chạy (`claim` / `heartbeat` / `result` vẫn như cũ).
+- Bản cài cũ: chạy lại `php bin/setup.php` để áp migration 3 (thêm bảng `tool_scripts` + vài cột cho `devices`, `api_keys`; không đổi dữ liệu cũ). Chưa áp thì `/api/tool/sync` trả `503 needs_migration`, các phần khác vẫn chạy.
+- **Mỗi bản cài tool dùng một khoá Tool riêng**: hai tool chung một khoá sẽ ghi đè danh sách máy / kịch bản của nhau. (Trong MỘT bản cài, app cửa sổ và bản web mở cùng lúc thì chỉ một bên báo — tool tự khoá.)
+
 ## Nguyên tắc tiền (đã cài cứng trong mã, có test)
 
 1. Một `ref` của shop = đúng **một** đơn (gửi lại không tạo đơn mới).
@@ -83,12 +96,13 @@ Tool đã cài sẵn vòng lặp ở mục «Vòng lặp mẫu của tool» củ
 ```bash
 php bin/test-flow.php     # dựng gateway + máy nhận webhook giả trên SQLite tạm, đóng vai shop & tool qua HTTP
 ```
-Kiểm: xác thực, cấu hình pool (6 danh sách bước, cờ bỏ qua nếu lỗi), tạo đơn/idempotent, chạy đua nhận việc, OTP (kể cả chờ long-poll, sai mã, hết lượt), ảnh, kết quả + xung đột 409, báo muộn, huỷ, đối soát, quá hạn, webhook có chữ ký, trang quản trị.
+Kiểm: xác thực, cấu hình pool (6 danh sách bước, cờ bỏ qua nếu lỗi), tạo đơn/idempotent, chạy đua nhận việc, OTP (kể cả chờ long-poll, sai mã, hết lượt), ảnh, kết quả + xung đột 409, báo muộn, huỷ, đối soát, quá hạn, webhook có chữ ký, trang quản trị, và `POST /api/tool/sync` (máy rảnh ở kịch bản nào, danh mục chỉ gửi khi đổi, lời báo cũ không còn được tin, không đụng tới đơn, hai khoá Tool không lẫn dữ liệu).
 
 Test **cả hai đầu** (tool thật ↔ gateway thật, iPhone giả lập) nằm ở phía tool — chạy từ gốc repo:
 
 ```bash
 ./.venv/bin/python app/tests/test_api_mode.py    # đơn thường, OTP sai/đúng, sai mật khẩu, mua 1 phần, treo sau khi bấm mua, tắt tool giữa chừng…
+./.venv/bin/python app/tests/test_presence.py    # tool tự báo máy rảnh + danh mục kịch bản (có chạy với gateway thật nếu có lệnh php)
 ./.venv/bin/python app/tests/test_nav.py         # định vị con trỏ + bấm vòng kín + kiểm bàn phím Telex/VNI (không cần iPhone)
 ./.venv/bin/python app/tests/smoke_device.py <tên máy>   # thử trên iPhone THẬT bằng thao tác vô hại trong app Cài đặt (tắt app trước)
 ```
@@ -99,7 +113,7 @@ Test **cả hai đầu** (tool thật ↔ gateway thật, iPhone giả lập) n�
 |---|---|
 | Lõi: env, DB, mã hoá, request/response, phiên admin, CSRF, giới hạn tần suất, lưu ảnh | `src/core.php` |
 | Bảng & migration (MySQL + SQLite) | `src/schema.php` |
-| Nghiệp vụ: pool/gói, khoá, máy, **vòng đời đơn**, OTP, webhook | `src/repo.php` |
+| Nghiệp vụ: pool/gói, khoá, máy, **máy rảnh + danh mục kịch bản do tool tự báo** (`Tools`), **vòng đời đơn**, OTP, webhook | `src/repo.php` |
 | API shop / tool, file ảnh, cron HTTP | `src/api.php` |
 | **Mô tả API cho /docs** (sửa API thì sửa ở đây cùng lúc) | `src/spec.php` |
 | Trang quản trị | `src/admin.php`, `views/` (khung trang: `views/layout.php`) |

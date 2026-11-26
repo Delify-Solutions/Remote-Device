@@ -175,6 +175,7 @@
     gateway_get: () => P({ url: GWCFG.url, has_key: !!GWCFG.key, key_hint: GWCFG.key ? GWCFG.key.slice(0, 8) + "…" : "" }),
     gateway_save: (url, key) => { GWCFG.url = url; if (key) GWCFG.key = key; return P({ ok: true, key: "iPhone Farm (demo)" }); },
     gateway_test: () => P({ ok: true, key: "iPhone Farm (demo)" }),
+    gateway_sync: () => P({ configured: !!GWCFG.key, ok: GWCFG.key ? true : null, at: Date.now() / 1000, error: "", devices: 2, idle: 1, scripts: 1, sent: 1 }),
     gateway_pools: () => P(GWCFG.url && GWCFG.key ? { ok: true, pools: GWPOOLS } : { ok: false, error: "Chưa cấu hình", pools: [] }),
     gateway_pool: (code) => P(code === "efootball-ios" ? JSON.parse(JSON.stringify(GWPOOL)) : { ok: false, error: "Không có pool này." }),
     get_flows: () => P(FLOWS),

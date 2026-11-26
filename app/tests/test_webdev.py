@@ -608,6 +608,9 @@ def main():
         order = []
         real_allow = gui.RUNNER.allow_api
         real_srv, real_webdev_cls, real_sleep, real_settings = gui.control.AppServer, webdev.WebDev, gui.time.sleep, gui.store.get_settings
+        real_presence = gui._start_presence
+        # main() thật sẽ chạy luồng TỰ BÁO GATEWAY (gửi dữ liệu tới gateway đang cấu hình trên máy này) — bài thử không bao giờ được để nó chạy thật
+        gui._start_presence = lambda: order.append(("luồng tự báo gateway", gui.RUNNER.allow_api))
         gui.RUNNER.allow_api = True
         gui.store.get_settings = lambda: {"ai_enabled": True, "ai_port": 47995}
         gui.control.AppServer = lambda *a, **k: types.SimpleNamespace(start=lambda p: order.append(("cầu nối AI mở cổng", gui.RUNNER.allow_api)) or True, stop=lambda: None, token="")
@@ -618,10 +621,11 @@ def main():
         gui.time.sleep = stop_loop
         try:
             gui.main(["--web"])
-            ok(order == [("cầu nối AI mở cổng", False), ("web mở cổng", False)] and gui.RUNNER.allow_api is False,
-               "chạy --web: «không chạy đơn của khách» có hiệu lực từ TRƯỚC khi cầu nối AI và trang web mở cổng", order)
+            ok(order == [("cầu nối AI mở cổng", False), ("web mở cổng", False), ("luồng tự báo gateway", False)] and gui.RUNNER.allow_api is False,
+               "chạy --web: «không chạy đơn của khách» có hiệu lực từ TRƯỚC khi cầu nối AI, trang web mở cổng và luồng tự báo gateway chạy", order)
         finally:
             gui.control.AppServer, webdev.WebDev, gui.time.sleep, gui.store.get_settings = real_srv, real_webdev_cls, real_sleep, real_settings
+            gui._start_presence = real_presence
             gui.RUNNER.allow_api = real_allow
             gui.WEBDEV = old_web
     finally:

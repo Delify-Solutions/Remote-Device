@@ -148,7 +148,7 @@ $my = implode("\n", array_merge(...array_values(Schema::migrations('mysql'))));
 ok(substr_count($my, 'utf8mb4_bin') >= 22 && preg_match('/utf8mb4_[a-z0-9_]*_ci/', $my) !== 1,
     'MySQL/MariaDB: mọi bảng so khớp CHÍNH XÁC (utf8mb4_bin) — không gộp mã đơn / tên máy khác hoa-thường, khác dấu');
 ok(Schema::migrations('sqlite')[2] === [] && count(Schema::migrations('mysql')[2]) === 11, 'migration 2 đổi collation cho bản cài MySQL cũ; SQLite không cần đổi');
-ok((int) Db::val('SELECT COUNT(*) FROM schema_version') === 2, 'đã áp đủ 2 migration');
+ok((int) Db::val('SELECT COUNT(*) FROM schema_version') === Schema::LATEST, 'đã áp đủ ' . Schema::LATEST . ' migration');
 
 echo "\n== Pool ==\n";
 $r = http('GET', '/api/shop/pools', $SK);
@@ -450,8 +450,225 @@ ok(array_column($gv, 'type') === ['swipe', 'swipe', 'hold', 'hold_text'] && arra
     && array_column($gv, 'optional') === [false, false, false, true], 'tool nhận lại đúng loại bước, giá trị và cờ «bỏ qua nếu lỗi»', $gv);
 ok(!array_diff(['swipe', 'hold', 'hold_text'], array_keys(Pools::STEP_TYPES)), 'ba loại bước mới có trong danh sách chọn của trang quản trị');
 
+echo "\n== Tool tự báo: máy rảnh ở kịch bản nào + danh mục kịch bản (/api/tool/sync) ==\n";
+ok(Schema::version() === Schema::LATEST && Schema::LATEST >= 3, 'CSDL ở phiên bản mới nhất (có bảng tool_scripts)', Schema::version());
+ok(http('POST', '/api/tool/sync', null, ['devices' => []])['code'] === 401, 'sync không có khoá → 401');
+ok(http('POST', '/api/tool/sync', $SK, ['devices' => []])['code'] === 401, 'sync bằng khoá SHOP → 401 (chỉ khoá Tool)');
+$kid = (int) $tool['id'];
+$rev1 = hash('sha256', 'danh-muc-1');
+$U1 = 'g1:nap';
+$U2 = 'g1:dang-nhap';
+$devs = [
+    ['name' => 'Farm-A', 'label' => 'iPhone 8 số 1', 'status' => 'idle', 'scripts' => [$U1, $U2, 'sai uid', $U1, 'x:' . str_repeat('y', 41)]],
+    ['name' => 'Farm-B', 'status' => 'running', 'scripts' => [$U1], 'running' => ['uid' => $U1, 'group' => 'Nhóm 1', 'script' => 'Nạp', 'iter' => 2, 'job' => 'J-KHONG-LUU']],
+    ['name' => 'Farm-C', 'status' => 'bay-len-troi', 'note' => 'ghi chú của tool', 'scripts' => [$U2]],
+    ['name' => 'Farm-A', 'status' => 'offline'],                      // trùng tên → bỏ dòng sau
+    ['status' => 'idle'],                                             // thiếu tên → bỏ
+    'khong-phai-may',
+];
+$s1 = http('POST', '/api/tool/sync', $TK, ['tool' => ['app' => 'iphone-farm', 'mode' => 'web', 'accepting' => false], 'scripts_rev' => $rev1, 'devices' => $devs]);
+ok($s1['code'] === 200 && $s1['json']['need_scripts'] === true && $s1['json']['scripts_rev'] === null && $s1['json']['devices'] === 3 && $s1['json']['scripts'] === 0,
+    'lần báo đầu chỉ có máy + mã băm → gateway nhận máy và đòi danh mục (need_scripts)', $s1['json']);
+$cat = [
+    ['uid' => $U1, 'group' => 'Nhóm 1', 'name' => 'Nạp <b>gói</b>', 'mode' => 'loop', 'loops' => 3, 'step_count' => 3,
+     'vars' => ['username', 'package.name', 'co dau cach', 'username', '9batdau'],
+     'outline' => [['type' => 'launch', 'note' => 'mở game', 'optional' => false, 'app' => 'TEN-APP-BI-MAT'],
+                   ['type' => 'type', 'note' => '', 'optional' => true, 'text' => 'MAT-KHAU-GO-THANG'], ['type' => 'DROP TABLE', 'note' => 'x'], ['type' => "tap\n", 'note' => 'xuống dòng thừa'], 'rac']],
+    ['uid' => $U2, 'group' => 'Nhóm 1', 'name' => 'Đăng nhập', 'mode' => 'once', 'loops' => 1, 'step_count' => 0, 'vars' => [], 'outline' => []],
+    ['uid' => 'thieu-dau-hai-cham', 'name' => 'bỏ'],
+    ['uid' => $U1, 'name' => 'trùng uid → bỏ'],
+];
+$s2 = http('POST', '/api/tool/sync', $TK, ['tool' => ['app' => 'iphone-farm', 'mode' => 'web', 'accepting' => false], 'scripts_rev' => $rev1, 'scripts' => $cat, 'devices' => $devs]);
+ok($s2['code'] === 200 && $s2['json']['need_scripts'] === false && $s2['json']['scripts_rev'] === $rev1 && $s2['json']['scripts'] === 2, 'gửi kèm danh mục → gateway nạp 2 kịch bản hợp lệ, hết đòi', $s2['json']);
+$r1 = Db::one('SELECT * FROM tool_scripts WHERE tool_key_id=? AND uid=?', [$kid, $U1]);
+ok($r1 && $r1['group_id'] === 'g1' && $r1['script_id'] === 'nap' && $r1['run_mode'] === 'loop' && (int) $r1['loops'] === 3 && (int) $r1['step_count'] === 3
+    && jdec($r1['vars']) === ['username', 'package.name']
+    && jdec($r1['outline']) === [['type' => 'launch', 'note' => 'mở game', 'optional' => false], ['type' => 'type', 'note' => '', 'optional' => true]],
+    'kịch bản lưu đúng: nhóm, cách chạy, số bước, biến hợp lệ, dàn ý chỉ gồm loại bước + ghi chú', $r1);
+ok(!str_contains(json_encode(Db::all('SELECT * FROM tool_scripts')), 'MAT-KHAU-GO-THANG') && !str_contains(json_encode(Db::all('SELECT * FROM tool_scripts')), 'TEN-APP-BI-MAT'),
+    'nội dung gõ / tên app trong bước KHÔNG được lưu ở gateway (chỉ nhận dàn ý)');
+$dA = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-A']);
+$dB = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-B']);
+$dC = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-C']);
+ok($dA && $dA['status'] === 'idle' && $dA['label'] === 'iPhone 8 số 1' && jdec($dA['scripts']) === [$U1, $U2], 'máy rảnh: lưu trạng thái, nhãn, và đúng các kịch bản hợp lệ (bỏ uid sai / trùng)', $dA);
+ok($dB && $dB['status'] === 'running' && jdec($dB['running']) === ['uid' => $U1, 'group' => 'Nhóm 1', 'script' => 'Nạp', 'iter' => 2], 'máy đang chạy: lưu đang chạy kịch bản nào, vòng mấy (không lưu trường lạ)', $dB);
+ok($dC && $dC['status'] === 'offline' && $dC['status_note'] === 'tool báo trạng thái lạ', 'trạng thái lạ → «chưa sẵn sàng», không bao giờ thành rảnh', $dC);
+ok(Tools::idleFor($dA, $U1) && Tools::idleFor($dA, $U2) && !Tools::idleFor($dB, $U1) && !Tools::idleFor($dC, $U2) && !Tools::idleFor($dA, 'g9:khac'),
+    'máy rảnh Ở KỊCH BẢN NÀO: chỉ máy idle và có kịch bản đó trong danh sách của nó');
+$board = Tools::board();
+$mine = array_values(array_filter($board, static fn ($t) => (int) $t['key']['id'] === $kid))[0] ?? null;
+$byUid = $mine ? array_column($mine['scripts'], null, 'uid') : [];
+ok($mine && $mine['fresh'] && $mine['info']['mode'] === 'web' && $mine['info']['accepting'] === false
+    && array_column($byUid[$U1]['idle'], 'name') === ['Farm-A'] && array_column($byUid[$U1]['others'], 'name') === ['Farm-B']
+    && array_column($byUid[$U2]['idle'], 'name') === ['Farm-A'] && array_column($byUid[$U2]['others'], 'name') === ['Farm-C'],
+    'bảng «Kịch bản & máy»: mỗi kịch bản liệt kê máy đang rảnh và máy khác; ghi nhận tool bản web không nhận đơn', $mine ? [$mine['info'], array_map(static fn ($s) => [array_column($s['idle'], 'name'), array_column($s['others'], 'name')], $mine['scripts'])] : null);
+
+// sync là việc của MÁY — không đụng tới việc của ĐƠN (state / job / pool do heartbeat + claim ghi)
+http('POST', '/api/tool/heartbeat', $TK, ['devices' => [['name' => 'Farm-B', 'pool' => 'efootball-ios', 'state' => 'busy', 'job' => 'JGIUNGUYEN']], 'active' => []]);
+$s3 = http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev1, 'devices' => [['name' => 'Farm-A', 'status' => 'paused', 'note' => 'người vận hành bấm Dừng máy', 'scripts' => [$U1]],
+                                                                                ['name' => 'Farm-B', 'status' => 'orders', 'scripts' => []]]]);
+$dB = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-B']);
+$dA = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-A']);
+$dC = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-C']);
+ok($s3['code'] === 200 && $s3['json']['need_scripts'] === false && $s3['json']['devices'] === 2, 'báo lại không kèm danh mục (mã băm khớp) → không đòi; đếm đúng số máy còn khai', $s3['json']);
+ok($dB['state'] === 'busy' && $dB['job_pid'] === 'JGIUNGUYEN' && $dB['pool_code'] === 'efootball-ios' && $dB['status'] === 'orders', 'sync KHÔNG ghi đè state / job / pool của heartbeat', $dB);
+ok($dA['status'] === 'paused' && !Tools::idleFor($dA, $U1) && Tools::state($dA)[1] === Tools::STATUS['paused'][0] && Tools::state($dA)[3] === 'người vận hành bấm Dừng máy',
+    'máy bị người vận hành dừng → không còn tính là rảnh, hiện đúng nhãn + ghi chú', Tools::state($dA));
+ok($dC === null && count(array_filter(Devices::all(), static fn ($d) => $d['name'] === 'Farm-C')) === 0, 'máy tool không còn khai → xoá khỏi bảng máy', $dC);
+ok(Tools::board()[0]['info']['accepting'] === null, 'tool không gửi `accepting` → KHÔNG RÕ (không tự coi là đang nhận đơn)', Tools::board()[0]['info']);
+
+// máy mà gateway còn ghi đang ĐỨNG TÊN MỘT ĐƠN thì không rảnh, dù tool báo idle; và sync không làm mới «còn sống» của đơn
+$seenAt = time() - 50;
+Db::insert('jobs', ['pid' => 'JGIUNGUYEN', 'pool_id' => $poolId, 'shop_key_id' => (int) $shop['id'], 'ref' => 'SYNC-GIU-DON', 'status' => 'running', 'stage' => 'purchasing',
+    'device' => 'Farm-B', 'tool_key_id' => $kid, 'created_at' => time(), 'claimed_at' => time(), 'seen_at' => $seenAt, 'updated_at' => $seenAt]);
+http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev1, 'devices' => [['name' => 'Farm-A', 'status' => 'paused', 'scripts' => [$U1]], ['name' => 'Farm-B', 'status' => 'idle', 'scripts' => [$U1]]]]);
+$dB = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-B']);
+$jb = Db::one('SELECT * FROM jobs WHERE pid=?', ['JGIUNGUYEN']);
+ok($dB['status'] === 'idle' && $dB['job_pid'] === 'JGIUNGUYEN' && !Tools::idleFor($dB, $U1) && Tools::state($dB)[0] === 'busy' && Tools::state($dB)[1] === 'còn giữ đơn',
+    'tool báo RẢNH nhưng gateway còn ghi máy đang giữ một đơn → KHÔNG tính là rảnh, hiện «còn giữ đơn»', Tools::state($dB));
+ok(count(array_filter(array_column(Tools::board()[0]['scripts'], 'idle', 'uid')[$U1], static fn ($d) => $d['name'] === 'Farm-B')) === 0, '…và không nằm trong «máy đang rảnh» của kịch bản');
+ok((int) $jb['seen_at'] === $seenAt && $jb['status'] === 'running' && (int) $jb['updated_at'] === $seenAt, 'sync KHÔNG làm mới «còn sống» của đơn (việc của heartbeat / progress), không đổi gì ở đơn', $jb);
+$noJob = $dB; $noJob['job_pid'] = null; $noJob['state'] = 'free';
+ok(Tools::idleFor($noJob, $U1) && Tools::state($noJob)[0] === 'idle', '(cùng máy đó, hết đứng tên đơn thì lại tính là rảnh)');
+$busyOnly = $dB; $busyOnly['job_pid'] = null;                     // heartbeat báo «busy» nhưng không kèm mã đơn
+ok($busyOnly['state'] === 'busy' && !Tools::idleFor($busyOnly, $U1) && Tools::state($busyOnly)[0] === 'busy', 'gateway ghi máy «bận» (dù không kèm mã đơn) → cũng không tính là rảnh');
+$s3b = http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev1, 'devices' => [['name' => 'Farm-A', 'status' => 'paused', 'scripts' => [$U1]]]]);
+$dB = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-B']);
+ok($s3b['json']['devices'] === 1 && $dB && $dB['status'] === 'removed' && $dB['job_pid'] === 'JGIUNGUYEN' && $dB['scripts'] === null
+    && count(array_filter(Devices::all(), static fn ($d) => $d['name'] === 'Farm-B')) === 1 && !Tools::idleFor($dB, $U1),
+    'máy bị gỡ khỏi tool nhưng CÒN ĐỨNG TÊN một đơn → giữ lại (đánh dấu đã gỡ) cho người đối soát thấy, không tính là rảnh', $dB);
+Devices::free($kid, 'Farm-B');                                    // đơn của máy đã gỡ kết thúc
+ok(count(array_filter(Devices::all(), static fn ($d) => $d['name'] === 'Farm-B')) === 0, '…đơn đó xong thì máy đã gỡ thôi không hiện ở bảng máy nữa');
+http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev1, 'devices' => [['name' => 'Farm-A', 'status' => 'paused', 'scripts' => [$U1]]]]);
+ok(Db::one('SELECT id FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-B']) === null, '…và lần báo kế tiếp dọn hẳn dòng của máy đã gỡ (bảng không giữ rác)');
+http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev1, 'devices' => [['name' => 'Farm-A', 'status' => 'paused', 'scripts' => [$U1]], ['name' => 'Farm-B', 'status' => 'orders', 'scripts' => []]]]);
+ok(Db::val('SELECT status FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-B']) === 'orders', 'máy được khai lại → có lại trong bảng máy');
+
+// máy chỉ do heartbeat / claim tạo ra (tool bản cũ chưa biết sync, dùng chung khoá) không thuộc ảnh chụp của sync → sync không được xoá
+http('POST', '/api/tool/heartbeat', $TK, ['devices' => [['name' => 'Chi-Heartbeat', 'pool' => 'efootball-ios', 'state' => 'free']], 'active' => []]);
+http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev1, 'devices' => [['name' => 'Farm-A', 'status' => 'paused', 'scripts' => [$U1]], ['name' => 'Farm-B', 'status' => 'orders', 'scripts' => []]]]);
+$hb = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Chi-Heartbeat']);
+ok($hb && $hb['status'] === null && $hb['synced_at'] === null && $hb['pool_code'] === 'efootball-ios' && Tools::state($hb)[0] === 'free',
+    'máy chỉ khai qua heartbeat (chưa từng sync) → sync không xoá, vẫn hiện «trống» như trước', $hb);
+
+// danh mục là ảnh chụp toàn bộ + chỉ đổi updated_at khi nội dung đổi
+Db::run('UPDATE tool_scripts SET updated_at=1000, first_seen_at=1000 WHERE tool_key_id=?', [$kid]);
+$rev2 = hash('sha256', 'danh-muc-2');
+$s4 = http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev2]);
+ok($s4['json']['need_scripts'] === true && $s4['json']['scripts_rev'] === $rev1, 'tool đổi kịch bản (mã băm mới) → gateway đòi danh mục mới', $s4['json']);
+$cat2 = [$cat[0]];
+$cat2[0]['name'] = 'Nạp gói (đã sửa)';
+$s5 = http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev2, 'scripts' => $cat2]);
+$r1 = Db::one('SELECT * FROM tool_scripts WHERE tool_key_id=? AND uid=?', [$kid, $U1]);
+ok($s5['json']['scripts'] === 1 && $s5['json']['scripts_rev'] === $rev2 && Db::one('SELECT id FROM tool_scripts WHERE tool_key_id=? AND uid=?', [$kid, $U2]) === null
+    && $r1['name'] === 'Nạp gói (đã sửa)' && (int) $r1['first_seen_at'] === 1000 && (int) $r1['updated_at'] > 1000,
+    'danh mục mới: kịch bản bị xoá ở tool thì xoá ở gateway; kịch bản sửa thì cập nhật (giữ ngày thấy lần đầu)', [$s5['json'], $r1]);
+Db::run('UPDATE tool_scripts SET updated_at=1000 WHERE tool_key_id=?', [$kid]);
+http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev2, 'scripts' => $cat2]);
+ok((int) Db::val('SELECT updated_at FROM tool_scripts WHERE tool_key_id=? AND uid=?', [$kid, $U1]) === 1000, 'gửi lại y nguyên danh mục → không tính là «vừa sửa»');
+ok((int) Db::val('SELECT COUNT(*) FROM devices WHERE tool_key_id=? AND synced_at IS NOT NULL AND status<>?', [$kid, 'removed']) === 2, 'lời báo không kèm `devices` → giữ nguyên danh sách máy');
+
+// lời báo cũ không còn đáng tin
+Db::run('UPDATE devices SET status=?, synced_at=?, last_seen_at=? WHERE tool_key_id=? AND name=?', ['idle', time() - 200, time() - 200, $kid, 'Farm-A']);
+$dA = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-A']);
+ok(!Tools::idleFor($dA, $U1) && Tools::state($dA)[0] === 'lost', 'tool im quá 90 giây → máy «rảnh» cũ KHÔNG còn được tính là rảnh, hiện mất kết nối', Tools::state($dA));
+Db::run('UPDATE devices SET synced_at=?, last_seen_at=? WHERE tool_key_id=? AND name=?', [time() - 100, time() - 100, $kid, 'Farm-A']);
+ok(Tools::state(Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-A']))[0] === 'lost', 'khoảng 90–120 giây cũng là mất kết nối (không rơi về «trống» của heartbeat)');
+
+// thân sai / quá cỡ
+ok(http('POST', '/api/tool/sync', $TK, ['scripts' => $cat2])['json']['error'] === 'missing_rev', 'gửi danh mục mà thiếu mã băm → 422 missing_rev');
+ok(http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev2, 'scripts' => ['a' => 1]])['json']['error'] === 'invalid_scripts', 'scripts không phải danh sách → 422');
+ok(http('POST', '/api/tool/sync', $TK, ['devices' => 'x'])['json']['error'] === 'invalid_devices', 'devices không phải danh sách → 422');
+$many = [];
+for ($i = 0; $i < Tools::MAX_DEVICES + 1; $i++) {
+    $many[] = ['name' => "QuaNhieu-$i", 'status' => 'idle'];
+}
+ok(http('POST', '/api/tool/sync', $TK, ['devices' => $many])['json']['error'] === 'too_many_devices' && (int) Db::val("SELECT COUNT(*) FROM devices WHERE name LIKE 'QuaNhieu-%' AND tool_key_id=?", [$kid]) === 0,
+    'quá 200 máy → từ chối cả lời báo, không ghi dở dang');
+$rev3 = hash('sha256', 'danh-muc-3');
+$half = http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev3, 'scripts' => [], 'devices' => $many]);
+ok($half['json']['error'] === 'too_many_devices' && (int) Db::val('SELECT COUNT(*) FROM tool_scripts WHERE tool_key_id=?', [$kid]) === 1
+    && (jdec(Db::val('SELECT tool_info FROM api_keys WHERE id=?', [$kid]))['scripts_rev'] ?? '') === $rev2,
+    'lời báo bị từ chối (quá số máy) có kèm danh mục mới → danh mục cũ GIỮ NGUYÊN: kiểm hết rồi mới ghi', $half['json']);
+ok(http('POST', '/api/tool/sync', $TK, str_repeat(' ', Tools::MAX_BODY + 1), ['Content-Type: application/json'])['code'] === 413, 'thân quá 1 MB → 413');
+$nl = http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev2, 'devices' => [['name' => 'Farm-A', 'status' => "idle\n", 'scripts' => ["g1:na\np", "g1:nap\n\n:x"]], ['name' => 'Farm-B', 'status' => 'orders', 'scripts' => []]]]);
+$dA = Db::one('SELECT * FROM devices WHERE tool_key_id=? AND name=?', [$kid, 'Farm-A']);
+ok($nl['code'] === 200 && $dA['status'] === 'offline' && jdec($dA['scripts']) === [], 'trạng thái có dấu xuống dòng thừa / mã kịch bản chứa xuống dòng → không được nhận (không thành rảnh)', $dA);
+
+// hai khoá Tool không đụng dữ liệu của nhau
+$tool2 = Keys::create('tool', 'Farm Thuỷ');
+$o = http('POST', '/api/tool/sync', $tool2['plain'], ['scripts_rev' => $rev1, 'scripts' => [], 'devices' => [['name' => 'Farm-A', 'status' => 'idle', 'scripts' => [$U1]]]]);
+ok($o['code'] === 200 && (int) Db::val('SELECT COUNT(*) FROM tool_scripts WHERE tool_key_id=?', [$kid]) === 1
+    && (int) Db::val("SELECT COUNT(*) FROM devices WHERE tool_key_id=? AND synced_at IS NOT NULL AND status<>'removed'", [$kid]) === 2
+    && (int) Db::val('SELECT COUNT(*) FROM devices WHERE tool_key_id=?', [(int) $tool2['id']]) === 1,
+    'khoá Tool khác báo danh mục rỗng + máy trùng tên → dữ liệu của khoá này không bị xoá / gộp', $o['json']);
+
+// trang quản trị
+http('POST', '/api/tool/sync', $TK, ['scripts_rev' => $rev2, 'devices' => [['name' => 'Farm-A', 'label' => '<i>nhãn</i>', 'status' => 'idle', 'scripts' => [$U1]], ['name' => 'Farm-B', 'status' => 'running', 'scripts' => [$U1], 'running' => ['uid' => $U1, 'group' => 'Nhóm VIP', 'script' => 'Mua gói 1 tỷ', 'iter' => 2]]]]);
+$g = http('GET', '/admin/login', null, null, ['X-Forwarded-For: 203.0.113.50']);
+preg_match('/Set-Cookie:\s*([^;\r\n]+)/i', $g['head'], $c0);
+preg_match('/name="_csrf" value="([^"]+)"/', $g['text'], $t0);
+$in = http('POST', '/admin/login', null, http_build_query(['_csrf' => $t0[1] ?? '', 'username' => 'chu', 'password' => 'MatKhau-Dung#2026']),
+    ['Cookie: ' . ($c0[1] ?? ''), 'Content-Type: application/x-www-form-urlencoded', 'X-Forwarded-For: 203.0.113.50']);
+$cookie = preg_match('/Set-Cookie:\s*([^;\r\n]+)/i', $in['head'], $c1) === 1 ? $c1[1] : ($c0[1] ?? '');
+$page = http('GET', '/admin/scripts', null, null, ['Cookie: ' . $cookie, 'X-Forwarded-For: 203.0.113.50']);
+ok($page['code'] === 200 && str_contains($page['text'], 'Nạp gói (đã sửa)') && str_contains($page['text'], 'Farm-A') && str_contains($page['text'], 'đang chạy kịch bản')
+    && str_contains($page['text'], '{{username}}') && str_contains($page['text'], 'Nhóm VIP · Mua gói 1 tỷ'),
+    'trang «Kịch bản & máy» hiện kịch bản, biến cần dữ liệu, máy rảnh, máy đang chạy gì', [$page['code'], mb_substr(strip_tags($page['text']), 0, 200)]);
+ok(str_contains($page['text'], '&lt;i&gt;nhãn&lt;/i&gt;') && !str_contains($page['text'], '<i>nhãn</i>'), 'chữ do tool gửi lên được thoát HTML khi hiện');
+$dash = http('GET', '/admin', null, null, ['Cookie: ' . $cookie, 'X-Forwarded-For: 203.0.113.50']);
+ok($dash['code'] === 200 && str_contains($dash['text'], 'Farm-A') && str_contains($dash['text'], 'Nạp gói (đã sửa)') && str_contains($dash['text'], '/admin/scripts'),
+    'trang Tổng quan hiện máy kèm kịch bản chạy được', $dash['code']);
+ok(!str_contains($page['text'], "\u{FFFD}") && !str_contains($dash['text'], "\u{FFFD}") && str_contains($dash['text'], 'Farm Thuỷ') && str_contains($page['text'], 'Farm Thuỷ'),
+    'tên tiếng Việt (nhóm «…VIP», kịch bản «…tỷ», khoá «…Thuỷ») hiện nguyên vẹn — không bị cắt nhầm byte khi ghép bằng dấu «·»');
+ok(http('GET', '/admin/scripts')['code'] === 302, '/admin/scripts chưa đăng nhập → chuyển về trang đăng nhập');
+
+// xoá một khoá Tool → danh mục kịch bản + máy do khoá đó báo cũng đi theo
+http('POST', '/api/tool/sync', $tool2['plain'], ['scripts_rev' => $rev2, 'scripts' => $cat2]);
+$t2 = (int) $tool2['id'];
+$kp = http('GET', '/admin/keys', null, null, ['Cookie: ' . $cookie, 'X-Forwarded-For: 203.0.113.50']);
+preg_match('/name="_csrf" value="([^"]+)"/', $kp['text'], $tk2);
+$had = (int) Db::val('SELECT COUNT(*) FROM tool_scripts WHERE tool_key_id=?', [$t2]);
+$del = http('POST', "/admin/keys/$t2/delete", null, http_build_query(['_csrf' => $tk2[1] ?? '']), ['Cookie: ' . $cookie, 'Content-Type: application/x-www-form-urlencoded', 'X-Forwarded-For: 203.0.113.50']);
+ok($had === 1 && $del['code'] === 302 && Keys::find($t2) === null && (int) Db::val('SELECT COUNT(*) FROM tool_scripts WHERE tool_key_id=?', [$t2]) === 0
+    && (int) Db::val('SELECT COUNT(*) FROM devices WHERE tool_key_id=?', [$t2]) === 0 && (int) Db::val('SELECT COUNT(*) FROM tool_scripts WHERE tool_key_id=?', [$kid]) === 1,
+    'xoá khoá Tool → kịch bản + máy của khoá đó bị xoá theo; khoá khác không ảnh hưởng', [$had, $del['code']]);
+
+// mã mới chạy trên CSDL CŨ (chưa áp migration 3): sync báo rõ cần cập nhật, phần còn lại vẫn chạy; áp migration xong thì dùng được
+file_put_contents("$tmp/v2.php", <<<'PHP'
+<?php
+require getenv('GW_ROOT') . '/src/bootstrap.php';
+set_error_handler(static function ($no, $str, $file, $line) { throw new ErrorException($str, 0, $no, $file, $line); });
+$all = Schema::migrations(Db::driver());
+Db::pdo()->exec('CREATE TABLE IF NOT EXISTS schema_version (version INT NOT NULL PRIMARY KEY, applied_at INT NOT NULL)');
+foreach ([1, 2] as $v) {
+    foreach ($all[$v] as $sql) { Db::pdo()->exec($sql); }
+    Db::insert('schema_version', ['version' => $v, 'applied_at' => time()]);
+}
+$k = Keys::create('tool', 'Farm cũ');
+$key = Keys::find((int) $k['id']);
+Devices::touch((int) $k['id'], 'May-cu', 'p', 'free', null);
+$out = ['version' => Schema::version(), 'sync' => Tools::sync($key, ['devices' => [['name' => 'x', 'status' => 'idle']]]),
+        'devices' => array_column(Devices::all(), 'name'), 'board' => Tools::board(), 'names' => Tools::scriptNames(), 'state' => Tools::state(Devices::all()[0])[0]];
+$out['applied'] = Schema::migrate();
+$out['version_after'] = Schema::version();
+$out['after'] = Tools::sync(Keys::find((int) $k['id']), ['devices' => [['name' => 'x', 'status' => 'idle']]]);
+$out['again'] = Schema::migrate();
+echo json_encode($out);
+PHP);
+$v2 = proc_open([PHP_BINARY, "$tmp/v2.php"], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pp, $tmp, array_merge(getenv(), $env, ['DB_DSN' => "sqlite:$tmp/v2.sqlite", 'DB_USER' => '', 'DB_PASS' => '', 'GW_ROOT' => dirname(__DIR__)]));
+$v2out = stream_get_contents($pp[1]) . stream_get_contents($pp[2]);
+proc_close($v2);
+$v = json_decode($v2out, true) ?? [];
+ok(($v['version'] ?? 0) === 2 && ($v['sync'][0] ?? 0) === 503 && ($v['sync'][1]['error'] ?? '') === 'needs_migration' && ($v['devices'] ?? null) === ['May-cu']
+    && ($v['board'] ?? null) === [] && ($v['names'] ?? null) === [] && ($v['state'] ?? '') === 'free',
+    'CSDL chưa áp migration 3: sync trả 503 needs_migration; bảng máy / trang kịch bản vẫn chạy (không lỗi SQL)', mb_substr($v2out, 0, 300));
+ok(($v['applied'] ?? null) === [3] && ($v['version_after'] ?? 0) === Schema::LATEST && ($v['after'][0] ?? 0) === 200 && ($v['again'] ?? null) === [],
+    'chạy migrate trên CSDL cũ → lên bản mới nhất, sync dùng được ngay; chạy lại lần nữa không làm gì', [$v['applied'] ?? null, $v['after'][0] ?? null]);
+
 echo "\n== Trang quản trị + tài liệu ==\n";
 $docs = http('GET', '/docs');
+ok(str_contains($docs['text'], '/api/tool/sync') && str_contains($docs['text'], 'need_scripts'), 'tài liệu có API /api/tool/sync');
 ok($docs['code'] === 200 && str_contains($docs['text'], '/api/tool/claim'), 'trang /docs hiển thị');
 ok(str_contains($docs['text'], 'job.cancelled') && str_contains($docs['text'], 'attempt') && str_contains($docs['text'], 'logged_out') && str_contains($docs['text'], 'resumed'),
     'tài liệu có đủ: webhook job.cancelled, tham số attempt, luật logged_out, cách xử lý đơn resumed');

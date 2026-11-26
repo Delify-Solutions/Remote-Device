@@ -1587,6 +1587,31 @@ function setGwState() {
   else el.textContent = "Đang kiểm tra gateway…";
 }
 
+// Dòng «tự báo gateway»: tool tự gửi lên gateway máy nào rảnh ở kịch bản nào + danh mục kịch bản (gateway không gọi được vào tool).
+let GW_SYNC_SIG = "";
+function gwSyncHtml(st) {
+  if (!st || st.configured === false) return "";                                   // chưa cấu hình gateway → nút Gateway đã nói rồi
+  const link = ` <a href="#" id="gw-sync-now" title="Gửi ngay thay vì chờ nhịp kế (~20 giây)">báo ngay</a>`;
+  if (st.ok === false) return `<span class="text-danger">Chưa báo được cho gateway:</span> ${esc(st.error || "?")} ·${link}`;
+  if (st.ok !== true) return `Đang báo cho gateway…`;
+  const at = st.at ? new Date(st.at * 1000).toLocaleTimeString("vi-VN", { hour12: false }) : "";
+  return `<span class="text-success">●</span> Đã báo gateway lúc <b>${esc(at)}</b>: ${st.devices} máy (<b>${st.idle} rảnh</b>) · ${st.scripts} kịch bản ·${link}`;
+}
+async function refreshGwSync(now = false) {
+  const el = $("#gw-sync");
+  if (!el) return;
+  let st = null;
+  try { st = await API().gateway_sync(!!now); } catch (e) { return; }
+  const html = gwSyncHtml(st);
+  const sig = html;
+  if (sig === GW_SYNC_SIG) return;                                                  // không vẽ lại khi không đổi (giữ cú bấm đang dở)
+  GW_SYNC_SIG = sig;
+  el.hidden = !html;
+  el.innerHTML = html;
+  const a = $("#gw-sync-now");
+  if (a) a.onclick = (ev) => { ev.preventDefault(); toast("Đang báo cho gateway…"); refreshGwSync(true); setTimeout(() => refreshGwSync(), 2500); };
+}
+
 function renderPoolSelect() {
   const sel = $("#group-pool");
   if (!sel || !GROUP) return;
@@ -2014,6 +2039,7 @@ let STATUS_TIMER = null;
 let RUN_SIG = "";                      // dấu vết trạng thái chạy lần vẽ trước (để khỏi vẽ lại khi không có gì đổi)
 async function pollStatus(force = true) {
   try { RUN_STATUS = await API().run_status() || {}; } catch (e) { return; }
+  refreshGwSync();
   const active = $(".view.active");
   DEVICES.forEach(d => {                                 // trang Thiết bị: «đang chạy {nhóm} · {kịch bản}» theo trạng thái mới nhất
     const st = RUN_STATUS[d.name];

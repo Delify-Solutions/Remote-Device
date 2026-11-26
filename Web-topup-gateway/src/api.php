@@ -84,6 +84,12 @@ final class Api
             if ($m === 'POST' && $s === ['heartbeat']) {
                 self::out(Jobs::heartbeat($key, Req::json()));
             }
+            if ($m === 'POST' && $s === ['sync']) {                      // tool tự báo: máy nào rảnh ở kịch bản nào + danh mục kịch bản
+                if (strlen(Req::raw()) > Tools::MAX_BODY) {
+                    Res::err(413, 'too_large', 'Thân yêu cầu quá 1 MB.');
+                }
+                self::out(Tools::sync($key, Req::json()));
+            }
             if ($m === 'GET' && $s === ['pools']) {                      // danh sách gọn để người vận hành chọn pool cho nhóm máy
                 Res::json(['ok' => true, 'pools' => Pools::brief()]);
             }

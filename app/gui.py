@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import cv2
 import webview
 
-import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth
+import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth, presence
 from nav import Nav
 from hands import Hands
 from eyes import Eyes
@@ -173,7 +173,7 @@ WEB_SAFE_WITH_CUSTOMERS = frozenset((
     "screenshot", "ble_status", "run_step", "test_flow", "test_api_steps",            # tự kiểm theo máy thật (_web_privacy / _web_hold)
     "get_flows", "groups_list", "group_save", "group_add_device", "group_remove_device",
     "group_run", "group_stop", "machine_run", "machine_pause", "machine_resume", "machine_stop", "machine_ack", "stop_all",
-    "run_status", "run_log", "gateway_get", "gateway_test", "gateway_pools", "gateway_pool", "ai_info",
+    "run_status", "run_log", "gateway_get", "gateway_test", "gateway_pools", "gateway_pool", "gateway_sync", "ai_info",
 ))
 
 
@@ -253,6 +253,143 @@ def _busy(name=None):
     if name is not None and name in held:
         return f"Máy «{name}» đang được điều khiển tay (AI / dòng lệnh / thao tác thử) — chờ lệnh đó xong."
     return None
+
+
+_IOS_SEEN = {"at": None, "udids": None}
+
+
+def _ios_udids(max_age=20.0):
+    """UDID (dạng chuẩn) của các iPhone đang cắm USB (iPhone chỉ thấy qua Wi-Fi không tính: không chụp màn hình ổn định được).
+    Hỏi usbmux phải mở một tiến trình con nên kết quả được NHỚ TẠM `max_age` giây (đồng hồ đơn điệu — chỉnh giờ máy không làm kẹt)."""
+    now = time.monotonic()
+    if _IOS_SEEN["udids"] is None or _IOS_SEEN["at"] is None or now - _IOS_SEEN["at"] > max_age:
+        try:
+            udids = {Runner.canon_udid(d.get("udid")) for d in ios.list_connected()
+                     if d.get("udid") and str(d.get("connection") or "USB").upper() != "NETWORK"}
+        except Exception:
+            udids = set()
+        _IOS_SEEN.update(at=now, udids=udids)
+    return _IOS_SEEN["udids"]
+
+
+# Cổng / máy đang BẢO TRÌ (nạp / xoá firmware, dò máy): cổng serial bận nhưng không qua sổ CLAIMS → luồng tự báo phải biết để không báo «rảnh».
+MAINT = set()
+
+
+class _Maint:
+    """with _Maint(port) / _Maint("*"): đánh dấu cổng (hoặc MỌI máy) đang bảo trì trong lúc làm."""
+    def __init__(self, what):
+        self.what = what
+
+    def __enter__(self):
+        MAINT.add(self.what)
+
+    def __exit__(self, *exc):
+        MAINT.discard(self.what)
+        return False
+
+
+def _note_ble(name, status):
+    """Ghi trạng thái Bluetooth vừa ĐỌC ĐƯỢC từ board (chuỗi trạng thái của firmware) vào MGR.ble_map — để luồng tự báo không dựa mãi
+    vào kết quả của lượt quét board trước đó (vd vừa bấm «Huỷ kết nối BT» thì máy không còn được báo là rảnh)."""
+    text = str(status or "")
+    if "ble=connected" in text:
+        MGR.ble_map[name] = True
+    elif "ble=" in text:
+        MGR.ble_map[name] = False
+
+
+def _owes_order(name):
+    """Máy còn ĐƠN DỞ trong sổ (apimode.Journal — bền qua lần khởi động lại): đã nhận đơn mà chưa báo xong kết quả. Trạng thái «dừng chờ
+    kiểm tra» chỉ nằm trong bộ nhớ, nên sau khi app khởi động lại đây là dấu vết duy nhất cho biết máy chưa được phép coi là rảnh."""
+    try:
+        j = RUNNER.journal.get(name) if RUNNER.journal is not None else None
+    except Exception:
+        return True                                  # không đọc được sổ → không dám nói máy rảnh
+    return bool(j and j.get("job") and not j.get("delivered"))
+
+
+def _presence_facts():
+    """Dữ kiện cho luồng TỰ BÁO GATEWAY (presence.build): mọi máy + mọi nhóm. Không đụng cổng serial, không chụp màn hình.
+    Trả None = «lúc này chưa có dữ kiện ổn định, bỏ nhịp này» (đang quét board: bảng board / Bluetooth đang được dựng lại).
+    Tệp máy / nhóm không đọc được thì NÉM LỖI (không coi như «không còn máy / kịch bản nào» — gateway sẽ xoá sạch theo)."""
+    if not MGR.scan_idle.is_set():
+        return None
+    devices = store.get_devices_strict()
+    groups = store.get_groups_strict()
+    run = RUNNER.status()
+    claimed = set(CLAIMS.names())
+    ios_now = _ios_udids()
+    out, seen = [], set()
+
+    def fact(name, label, udid):
+        w = run.get(name) or {}
+        port = MGR.board_map.get(name)
+        running, mode = bool(w.get("running")), w.get("mode")
+        hold = bool(RUNNER.hold_reason(name)) or (not running and _owes_order(name))
+        # Tên này có thể đang trỏ vào CÙNG iPhone / board với một máy của khách dưới tên khác (bộ chạy cũng xét theo máy thật, xem
+        # Runner.conflict): máy thật đó đang giữ / đang làm đơn thì tên này cũng không rảnh.
+        other = _customer_conflict(name)
+        if other and other != name:
+            if RUNNER.hold_reason(other):
+                hold = True
+            else:
+                running, mode = True, "api"
+        return {"name": name, "label": label, "udid": bool(udid),
+                # board đã quét thấy VÀ cổng còn đó (rút dây thì tệp cổng biến mất, không cần chờ lượt quét sau)
+                "board_online": bool(port) and (not str(port).startswith("/") or os.path.exists(port)),
+                "ios_connected": bool(udid) and Runner.canon_udid(udid) in ios_now,
+                "ble": MGR.ble_map.get(name),
+                "running": running, "run_mode": mode,
+                "run_group_id": w.get("group_id"), "run_script_id": w.get("script_id"),
+                "run_group": w.get("group_name"), "run_script": w.get("script_name"), "iter": w.get("iter"),
+                "parked": RUNNER.is_parked(name), "hold": hold,
+                "claimed": name in claimed or "*" in MAINT or (bool(port) and port in MAINT)}
+
+    for d in devices:
+        seen.add(d["name"])
+        out.append(fact(d["name"], d.get("label") or "", d.get("udid")))
+    for name in list(MGR.board_map):
+        if name not in seen:
+            out.append(fact(name, "", None))
+    return out, groups
+
+
+def _presence_tool():
+    """Tool này là gì và có đang nhận đơn của khách không (bản web dev thì KHÔNG — gateway phải biết để không trông vào máy của nó)."""
+    return {"app": "iphone-farm", "mode": "web" if WEBDEV is not None else "desktop", "accepting": bool(RUNNER.allow_api)}
+
+
+# Luồng tự báo cho gateway: máy nào rảnh ở kịch bản nào + danh mục kịch bản (chạy trong main()).
+PRESENCE = presence.Reporter(_gateway, _presence_facts, _presence_tool)
+_PRESENCE_LOCK = None           # tệp khoá đang giữ: mỗi bản cài chỉ MỘT tiến trình được báo cho gateway
+
+
+def _start_presence():
+    """Chạy luồng tự báo — nhưng chỉ ở MỘT tiến trình của bản cài này. App cửa sổ và bản web chạy cùng lúc dùng chung khoá Tool; hai bên
+    cùng báo thì ghi đè lời báo của nhau (bên không giữ máy sẽ báo máy của bên kia là «chưa sẵn sàng» hoặc tệ hơn là «rảnh»).
+    Tiến trình không lấy được khoá thì KHÔNG báo và nói rõ lý do ở dòng trạng thái."""
+    global _PRESENCE_LOCK
+    try:
+        import fcntl
+    except ImportError:                 # hệ không có fcntl (Windows): không khoá được, vẫn báo
+        PRESENCE.start()
+        return True
+    if _PRESENCE_LOCK is None:
+        try:
+            os.makedirs(store.DATA_DIR, exist_ok=True)
+            f = open(os.path.join(store.DATA_DIR, "presence.lock"), "a+")
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                f.close()
+                PRESENCE.disable("Một cửa sổ / tiến trình khác của app đang báo cho gateway — tiến trình này không báo (tránh ghi đè lẫn nhau).")
+                return False
+            _PRESENCE_LOCK = f            # giữ tệp mở suốt đời tiến trình; tiến trình tắt thì hệ điều hành tự nhả khoá
+        except OSError:
+            pass                          # không tạo được tệp khoá (đĩa chỉ đọc…): vẫn báo
+    PRESENCE.start()
+    return True
 
 
 class _Using:
@@ -443,7 +580,8 @@ class Api:
             if not cands:
                 return {"ok": False, "error": "Không có iPhone nào đang cắm USB để dò."}
 
-            best, ranked, note = prober.identify(port, cands)
+            with _Maint("*"):                       # dò = rung chuột trên board + chụp mọi iPhone: trong lúc đó không máy nào là «rảnh»
+                best, ranked, note = prober.identify(port, cands)
             ranked_out = [{"name": c.get("name"), "udid": c.get("udid"), "score": s} for c, s in ranked]
             if not best:
                 return {"ok": False, "error": note or "Không xác định được máy.", "ranked": ranked_out}
@@ -588,7 +726,8 @@ class Api:
             # tên board đang nạp trên cổng này (để chuyển cấu hình khi đổi tên)
             old_name = next((n for n, p in MGR.board_map.items() if p == port), None)
             MGR.close_idle(_in_use())
-            r = esp.flash(port, name)
+            with _Maint(port):
+                r = esp.flash(port, name)
         # đổi tên: chuyển gán iPhone + nhãn từ tên cũ -> tên mới, bỏ 'máy cũ tên cũ'
         if r.get("ok") and old_name and old_name != name:
             try:
@@ -609,7 +748,8 @@ class Api:
             return {"ok": False, "log": why}
         with MGR.lock:
             MGR.close_idle(_in_use())
-            r = esp.erase(port)
+            with _Maint(port):
+                r = esp.erase(port)
             for n in [n for n, p in MGR.board_map.items() if p == port]:
                 MGR.board_map.pop(n, None)
                 MGR.ble_map.pop(n, None)
@@ -644,6 +784,7 @@ class Api:
             try:
                 nav = MGR.session(name)
                 st = nav.h.status()
+                _note_ble(name, st)
                 return {"ok": True, "status": st, "health": boardhealth.view(st)}
             except Exception as e:
                 return {"ok": False, "error": str(e)}
@@ -673,7 +814,9 @@ class Api:
             if not r["ok"]:
                 return {"ok": False, "error": "Board không khởi động lại được (đã thử cả reset cứng) — kiểm tra cáp USB / nguồn."}
             back = hands.wait_connected(20)
-            health = boardhealth.view(hands.status())
+            st = hands.status()
+            _note_ble(name, st)
+            health = boardhealth.view(st)
             return {"ok": True, "msg": "Đã khởi động lại board %s (reset %s) — %s." % (name, r["how"], "iPhone đã nối lại Bluetooth" if back else "iPhone chưa nối lại Bluetooth (đợi thêm vài giây rồi bấm «Dò lại»)"),
                     "health": health}
         return self._board_op(name, run)
@@ -684,10 +827,12 @@ class Api:
             r = boardhealth.disconnect_bt(hands, int(hold))
             if not r["ok"]:
                 return {"ok": False, "error": r.get("error") or "không huỷ được kết nối"}
+            st = hands.status()
+            _note_ble(name, st)                      # vừa huỷ kết nối: từ giờ máy không còn được báo là rảnh cho tới khi đọc lại thấy đã nối
             if r.get("none"):
-                return {"ok": True, "msg": "Board %s hiện không nối với iPhone nào." % name, "health": boardhealth.view(hands.status())}
+                return {"ok": True, "msg": "Board %s hiện không nối với iPhone nào." % name, "health": boardhealth.view(st)}
             return {"ok": True, "msg": "Đã huỷ kết nối Bluetooth của board %s; %s." % (
-                name, ("sau %d giây iPhone sẽ tự nối lại" % int(hold)) if int(hold) > 0 else "iPhone sẽ tự nối lại ngay"), "health": boardhealth.view(hands.status())}
+                name, ("sau %d giây iPhone sẽ tự nối lại" % int(hold)) if int(hold) > 0 else "iPhone sẽ tự nối lại ngay"), "health": boardhealth.view(st)}
         return self._board_op(name, run)
 
     # ---- điều khiển lẻ (dùng trong trình dựng bước) ----
@@ -1008,7 +1153,15 @@ class Api:
             if old.get("gateway_key") and _origin(old.get("gateway_url")) != _origin(url):
                 return {"ok": False, "error": "Đổi địa chỉ gateway sang máy chủ khác thì phải NHẬP LẠI khoá Tool (khoá cũ không tự gửi sang máy chủ mới)."}
         store.save_settings(patch)
+        PRESENCE.kick()                       # cấu hình mới → tự báo ngay theo địa chỉ / khoá mới
         return self.gateway_test()
+
+    def gateway_sync(self, now=False):
+        """Trạng thái luồng TỰ BÁO cho gateway (máy nào rảnh ở kịch bản nào + danh mục kịch bản). now=True: báo ngay thay vì chờ nhịp kế.
+        Chỉ gửi tới địa chỉ gateway + khoá đã lưu; nội dung bước, UDID không nằm trong lời báo (xem presence.py)."""
+        if now:
+            PRESENCE.kick()
+        return PRESENCE.state()
 
     def gateway_test(self):
         try:
@@ -1100,12 +1253,14 @@ def main(argv=None):
         WEBDEV = webdev.WebDev(api, WEB_DIR, token, port, gate=_web_gate)
         WEBDEV.start()
         atexit.register(WEBDEV.stop)
+        _start_presence()                       # bản web vẫn báo máy + kịch bản, kèm «không nhận đơn»
         print("Giao diện WEB (dev, chỉ máy này): %s" % WEBDEV.url(), file=sys.stderr, flush=True)
         try:
             while True:
                 time.sleep(3600)
         except KeyboardInterrupt:
             return
+    _start_presence()
     WINDOW = webview.create_window(
         "iPhone Farm Manager",
         os.path.join(WEB_DIR, "index.html"),
