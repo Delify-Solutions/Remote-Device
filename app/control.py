@@ -309,7 +309,8 @@ class Control:
                 ("%s iOS %s" % (d.get("model") or "", d.get("ios") or "?")).strip() if d.get("iphone") else "CHƯA cắm USB / chưa gán",
                 (" — nhóm «%s»" % d["group"]) if d.get("group") else "",
                 (" — ĐANG CHẠY: %s" % (d.get("status") or "")) if d.get("running") else "",
-                (" — ĐANG DỪNG CHỜ NGƯỜI KIỂM TRA (ON HOLD): %s" % d["hold"]) if d.get("hold") else ""))
+                (" — ĐANG DỪNG CHỜ NGƯỜI KIỂM TRA (ON HOLD): %s" % d["hold"]) if d.get("hold") else "")
+                + (" — NGƯỜI VẬN HÀNH ĐÃ DỪNG MÁY để xử lý tay (không điều khiển được cho tới khi họ bấm Tiếp tục)" if d.get("parked") else ""))
         return Result("\n".join(lines), {"devices": devs})
 
     def read_screen(self, device=None, include_text=True, include_image=True, scale=1.0):
@@ -897,13 +898,17 @@ class AppHost:
         return [{"name": d["name"], "label": d.get("label") or d["name"], "board": bool(d.get("board_online")),
                  "bluetooth": d.get("ble"), "iphone": bool(d.get("ios_connected")), "ios": d.get("ios"), "model": d.get("model"),
                  "group": d.get("group_name"), "running": bool(d.get("running")),
-                 "status": (st.get(d["name"]) or {}).get("status") or "", "hold": self._hold(d["name"])} for d in self.api.list_devices()]
+                 "status": (st.get(d["name"]) or {}).get("status") or "", "hold": self._hold(d["name"]),
+                 "parked": bool((st.get(d["name"]) or {}).get("parked"))} for d in self.api.list_devices()]
 
     def acquire(self, name):
         hold = self._hold(name)
         if hold:
             return ("Máy «%s» đang DỪNG CHỜ NGƯỜI KIỂM TRA: %s. Màn hình đang được giữ nguyên để đối soát — không điều khiển "
                     "cho tới khi người vận hành xử lý xong (nút «Đã kiểm tra xong» / «Chạy lại» trong app)." % (name, hold))
+        is_parked = getattr(self.runner, "is_parked", None)
+        if is_parked and is_parked(name):
+            return ("Máy «%s» đang DỪNG để người vận hành xử lý tay — không điều khiển qua AI / dòng lệnh cho tới khi họ bấm «Tiếp tục» trong app." % name)
         conflict = getattr(self.runner, "conflict", None)       # tên khác nhưng CÙNG iPhone / board với một máy của khách → cũng không điều khiển
         if conflict:
             try:

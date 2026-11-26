@@ -58,6 +58,9 @@ class Runner:
         self.ident = None
         # False = tiến trình này KHÔNG được chạy đơn của khách (chế độ web dev: trang có thể đang do AI điều khiển). Nhận đơn chỉ chạy ở app cửa sổ.
         self.allow_api = True
+        # Máy đang «DỪNG để xử lý tay» (người vận hành bấm Dừng máy / Tạm dừng): không kịch bản / đơn nào được chạy lên máy cho tới khi bấm
+        # Tiếp tục. Là trạng thái của MÁY — có cả khi máy đang nghỉ, và vẫn còn sau khi việc đang chạy kết thúc.
+        self.parked = set()
         self.logs = deque(maxlen=400)
         self._hb = None
         self._hb_wake = threading.Event()
@@ -94,6 +97,7 @@ class Runner:
             "group_id": w["group_id"], "group_name": w.get("group_name"), "script_id": w.get("script_id"), "script_name": w.get("script_name"),
             "mode": w["mode"],
             "pause_requested": alive and w["pause"].is_set(), "paused": alive and bool(w.get("paused")),     # tạm dừng để người xử lý tay
+            "parked": name in self.parked,
             "iter": w["iter"], "status": w["status"],
             "last_ok": w.get("last_ok"), "last_msg": w.get("last_msg"), "hold": (w.get("hold") if not alive else None),
             "job": w.get("job_ref"), "counts": dict(w["counts"]),
@@ -101,7 +105,26 @@ class Runner:
 
     def status(self):
         with self.lock:
-            return {n: self._snap(n) for n in list(self.workers)}
+            out = {n: self._snap(n) for n in list(self.workers)}
+            for n in self.parked:                      # máy đang nghỉ nhưng bị dừng để xử lý tay cũng phải hiện ra
+                if n not in out:
+                    out[n] = {"name": n, "running": False, "parked": True, "status": "ĐANG DỪNG · xử lý tay rồi bấm Tiếp tục"}
+            return out
+
+    def is_parked(self, name):
+        return name in self.parked
+
+    def forget_parked(self, name):
+        """Máy bị xoá khỏi app → bỏ trạng thái «đang dừng» của tên đó (không phải lời «Tiếp tục»)."""
+        with self.lock:
+            self.parked.discard(name)
+
+    def rename_parked(self, old, new):
+        """Board đổi tên → trạng thái «đang dừng để xử lý tay» đi theo máy sang tên mới."""
+        with self.lock:
+            if old in self.parked:
+                self.parked.discard(old)
+                self.parked.add(new)
 
     def _board_check(self, nav, say):
         """Kiểm sức khoẻ board ESP32 của `nav` LÚC RẢNH và tự phục hồi nếu cần (board im → reset cứng; thiếu RAM / phân mảnh → reset
@@ -188,6 +211,8 @@ class Runner:
         with self.lock:
             if self.is_running(name):
                 return False
+            if name in self.parked:
+                return False                              # máy đang dừng để xử lý tay — bấm Tiếp tục trên máy đó rồi mới chạy được
             held = self.workers.get(name)
             if group.get("mode") == "api" and not self.allow_api:
                 return False                              # tiến trình này không chạy đơn của khách (chế độ web dev)
@@ -237,23 +262,31 @@ class Runner:
         return True          # KHÔNG gỡ trạng thái giữ: gỡ giữ chỉ qua ack_hold (lời xác nhận rõ ràng) hoặc «Chạy lại» của chính nhóm nhận đơn
 
     def pause_machine(self, name):
-        """Yêu cầu máy TẠM DỪNG để người xử lý tay (không kết thúc việc đang chạy). Kịch bản: dừng trước bước kế tiếp (bước đang làm dở
-        làm nốt). Nhận đơn API: không nhận đơn mới, đơn đang làm vẫn làm nốt rồi mới dừng. False nếu máy không đang chạy."""
+        """DỪNG MÁY để người xử lý tay — không kết thúc việc đang chạy, và máy giữ trạng thái «đang dừng» cho tới khi bấm Tiếp tục.
+        Máy đang chạy kịch bản: dừng trước bước kế tiếp (bước đang làm dở làm nốt). Máy nhận đơn API: làm nốt đơn đang dở, không nhận đơn mới.
+        Máy đang nghỉ: từ giờ không kịch bản / đơn nào được chạy lên máy. Luôn trả True."""
         with self.lock:
+            first = name not in self.parked
+            self.parked.add(name)
             w = self.workers.get(name)
-            if not (w and w["thread"].is_alive()):
-                return False
-            w["pause"].set()
-            return True
+            if w and w["thread"].is_alive():
+                w["pause"].set()
+        if first:
+            self._log(name, "Dừng máy để xử lý tay", "warn")
+        return True
 
     def resume_machine(self, name):
-        """Tiếp tục sau khi tạm dừng (hoặc huỷ yêu cầu tạm dừng chưa kịp thực hiện). False nếu máy không đang chạy."""
+        """TIẾP TỤC: bỏ trạng thái «đang dừng» của máy; việc đang tạm dừng (nếu có) chạy tiếp. False nếu máy không đang dừng."""
         with self.lock:
+            was = name in self.parked
+            self.parked.discard(name)
             w = self.workers.get(name)
-            if not (w and w["thread"].is_alive()):
-                return False
-            w["pause"].clear()
-            return True
+            if w and w["thread"].is_alive() and w["pause"].is_set():
+                w["pause"].clear()
+                was = True
+        if was:
+            self._log(name, "Tiếp tục — máy dùng lại bình thường")
+        return was
 
     def start_group(self, group, names=None, script=None):
         targets = names if names is not None else list(group.get("devices", []))

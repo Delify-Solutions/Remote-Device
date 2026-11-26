@@ -259,10 +259,18 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   những máy nào (ô «Chạy trên máy» + nút Chạy / Dừng trong trình sửa kịch bản). Nhóm không còn «chế độ chạy» / «số vòng» riêng.
 - **Một máy chỉ chạy MỘT kịch bản một lúc**: máy hiện «đang chạy {nhóm} · {kịch bản}» (trang Nhóm, trang Thiết bị, `farm status`); chạy thêm kịch bản
   trên máy đang bận bị từ chối và nói rõ máy đang chạy gì. Dừng một nhóm / kịch bản chỉ dừng máy đang chạy đúng việc đó — không đụng việc của nhóm khác.
-- **Tạm dừng / Tiếp tục / Dừng từng máy** (trang Thiết bị, trang nhóm, trong kịch bản — cùng một bộ nút): «⏸ Tạm dừng» cho máy đứng yên để
-  **xử lý tay** mà không kết thúc việc đang chạy (kịch bản: dừng trước bước kế tiếp; máy nhận đơn: làm nốt đơn dở, không nhận đơn mới, và khi
-  tiếp tục sẽ kiểm lại «game đã đăng xuất chưa»); máy đang tạm dừng vẫn giữ chỗ nên không ai chạy chồng lên được. «▶ Tiếp tục» chạy tiếp,
-  «Dừng» kết thúc hẳn. Nút **«Dừng tất cả»** ở thanh trên cùng dừng mọi máy đang chạy (có hỏi lại; không gỡ trạng thái «dừng chờ kiểm tra»).
+- **Dừng máy / Tiếp tục / Dừng từng máy** — cùng một bộ nút ở trang Thiết bị (bảng board, và bảng «iPhone cắm USB» với iPhone đã gán board), ở danh sách
+  máy trong nhóm và trong kịch bản. «⏸ Dừng máy» (máy đang chạy thì ghi «⏸ Tạm dừng») cho máy đứng yên để **xử lý tay**:
+  - máy đang chạy: không kết thúc việc đang chạy (kịch bản: dừng trước bước kế tiếp; máy nhận đơn: làm nốt đơn dở, không nhận đơn mới, và khi
+    tiếp tục sẽ kiểm lại «game đã đăng xuất chưa»);
+  - máy đang nghỉ: từ lúc đó không kịch bản / đơn nào chạy lên máy, không thử bước / «Dò máy» được, AI / dòng lệnh cũng không điều khiển được
+    (AI vẫn XEM được màn hình máy đó như mọi máy đang nghỉ). Lệnh đang chạy dở lúc bấm (thử bước, AI) thì làm nốt — app báo rõ điều này;
+  - các thao tác chỉ đụng tới BOARD vẫn làm được khi máy đang dừng: «BLE?», «Khởi động lại board», «Huỷ kết nối BT»;
+  - trạng thái «đang dừng» là của MÁY: vẫn còn sau khi việc đang chạy kết thúc hay sau «Dừng tất cả», đi theo máy khi đổi tên board, cho tới khi
+    bấm «▶ Tiếp tục». Nó chỉ nằm trong bộ nhớ — khởi động lại app thì máy trở lại bình thường;
+  - máy đang «dừng chờ kiểm tra» hiện «Đã kiểm tra xong» (và thêm «Tiếp tục» nếu nó cũng đang dừng để xử lý tay); «Dừng máy» / «Tiếp tục» không bao giờ
+    gỡ trạng thái chờ kiểm tra.
+  «Dừng» kết thúc hẳn việc đang chạy. Nút **«Dừng tất cả»** ở thanh trên cùng dừng mọi máy đang chạy (có hỏi lại; không gỡ trạng thái «dừng chờ kiểm tra»).
 - **Máy đang «dừng chờ kiểm tra» sau đơn của khách** (màn hình giữ nguyên, game có thể còn đăng nhập tài khoản khách): nhóm / kịch bản KHÁC không chạy đè lên được
   — bị bỏ qua và báo rõ; ô «Chạy trên máy» hiện «⚠ dừng chờ kiểm tra» và không tích được. Chỉ «Chạy lại» của chính nhóm nhận đơn đó (tự đăng xuất + kiểm game
   sạch trước; nếu lần chạy lại dừng sớm trước khi kiểm xong thì máy vẫn đang giữ), hoặc người vận hành bấm **«Đã kiểm tra xong»** trên máy đó, mới gỡ được.
@@ -270,7 +278,7 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
 - Nhóm ở chế độ **nhận đơn API** (cũ, nhận đơn từ gateway) vẫn hoạt động như trước; giao diện hiện chưa có chỗ tạo loại nhóm này.
 - MCP / CLI: `list_groups` liệt kê kịch bản (tên, số bước, cách chạy — không lộ nội dung bước); `start_run` nhận `script` (bỏ trống được khi nhóm
   chỉ có 1 kịch bản; nhóm nhiều kịch bản mà không nêu thì bị từ chối).
-- Kiểm bằng `./.venv/bin/python app/tests/test_groups.py` (91 mục: lưu / chuẩn hoá kịch bản, máy nhiều nhóm, một máy một kịch bản, tạm dừng / tiếp tục, dừng đúng việc, dừng tất cả, máy đang giữ chờ kiểm tra).
+- Kiểm bằng `./.venv/bin/python app/tests/test_groups.py` (111 mục: lưu / chuẩn hoá kịch bản, máy nhiều nhóm, một máy một kịch bản, dừng máy / tiếp tục (cả lúc máy đang nghỉ), dừng đúng việc, dừng tất cả, máy đang giữ chờ kiểm tra). Bộ nút trên giao diện: `app/tests/test_ui_controls.py` (12 mục, chạy mã `app.js` bằng `node` trên mọi tổ hợp trạng thái).
 
 ### Cách hoạt động
 - **App đang mở** → mọi lệnh của AI/CLI được chuyển cho app thực hiện (app là nơi DUY NHẤT giữ cổng serial của board).

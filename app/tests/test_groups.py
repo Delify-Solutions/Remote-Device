@@ -155,7 +155,13 @@ def main():
         try:
             RP = runner.Runner(lambda n: FakeNav())
             scr_inf = {"id": "sp", "name": "Lặp mãi", "steps": [home, tap], "mode": "loop", "loops": 0}
-            ok(RP.pause_machine("P1") is False and RP.resume_machine("P1") is False, "máy không chạy → tạm dừng / tiếp tục trả False")
+            # «Dừng máy» khi máy đang NGHỈ: từ giờ không gì chạy lên máy cho tới khi «Tiếp tục»
+            ok(RP.resume_machine("P1") is False, "máy không đang dừng → «Tiếp tục» không làm gì (False)")
+            ok(RP.pause_machine("P1") is True and RP.is_parked("P1") and RP.status()["P1"] == {"name": "P1", "running": False, "parked": True, "status": RP.status()["P1"]["status"]},
+               "bấm «Dừng máy» lúc máy đang nghỉ → máy ở trạng thái đang dừng (hiện trong trạng thái dù chưa chạy gì)", RP.status())
+            ok(RP.start_machine("P1", grp, scr_once) is False and RP.start_group(grp, ["P1"], scr_once) == [] and not RP.is_running("P1"),
+               "máy đang dừng để xử lý tay → KHÔNG kịch bản nào chạy lên được")
+            ok(RP.resume_machine("P1") is True and not RP.is_parked("P1") and "P1" not in RP.status(), "bấm «Tiếp tục» → máy dùng lại bình thường")
             RP.start_machine("P1", grp, scr_inf)
 
             def until(cond, sec=6.0):
@@ -180,6 +186,9 @@ def main():
             RP.workers["P1"]["thread"].join(5)
             ok(not RP.workers["P1"]["thread"].is_alive() and RP.status()["P1"]["status"] == "đã dừng" and RP.status()["P1"]["paused"] is False,
                "Dừng lúc đang tạm dừng → kết thúc hẳn (không kẹt ở tạm dừng)", RP.status()["P1"])
+            ok(RP.is_parked("P1") and RP.status()["P1"]["parked"] is True and RP.start_machine("P1", grp, scr_inf) is False,
+               "…nhưng MÁY vẫn đang dừng để xử lý tay: việc đã kết thúc, máy chưa chạy việc mới được cho tới khi «Tiếp tục»")
+            RP.resume_machine("P1")
             # dừng tất cả
             RP.start_machine("P1", grp, scr_inf); RP.start_machine("P2", grp, scr_inf)
             until(lambda: RP.is_running("P1") and RP.is_running("P2"))
@@ -187,6 +196,8 @@ def main():
             RP.stop_all()
             RP.workers["P1"]["thread"].join(5); RP.workers["P2"]["thread"].join(5)
             ok(RP.running_names() == [], "Dừng tất cả → mọi máy dừng, kể cả máy đang tạm dừng", RP.running_names())
+            ok(RP.is_parked("P2") and not RP.is_parked("P1"), "Dừng tất cả không tự bỏ trạng thái «đang dừng để xử lý tay» của máy (người bấm Tiếp tục mới bỏ)")
+            RP.resume_machine("P2")
         finally:
             runner.engine.run_step = real_run_step
             runner.engine.time = _t
@@ -315,6 +326,22 @@ def main():
         ok(RH.hold_reason("H1") == "đơn T-9 cần đối soát",
            "«Chạy lại» mà lần chạy mới kết thúc TRƯỚC khi kiểm xong game đã đăng xuất (không mở được máy, bị dừng…) → máy VẪN đang giữ", RH.hold_reason("H1"))
         ok(RH.start_machine("H1", script_grp, scr_once) is False, "…nên kịch bản nhóm khác vẫn không chạy đè lên được")
+        # «Dừng máy» / «Tiếp tục» trên máy đang GIỮ: không gỡ, không che trạng thái giữ (chỉ «Đã kiểm tra xong» mới gỡ)
+        RH.pause_machine("H1")
+        ok(RH.hold_reason("H1") == "đơn T-9 cần đối soát" and RH.workers["H1"].get("carry_hold") == "đơn T-9 cần đối soát" and RH.status()["H1"]["parked"] is True and RH.status()["H1"]["hold"],
+           "bấm «Dừng máy» trên máy đang giữ chờ kiểm tra → vẫn giữ nguyên (cả lý do mang theo), chỉ thêm trạng thái đang dừng", RH.status()["H1"])
+        ok(RH.start_machine("H1", api_grp, None) is False, "…lúc đang dừng thì cả «Chạy lại» của chính nhóm nhận đơn cũng chưa chạy (phải bấm Tiếp tục trước)")
+        ok(RH.resume_machine("H1") is True and RH.hold_reason("H1") == "đơn T-9 cần đối soát" and RH.workers["H1"].get("carry_hold") == "đơn T-9 cần đối soát" and RH.start_machine("H1", script_grp, scr_once) is False,
+           "bấm «Tiếp tục» → hết dừng nhưng VẪN đang giữ chờ kiểm tra (Tiếp tục không phải lời xác nhận đã đối soát)", RH.hold_reason("H1"))
+        RH.pause_machine("H1")
+        ok(RH.ack_hold("H1") is True and RH.hold_reason("H1") is None and RH.is_parked("H1"), "«Đã kiểm tra xong» lúc đang dừng → hết giữ, máy vẫn đang dừng để xử lý tay")
+        RH.workers["H1"]["hold"] = "đơn T-9 cần đối soát"; RH.workers["H1"]["carry_hold"] = "đơn T-9 cần đối soát"      # trả lại trạng thái giữ cho các bước dưới
+        RH.resume_machine("H1")
+        # đổi tên board / xoá máy: trạng thái «đang dừng» đi theo máy, không để tên ma
+        RH.pause_machine("cu"); RH.rename_parked("cu", "moi"); RH.rename_parked("khong-dung", "x")
+        ok(RH.is_parked("moi") and not RH.is_parked("cu") and not RH.is_parked("x"), "board đổi tên → vẫn «đang dừng» dưới tên mới; máy không dừng thì đổi tên không sinh trạng thái")
+        RH.forget_parked("moi")
+        ok(not RH.is_parked("moi") and "moi" not in RH.status(), "xoá máy → bỏ trạng thái đang dừng của tên đó")
 
         def clean_run(name, group, w):
             w["carry_hold"] = None                       # như bộ chạy thật lúc đã THẤY game ở trạng thái chưa đăng nhập
@@ -367,6 +394,73 @@ def main():
             finally:
                 gui.MGR._udid, gui.MGR.board_map = real_udid, real_map
                 gui.RUNNER.workers.pop("KHACH", None)
+            # máy đang «dừng để xử lý tay»: chạy nhóm bỏ qua + báo; chạy riêng / thử bước bị từ chối; không có máy lạ
+            real_devs = gui.store.get_devices
+            gui.store.get_devices = lambda: [{"name": "M1"}, {"name": "M2"}, {"name": "M3"}]
+            try:
+                ok(gui.Api().machine_pause("M-KHONG-CO")["ok"] is False, "«Dừng máy» với tên máy không có → báo lỗi, không tạo trạng thái rác")
+                rp = gui.Api().machine_pause("M2")
+                ok(rp == {"ok": True, "running": False, "in_use": False} and gui.RUNNER.is_parked("M2"), "«Dừng máy» lúc máy đang nghỉ → được, báo là máy không đang chạy", rp)
+                r = gui.Api().group_run("G", ["M2"], "s3"); r2 = gui.Api().machine_run("G", "M2", "s3"); r3 = gui.Api().run_step("M2", {"type": "home"}); r4 = gui.Api().test_flow("M2", [{"type": "home"}])
+                ok(r["ok"] is True and r["started"] == [] and "xử lý tay" in (r["busy"].get("M2") or "") and r2["ok"] is False and "Tiếp tục" in r2["error"]
+                   and r3["ok"] is False and "xử lý tay" in r3["msg"] and r4["ok"] is False and "xử lý tay" in r4["error"]
+                   and "M2" not in gui.RUNNER.workers and gui.CLAIMS.names() == [],
+                   "máy đang dừng để xử lý tay: chạy nhóm bỏ qua + báo lý do; chạy riêng / thử bước / thử kịch bản bị từ chối", (r, r2, r3))
+                # thao tác chỉ đụng BOARD (hỏi Bluetooth, khởi động lại board, huỷ kết nối BT) vẫn làm được khi máy đang dừng để xử lý tay
+                opened = []
+                real_hands, real_session = gui.MGR.hands, gui.MGR.session
+
+                class FakeH:
+                    def status(self): return "OK ble=connected fw=3 up=10 heap=100000 tot=250000 min=90000 blk=80000 rst=poweron rxerr=0 ovf=0 drop=0 cmds=5"
+                gui.MGR.hands = lambda n: (opened.append(("hands", n)) or FakeH(), lambda: None)
+                gui.MGR.session = lambda n: opened.append(("session", n)) or types.SimpleNamespace(h=FakeH())
+                try:
+                    b1 = gui.Api().ble_status("M2")
+                    b2 = gui.Api()._board_op("M2", lambda hands: {"ok": True, "msg": "đã làm"})
+                finally:
+                    gui.MGR.hands, gui.MGR.session = real_hands, real_session
+                ok(b1.get("ok") is True and "đang được điều khiển" not in b1.get("status", "") and ("session", "M2") in opened and b2 == {"ok": True, "msg": "đã làm"} and ("hands", "M2") in opened,
+                   "máy đang dừng: «BLE?», «Khởi động lại board», «Huỷ kết nối BT» VẪN làm được (hỏi thật board, không trả lời giả)", (b1, b2, opened))
+                real_busy = gui._busy
+                gui._busy = lambda name=None: None
+                try:
+                    pr = gui.Api().probe_match("M2")
+                finally:
+                    gui._busy = real_busy
+                ok(pr["ok"] is False and "xử lý tay" in pr["error"], "máy đang dừng: «Dò máy» (rung chuột trên máy) bị từ chối", pr)
+                # đang có lệnh chạy dở trên máy (thử bước / AI) lúc bấm Dừng máy → nói thật là lệnh đó làm nốt
+                gui.Api().machine_resume("M2")
+                gui.CLAIMS.acquire("M2", "ai")
+                try:
+                    rp2 = gui.Api().machine_pause("M2")
+                finally:
+                    gui.CLAIMS.release("M2", "ai")
+                ok(rp2 == {"ok": True, "running": False, "in_use": True} and gui.Api().machine_pause("M3")["in_use"] is False,
+                   "«Dừng máy» khi đang có lệnh chạy dở trên máy → báo in_use (lệnh đó làm nốt), không nói «không gì đang chạy»", rp2)
+                gui.RUNNER.forget_parked("M3")
+                # danh sách thiết bị mang cờ đang dừng
+                real_ios, real_groups = gui.ios.list_connected, gui.store.get_groups
+                gui.ios.list_connected = lambda: []
+                gui.store.get_groups = lambda: []
+                try:
+                    lst = {d["name"]: d.get("parked") for d in gui.Api().list_devices()}
+                finally:
+                    gui.ios.list_connected, gui.store.get_groups = real_ios, real_groups
+                ok(lst.get("M2") is True and lst.get("M1") is False, "danh sách thiết bị báo đúng máy nào đang dừng để xử lý tay", lst)
+                # xoá máy đang dừng → không để lại tên ma
+                real_del_dev = gui.store.delete_device
+                gui.store.delete_device = lambda n: None
+                try:
+                    gui.Api().machine_pause("M3")
+                    was_parked = gui.RUNNER.is_parked("M3")
+                    dd = gui.Api().delete_device("M3")
+                finally:
+                    gui.store.delete_device = real_del_dev
+                ok(was_parked and dd["ok"] is True and not gui.RUNNER.is_parked("M3") and "M3" not in gui.RUNNER.status(), "xoá máy đang dừng → trạng thái đang dừng của tên đó cũng mất", dd)
+                ok(gui.Api().machine_resume("M2")["ok"] is True and gui.Api().machine_resume("M2")["ok"] is False and not gui.RUNNER.is_parked("M2"), "«Tiếp tục» → hết dừng; bấm lần nữa báo máy không đang dừng")
+            finally:
+                gui.store.get_devices = real_devs
+                gui.RUNNER.parked.discard("M2")
             r = gui.Api().group_run("G", ["M-LA"], "s1"); r2 = gui.Api().machine_run("G", "M-LA", "s1")
             ok(r["ok"] is False and "không thuộc nhóm" in r["error"] and r2["ok"] is False and "M-LA" not in gui.RUNNER.workers, "máy không thuộc nhóm → từ chối, không chạy", (r, r2))
 

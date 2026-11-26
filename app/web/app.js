@@ -329,7 +329,7 @@ function renderDevices() {
           <span class="group-chip ${d.group_id ? "has" : ""}" title="Các nhóm máy này thuộc về (thêm / bớt máy trong trang của từng nhóm)">${d.group_name ? "👥 " + esc(d.group_name) : "Chưa vào nhóm nào"}</span>
           ${d.running ? `<span class="pill ok" style="font-size:.66rem" title="Một máy chỉ chạy một kịch bản một lúc">▶ đang chạy ${esc([d.run_group, d.run_script].filter(Boolean).join(" · "))}</span>` : ""}
         </div>
-        ${(d.running || d.hold) ? `<div class="cell-run">${runControlsHtml(d.name, { running: !!d.running, hold: d.hold, paused: d.paused, pause_requested: d.pause_requested, stopping: d.stopping, mode: d.run_mode })}</div>` : ""}</td>
+        <div class="cell-run">${runControlsHtml(d.name, devRunState(d))}</div></td>
       <td>${phoneCell}</td>
       <td class="ta-r">
         <div class="row-actions-h">
@@ -431,6 +431,7 @@ function renderIOS() {
   const slice = list.slice((IOS_PAGE - 1) * PAGE_SIZE, IOS_PAGE * PAGE_SIZE);
   slice.forEach(p => {
     const isMapped = mapped.has(p.udid);
+    const dv = DEVICES.find(d => d.udid && d.udid === p.udid);          // board đang điều khiển iPhone này (nếu đã gán)
     const u = esc(p.udid || "");
     const nm = esc(p.name || "—");
     const tr = document.createElement("tr");
@@ -439,7 +440,9 @@ function renderIOS() {
         <div class="cell-name">${nm}</div>
         <div class="cell-pills">${isMapped
           ? `<span class="pill ok">đã gán board</span>`
-          : `<span class="pill warn">chưa gán board</span>`}</div></td>
+          : `<span class="pill warn">chưa gán board</span>`}
+          ${dv && dv.running ? `<span class="pill ok" style="font-size:.66rem">▶ đang chạy ${esc([dv.run_group, dv.run_script].filter(Boolean).join(" · "))}</span>` : ""}</div>
+        ${dv ? `<div class="cell-run">${runControlsHtml(dv.name, devRunState(dv))}</div>` : ""}</td>
       <td>
         <div class="cell-name">${esc(p.model || p.product_type || "iPhone")}</div>
         <div class="cell-pills">${p.ios ? `<span class="pill ok">iOS ${esc(p.ios)}</span>` : `<span class="pill mut">—</span>`} ${udidCell(p.udid, "—")}</div></td>
@@ -454,6 +457,7 @@ function renderIOS() {
     tb.appendChild(tr);
   });
   $$("[data-iosact]", tb).forEach(b => b.onclick = () => iosRowAction(b.dataset.iosact, b));
+  bindRunControls(tb);
   wireCopyUdid(tb);
   renderPager("ios-pager", list.length, IOS_PAGE, p => { IOS_PAGE = p; renderIOS(); });
 }
@@ -1315,7 +1319,8 @@ function renderScriptMachines() {
     const st = RUN_STATUS[n];
     const running = !!(st && st.running);
     const held = isHeld(st);
-    const busy = running || held;
+    const parked = !!(st && st.parked);
+    const busy = running || held || parked;              // máy đang dừng để xử lý tay cũng không tích được — bấm Tiếp tục trên máy đó trước
     const mine = running && st.group_id === GROUP.id && st.script_id === sc.id;
     const note = running ? (mine ? `<span class="pill ok">▶ đang chạy kịch bản này</span>` : `<span class="pill warn">đang chạy ${esc(whatRuns(st))}</span>`) : "";
     return `<div class="script-machine-row"><label class="script-machine ${busy ? "busy" : ""}"><input type="checkbox" data-m="${esc(n)}" ${busy ? "disabled" : (SCRIPT_SEL[n] !== false ? "checked" : "")}> ${esc(d ? (d.label || d.name) : n)} ${note}</label>
@@ -1327,7 +1332,7 @@ function renderScriptMachines() {
 async function runScript(btn) {
   const sc = currentScript();
   if (!GROUP || !sc) return;
-  const names = GROUP.devices.filter(n => SCRIPT_SEL[n] !== false && !(RUN_STATUS[n] && RUN_STATUS[n].running) && !isHeld(RUN_STATUS[n]));
+  const names = GROUP.devices.filter(n => SCRIPT_SEL[n] !== false && !(RUN_STATUS[n] && (RUN_STATUS[n].running || RUN_STATUS[n].parked)) && !isHeld(RUN_STATUS[n]));
   if (!GROUP.devices.length) { toast("Nhóm chưa có máy nào", "warn"); return; }
   if (!names.length) { toast("Chưa chọn máy rảnh nào để chạy", "warn"); return; }
   if (!sc.steps.length) { toast("Kịch bản chưa có bước nào", "warn"); return; }
@@ -1728,14 +1733,27 @@ function whatRuns(st) { return [st.group_name, st.script_name].filter(Boolean).j
 
 // Bộ nút cho MỘT máy đang chạy — dùng chung ở trang Thiết bị, trang nhóm và trong kịch bản:
 //   ⏸ Tạm dừng  = dừng để xử lý tay (việc đang chạy vẫn giữ nguyên, máy vẫn giữ chỗ);  ▶ Tiếp tục = chạy tiếp;  Dừng = kết thúc hẳn.
+// Trạng thái chạy của một máy trong danh sách thiết bị (đủ cho bộ nút dùng chung)
+function devRunState(d) {
+  return { running: !!d.running, hold: d.hold, parked: !!d.parked, paused: d.paused, pause_requested: d.pause_requested, stopping: d.stopping, mode: d.run_mode };
+}
 // Máy đã dừng giữa đơn của khách và đang GIỮ nguyên màn hình chờ người kiểm tra / đối soát
 function isHeld(st) { return !!(st && !st.running && st.hold); }
 function runControlsHtml(name, st) {
+  // máy đang «dừng để xử lý tay» mà không chạy gì: nhãn + nút Tiếp tục (dùng cho cả máy đang nghỉ lẫn máy đang giữ chờ kiểm tra)
+  const parkedHtml = `<span class="pill warn" title="Bạn đã dừng máy này để xử lý tay: không kịch bản / đơn nào chạy lên máy cho tới khi bấm Tiếp tục">⏸ đang dừng · xử lý tay</span>
+              <button class="btn btn-sm btn-success" data-mresume="${esc(name)}" title="Cho máy dùng lại bình thường">▶ Tiếp tục</button>`;
   if (isHeld(st)) {
+    // Máy đang giữ chờ kiểm tra CÓ THỂ cũng đang «dừng để xử lý tay» (bấm Tạm dừng giữa đơn rồi đơn kết thúc ở «cần đối soát»):
+    // phải hiện cả «Tiếp tục», không thì «Chạy lại» của nhóm nhận đơn bị từ chối mà không có nút nào để gỡ.
     return `<span class="pill bad" title="${esc(st.hold)}">⚠ dừng chờ kiểm tra</span>
-            <button class="btn btn-sm btn-label-danger" data-mack="${esc(name)}" title="Xác nhận bạn đã kiểm tra / đối soát xong máy này — sau đó máy mới chạy việc khác được">Đã kiểm tra xong</button>`;
+            <button class="btn btn-sm btn-label-danger" data-mack="${esc(name)}" title="Xác nhận bạn đã kiểm tra / đối soát xong máy này — sau đó máy mới chạy việc khác được">Đã kiểm tra xong</button>`
+         + (st.parked ? parkedHtml : "");
   }
-  if (!st || !st.running) return "";
+  if (!st || !st.running) {                             // máy đang NGHỈ: vẫn dừng / cho chạy lại được (để xử lý tay)
+    if (st && st.parked) return parkedHtml;
+    return `<button class="btn btn-sm btn-label-warning" data-mpause="${esc(name)}" title="Dừng máy này để xử lý tay: không kịch bản / đơn nào chạy lên máy cho tới khi bấm Tiếp tục">⏸ Dừng máy</button>`;
+  }
   const n = esc(name), api = st.mode === "api";
   let h = "";
   if (st.paused) {
@@ -1776,15 +1794,19 @@ async function ackHold(name) {
 async function pauseMachine(name) {
   try {
     const r = await API().machine_pause(name);
-    if (r && r.ok) { log(`⏸ Tạm dừng máy ${name}`); toast("Máy sẽ tạm dừng để bạn xử lý tay — xong bấm «Tiếp tục»", "ok"); }
-    else toast((r && r.error) || "Không tạm dừng được", "warn");
+    if (r && r.ok) {
+      log(`⏸ Dừng máy ${name} để xử lý tay`);
+      toast(r.running ? "Máy sẽ tạm dừng sau bước đang làm — xử lý tay xong bấm «Tiếp tục»"
+          : r.in_use ? "Đã dừng máy — lệnh đang chạy dở trên máy (thử bước / AI) sẽ làm NỐT rồi mới hết; sau đó không gì chạy lên máy cho tới khi bấm «Tiếp tục»"
+          : "Đã dừng máy — không gì chạy lên máy này cho tới khi bấm «Tiếp tục»", r.in_use ? "warn" : "ok");
+    } else toast((r && r.error) || "Không dừng được máy", "warn");
   } catch (e) { toast("Lỗi: " + e, "bad"); }
   pollStatus();
 }
 async function resumeMachine(name) {
   try {
     const r = await API().machine_resume(name);
-    if (r && r.ok) { log(`▶ Tiếp tục máy ${name}`); toast("Máy chạy tiếp", "ok"); }
+    if (r && r.ok) { log(`▶ Tiếp tục máy ${name}`); toast("Máy dùng lại bình thường", "ok"); }
     else toast((r && r.error) || "Không tiếp tục được", "warn");
   } catch (e) { toast("Lỗi: " + e, "bad"); }
   pollStatus();
@@ -1831,8 +1853,9 @@ function renderMembers() {
       acts = runControlsHtml(name, stAny);
     } else if (stAny && stAny.running) {                // máy đang chạy (việc của nhóm này hay nhóm khác): Tạm dừng / Tiếp tục / Dừng là của MÁY
       acts = (ro.other ? `<span class="pill warn" title="Một máy chỉ chạy một kịch bản một lúc — đang chạy ${esc(whatRuns(stAny))}">bận ở nhóm khác</span>` : "") + runControlsHtml(name, stAny);
-    } else {
-      acts = GROUP.mode === "api" ? `<button class="btn btn-sm btn-success" data-mrun="${esc(name)}">${halted ? "Chạy lại" : "Chạy"}</button>` : "";
+    } else {                                            // máy đang nghỉ (hoặc đang giữ việc của chính nhóm nhận đơn này): «Dừng máy» / «Tiếp tục» luôn có
+      acts = (GROUP.mode === "api" ? `<button class="btn btn-sm btn-success" data-mrun="${esc(name)}">${halted ? "Chạy lại" : "Chạy"}</button>` : "")
+           + runControlsHtml(name, stAny);
     }
     const row = document.createElement("div");
     row.className = "mem-row" + (halted ? " halted" : "");
@@ -1997,13 +2020,14 @@ async function pollStatus(force = true) {
     d.running = !!(st && st.running); d.run_group = d.running ? st.group_name : null; d.run_script = d.running ? st.script_name : null;
     d.paused = d.running && !!st.paused; d.pause_requested = d.running && !!st.pause_requested; d.stopping = d.running && !!st.stopping; d.run_mode = d.running ? st.mode : null;
     d.hold = (st && !st.running && st.hold) || null;
+    d.parked = !!(st && st.parked);
   });
   // Chỉ vẽ lại khi trạng thái chạy THẬT SỰ đổi: vẽ lại mỗi 2,5 giây làm mất con trỏ / nuốt cú bấm đang dở
-  const sig = JSON.stringify(Object.keys(RUN_STATUS).sort().map(n => { const x = RUN_STATUS[n]; return [n, x.running, x.paused, x.pause_requested, x.stopping, x.group_id, x.script_id, x.status, x.last_msg, x.hold, x.counts]; }));
+  const sig = JSON.stringify(Object.keys(RUN_STATUS).sort().map(n => { const x = RUN_STATUS[n]; return [n, x.running, x.paused, x.pause_requested, x.stopping, x.group_id, x.script_id, x.status, x.last_msg, x.hold, x.parked, x.counts]; }));
   const changed = sig !== RUN_SIG || force;
   RUN_SIG = sig;
   if (!changed) return;
-  if (active && active.id === "view-devices") renderDevices();
+  if (active && active.id === "view-devices") { renderDevices(); renderIOS(); }
   if (active && active.id === "view-flows") {
     if (GROUP_PAGE !== "detail") renderGroupCards();
     else if (GROUP_SUB === "script") renderScriptMachines();

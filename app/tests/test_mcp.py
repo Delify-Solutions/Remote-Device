@@ -622,7 +622,7 @@ def run_all(tmp, real_ocr):
             runner.on.add("iPhoneFarm-01")
             d = ah.devices()[0]
             ok(d == {"name": "iPhoneFarm-01", "label": "Máy A", "board": True, "bluetooth": True, "iphone": True, "ios": "16.7", "model": "iPhone 8",
-                     "group": "Nhóm A", "running": True, "status": "Đang mua 1050 Coins (1/2)", "hold": None}, "máy trong app → thông tin gọn cho AI (không kèm UDID, cổng)", d)
+                     "group": "Nhóm A", "running": True, "status": "Đang mua 1050 Coins (1/2)", "hold": None, "parked": False}, "máy trong app → thông tin gọn cho AI (không kèm UDID, cổng)", d)
             why = ah.acquire("iPhoneFarm-01")
             ok("đang chạy" in (why or "") and ah.acquire("iPhoneFarm-02") is None and ah.active() == ["iPhoneFarm-02"], "máy đang nhận đơn = không xin được; máy rảnh thì xin được", why)
             ah.release("iPhoneFarm-02")
@@ -650,6 +650,11 @@ def run_all(tmp, real_ocr):
             ok(ah.acquire("iPhoneFarm-02") is None and ah.active() == ["iPhoneFarm-02"], "…và xin máy bình thường")
             ah.release("iPhoneFarm-02")
             del runner.conflict
+            # máy người vận hành đã bấm «Dừng máy» để xử lý tay: AI không được chen vào điều khiển
+            runner.is_parked = lambda n: n == "iPhoneFarm-02"
+            why_parked = ah.acquire("iPhoneFarm-02")
+            ok(why_parked and "xử lý tay" in why_parked and ah.active() == [], "máy đang dừng để xử lý tay → AI / dòng lệnh không xin được máy", why_parked)
+            del runner.is_parked
             srv = control.AppServer(ah)
             okstart = srv.start(47960)
             info = srv.info()

@@ -258,11 +258,16 @@ def _busy(name=None):
 class _Using:
     """Giữ máy cho MỘT thao tác thử trên giao diện (chạy thử bước / kịch bản). Dùng:  with _Using(name) as why: …
     `why` khác None = không lấy được máy (đang chạy, hoặc AI / dòng lệnh đang điều khiển) → không được làm gì."""
-    def __init__(self, name):
-        self.name, self.why = name, None
+    def __init__(self, name, board_only=False):
+        # board_only: thao tác chỉ đụng tới BOARD (hỏi / huỷ Bluetooth, khởi động lại board), không bấm gõ lên iPhone → vẫn làm được khi
+        # máy đang «dừng để xử lý tay» (đó chính là lúc người vận hành hay cần tới các thao tác này).
+        self.name, self.why, self.board_only = name, None, board_only
 
     def __enter__(self):
-        self.why = _web_hold(self.name) or CLAIMS.acquire(self.name, "ui")
+        parked = None
+        if RUNNER.is_parked(self.name) and not self.board_only:
+            parked = "Máy «%s» đang DỪNG để xử lý tay — bấm «Tiếp tục» trên máy đó rồi mới thử." % self.name
+        self.why = parked or _web_hold(self.name) or CLAIMS.acquire(self.name, "ui")
         return self.why
 
     def __exit__(self, *exc):
@@ -365,6 +370,7 @@ class Api:
             entry["run_mode"] = (run or {}).get("mode")
             entry["stopping"] = bool((run or {}).get("stopping"))
             entry["hold"] = RUNNER.hold_reason(entry.get("name"))                 # đang dừng chờ người kiểm tra (đơn của khách)
+            entry["parked"] = RUNNER.is_parked(entry.get("name"))                 # người vận hành bấm «Dừng máy» để xử lý tay
             return entry
         out = []
         for d in store.get_devices():
@@ -406,6 +412,7 @@ class Api:
         if hit:
             return {"ok": False, "error": "Máy «%s» đang làm đơn của khách / dừng chờ kiểm tra — xử lý xong («Đã kiểm tra xong») rồi mới xoá." % hit}
         store.delete_device(name)
+        RUNNER.forget_parked(name)                  # máy không còn → bỏ luôn trạng thái «đang dừng» (không để tên ma trong danh sách)
         with MGR.lock:
             nav = MGR.sessions.pop(name, None)      # đóng phiên cũ nếu có (trả cổng serial)
         if nav:
@@ -419,6 +426,8 @@ class Api:
         why = _busy()       # dò máy rung chuột + đóng mọi phiên → không làm khi có máy đang chạy
         if why:
             return {"ok": False, "error": why}
+        if RUNNER.is_parked(board_name):
+            return {"ok": False, "error": "Máy «%s» đang DỪNG để xử lý tay — bấm «Tiếp tục» trên máy đó rồi mới dò (dò sẽ rung chuột trên máy)." % board_name}
         if WEBDEV is not None and _web_gate("probe_match"):     # dò = rung chuột + chụp MỌI iPhone, kể cả máy đang giữ màn hình của khách
             return {"ok": False, "error": _web_gate("probe_match")}
         try:
@@ -585,6 +594,7 @@ class Api:
             try:
                 store.rename_device(old_name, name)
                 store.rename_in_groups(old_name, name)      # máy đổi tên thì vẫn ở đủ các nhóm cũ
+                RUNNER.rename_parked(old_name, name)        # …và vẫn «đang dừng để xử lý tay» nếu đang dừng
             except Exception:
                 pass
         with MGR.lock:                       # bỏ ánh xạ của riêng board này → lượt quét sau dò lại
@@ -628,7 +638,7 @@ class Api:
     def ble_status(self, name):
         if RUNNER.is_running(name):     # máy đang chạy: không chen lệnh vào cổng serial của nó
             return {"ok": True, "status": "OK ble=connected (máy đang chạy)"}
-        with _Using(name) as why:       # AI / dòng lệnh đang điều khiển máy này → cũng không chen lệnh vào
+        with _Using(name, board_only=True) as why:       # AI / dòng lệnh đang điều khiển máy này → cũng không chen lệnh vào
             if why:
                 return {"ok": True, "status": "OK ble=connected (máy đang được điều khiển)"}
             try:
@@ -642,7 +652,7 @@ class Api:
         """Thao tác lẻ trên board của máy `name` (khởi động lại / huỷ kết nối BT): không chen vào máy đang chạy hay đang được điều khiển."""
         if RUNNER.is_running(name):
             return {"ok": False, "error": "Máy đang chạy — dừng máy (tab Nhóm & Kịch bản) rồi mới làm được."}
-        with _Using(name) as why:
+        with _Using(name, board_only=True) as why:
             if why:
                 return {"ok": False, "error": why}
             try:
@@ -839,7 +849,12 @@ class Api:
         started, why = CLAIMS.start(go, lambda: RUNNER.start_group(g, go, sc))
         if why:
             return {"ok": False, "error": why}
-        return {"ok": True, "started": started, "busy": self._running_what([n for n in go if n not in (started or [])]), "held": held}
+        left = [n for n in go if n not in (started or [])]
+        busy = self._running_what(left)
+        for n in left:
+            if n not in busy and RUNNER.is_parked(n):
+                busy[n] = "đang DỪNG để xử lý tay — bấm «Tiếp tục» trên máy đó"
+        return {"ok": True, "started": started, "busy": busy, "held": held}
 
     def group_stop(self, group_id, force=False, script=None):
         """Dừng các máy đang chạy việc của nhóm này. Có `script` → chỉ những máy đang chạy ĐÚNG kịch bản đó; không nêu → mọi việc của nhóm
@@ -878,20 +893,27 @@ class Api:
             busy = self._running_what([name]).get(name)
             if busy:
                 return {"ok": False, "error": "Máy đang chạy %s — một máy chỉ chạy một kịch bản một lúc, dừng bên đó rồi mới chạy ở đây." % busy}
+            if RUNNER.is_parked(name):
+                return {"ok": False, "error": "Máy «%s» đang DỪNG để xử lý tay — bấm «Tiếp tục» trên máy đó rồi mới chạy." % name}
             return {"ok": False, "error": "Máy không chạy được lúc này."}
         return {"ok": True, "started": ok}
 
     def machine_pause(self, name):
-        """Tạm dừng một máy đang chạy để xử lý tay (không kết thúc việc đang chạy)."""
-        if RUNNER.pause_machine(name):
-            return {"ok": True}
-        return {"ok": False, "error": "Máy không đang chạy."}
+        """«Dừng máy» để xử lý tay: máy đang chạy thì tạm dừng (không kết thúc việc đang chạy); máy đang nghỉ thì từ giờ không kịch bản / đơn
+        nào chạy lên nó. Máy giữ trạng thái này cho tới khi bấm «Tiếp tục»."""
+        known = {d["name"] for d in store.get_devices()} | set(MGR.board_map)
+        if name not in known and name not in RUNNER.status():
+            return {"ok": False, "error": "Không có máy «%s»." % name}
+        RUNNER.pause_machine(name)
+        # in_use: đang có MỘT lệnh chạy dở trên máy (thử bước / thử kịch bản trên giao diện, hoặc AI / dòng lệnh). Lệnh đó làm nốt rồi mới
+        # hết — «Dừng máy» chỉ chặn các lệnh SAU đó.
+        return {"ok": True, "running": RUNNER.is_running(name), "in_use": name in CLAIMS.names()}
 
     def machine_resume(self, name):
-        """Tiếp tục máy đang tạm dừng."""
+        """«Tiếp tục»: bỏ trạng thái đang dừng của máy; việc đang tạm dừng (nếu có) chạy tiếp."""
         if RUNNER.resume_machine(name):
             return {"ok": True}
-        return {"ok": False, "error": "Máy không đang chạy."}
+        return {"ok": False, "error": "Máy «%s» không đang dừng." % name}
 
     def stop_all(self, force=False):
         """DỪNG TẤT CẢ máy đang chạy (nhóm nhận đơn: làm nốt đơn dở rồi dừng; force: bỏ dở ngay). Không gỡ trạng thái «dừng chờ kiểm tra» —
