@@ -142,11 +142,14 @@ def text(img) -> str:
 
 
 def find(img, needle: str):
-    """Tâm (cx, cy) của ĐÚNG phần chữ khớp `needle` (không phân biệt hoa thường, dấu, khoảng trắng) — dòng đầu tiên theo thứ tự đọc.
-    Không thấy / không có Vision → None."""
+    """Tâm (cx, cy) của ĐÚNG phần chữ khớp `needle` (không phân biệt hoa thường, dấu, khoảng trắng). Không thấy / không có Vision → None.
+    Nhiều dòng cùng khớp: dòng mà CẢ DÒNG đúng bằng `needle` được chọn trước dòng chỉ «có chứa» nó; cùng loại thì lấy dòng đầu theo thứ
+    tự đọc. (Đo thật trên trang đăng nhập KONAMI: tìm «Login» khớp cả dòng «Log In with Another KONAMI ID» nằm phía trên nút «Login»
+    — bấm theo chỗ khớp đầu tiên là bấm nhầm sang nút đổi tài khoản.)"""
     nd = _norm(needle).replace(" ", "")
     if not nd:
         return None
+    first = None
     for r in _observe(img):
         raw = r["raw"]
         joined, owner = "", []                        # owner[k] = vị trí (trong `raw`) của ký tự sinh ra ký tự thứ k của `joined`
@@ -159,8 +162,18 @@ def find(img, needle: str):
             continue
         a, b = owner[pos], owner[pos + len(nd) - 1]
         box = _range_box(r, a, b + 1) or r["box"]     # không lấy được hộp của riêng phần khớp → dùng hộp cả dòng
-        return ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
-    return None
+        hit = ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
+        if whole_line(joined, nd):
+            return hit
+        if first is None:
+            first = hit
+    return first
+
+
+def whole_line(line: str, needle: str) -> bool:
+    """Dòng `line` có ĐÚNG BẰNG `needle` không (cả hai đã chuẩn hoá, bỏ khoảng trắng) — không tính dấu câu / ký hiệu bao quanh («< Back», «Login »»)."""
+    core = lambda s: "".join(ch for ch in s if ch.isalnum())
+    return bool(core(needle)) and core(line) == core(needle)
 
 
 def _range_box(r, start: int, end: int):

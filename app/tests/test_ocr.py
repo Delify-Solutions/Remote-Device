@@ -88,6 +88,17 @@ def main():
     ok(inside(ocr.find(img, "trang chu"), boxes[4]) and inside(ocr.find(img, "cửa hàng"), boxes[3]) and ocr.find(img, "trang chu")[0] > ocr.find(img, "cửa hàng")[0] + 300,
        "hai nhãn trên cùng một hàng: tìm đúng từng nhãn")
     ok(ocr.find(img, "không có chữ này") is None and ocr.find(img, "") is None and ocr.find(img, "   ") is None, "không có / chuỗi rỗng → None")
+    # Trang đăng nhập KONAMI (đo thật): dòng «Log In with Another KONAMI ID» nằm TRÊN nút «Login» — tìm «Login» phải ra NÚT, không ra dòng trên
+    web, wb = draw([(60, 40, "Log In with Another KONAMI ID", (0, 120, 220)), (60, 140, "Password", (90, 90, 90)), (300, 240, "Login", (255, 255, 255)),
+                    (60, 340, "< Back", (255, 255, 255)), (60, 430, "Login now or later", (255, 255, 255))], bg=(40, 30, 170))
+    ok(inside(ocr.find(web, "Login"), wb[2]) and inside(ocr.find(web, "login"), wb[2]),
+       "nhiều dòng cùng khớp: dòng mà CẢ DÒNG đúng bằng chữ cần tìm được chọn trước dòng chỉ «có chứa» nó (dù dòng kia đứng trước)", (ocr.find(web, "Login"), wb[2]))
+    ok(inside(ocr.find(web, "Log In with"), wb[0]) and inside(ocr.find(web, "another konami"), wb[0]) and inside(ocr.find(web, "login now"), wb[4]),
+       "…chữ dài hơn thì vẫn tìm đúng dòng chứa nó; không dòng nào khớp nguyên dòng → lấy dòng đầu theo thứ tự đọc")
+    ok(inside(ocr.find(web, "Back"), wb[3]), "dấu câu / ký hiệu quanh chữ («< Back») không cản việc khớp nguyên dòng", ocr.find(web, "Back"))
+    ok(ocr.whole_line("login", "login") and ocr.whole_line("<back", "back") and ocr.whole_line("login»", "log in".replace(" ", ""))
+       and not ocr.whole_line("loginwithanotherkonamiid", "login") and not ocr.whole_line("abc", "") and not ocr.whole_line("...", "..."),
+       "whole_line: bằng nhau sau khi bỏ ký hiệu; chuỗi chỉ toàn ký hiệu / rỗng thì không tính")
     ok(ocr.lines(np.zeros((3, 3, 3), np.uint8)) == [] and ocr.lines(None) == [] and ocr.find(None, "x") is None, "ảnh rỗng / quá nhỏ → rỗng, không ném lỗi")
     blank = np.full((200, 300, 3), 90, np.uint8)
     ok(ocr.lines(blank) == [] and ocr.text(blank) == "", "ảnh không có chữ → không bịa ra chữ")
@@ -142,6 +153,15 @@ def main():
         hit2 = e.find_text("tesseract thấy", img)
         ok(hit2 == (int((200 + 520) / 2 / 2), int((600 + 640) / 2 / 2)) and fake.calls == [("data", "")], "Vision không thấy → hỏi tesseract (toạ độ như trước)", (hit2, fake.calls))
         ok(e.find_text("hoàn toàn không có", img) is None, "cả hai không thấy → None")
+
+        class Tess2(Tess):                        # tesseract thấy hai dòng: «Chi tesseract thay them» (trên) và «tesseract thay» (dưới)
+            def image_to_data(self, gray, lang=None, output_type=None):
+                return {"text": ["Chi", "tesseract", "thay", "them", "tesseract", "thay"], "block_num": [1] * 6, "par_num": [1] * 6, "line_num": [1, 1, 1, 1, 2, 2],
+                        "left": [100, 200, 420, 540, 300, 520], "top": [600] * 4 + [800] * 2, "width": [80, 200, 100, 100, 200, 100], "height": [40] * 6, "conf": [90] * 6}
+        eyes.pytesseract = Tess2()
+        ok(e.find_text("tesseract thay", img) == (int((300 + 620) / 2 / 2), int((800 + 840) / 2 / 2)) and e.find_text("thay them", img) == (int((420 + 640) / 2 / 2), int((600 + 640) / 2 / 2)),
+           "đường tesseract cũng vậy: dòng khớp NGUYÊN DÒNG được chọn trước dòng chỉ chứa chữ đó", e.find_text("tesseract thay", img))
+        eyes.pytesseract = fake
         real_find, real_txt = ocr.find, ocr.text
         ocr.find = ocr.text = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Vision hỏng giữa chừng"))
         try:
@@ -149,6 +169,24 @@ def main():
         finally:
             ocr.find, ocr.text = real_find, real_txt
         eyes.pytesseract = None
+        real_txt2 = ocr.text
+        ocr.text = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Vision hỏng"))
+        try:
+            e.read_text(img); raised_v = False
+        except RuntimeError as err:
+            raised_v = "Vision" in str(err) and "tesseract" in str(err)
+        finally:
+            ocr.text = real_txt2
+        ok(raised_v, "Vision báo lỗi giữa chừng mà máy không cài tesseract → BÁO LỖI (không lặng lẽ trả «màn hình trống» — trống thì mọi luật nhận diện đều sai)")
+        real_find2 = ocr.find
+        ocr.find = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Vision hỏng"))
+        try:
+            e.find_text("cửa hàng", img); raised_f = False
+        except RuntimeError as err:
+            raised_f = "Vision" in str(err)
+        finally:
+            ocr.find = real_find2
+        ok(raised_f, "…tìm chữ cũng vậy: BÁO LỖI chứ không trả «không thấy chữ» (sai lý do)")
         ok("Cửa hàng" in e.read_text(img) and inside(e.find_text("trang chủ", img), boxes[4]) and e.find_text("không có", img) is None,
            "máy không cài tesseract nhưng có Vision → vẫn đọc và tìm được (không báo «thiếu pytesseract»)")
         try:

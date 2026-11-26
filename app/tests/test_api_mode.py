@@ -1115,6 +1115,33 @@ def run_all(gw, rigs):
         ok(wrong == [], "hằng số THẬT: purchase_wait NGẮN (10–45 s) + nhãn cũ hiện muộn + «thành công» hiện chậm trong khoảng chờ → vẫn tính ĐÃ NẠP (trước đây ngưỡng co theo purchase_wait → báo «không mua được» dù đã mua)", wrong[:4])
         ok(lag_run_wait(0.0, None, 20) in ("uncertain", "unavailable") and lag_run_wait(0.0, None, 20) != "failed",
            "purchase_wait ngắn mà chỉ có nhãn cũ, không có «thành công» → không bao giờ ra «đã nạp»")
+        class AdNav:                               # cửa hàng; có hộp quảng cáo thì chữ «Quảng cáo» + nút «Đóng» hiện ở lần nhìn đầu
+            def __init__(self, ad):
+                self.ad, self.sent, self.taps = ad, [], []
+                self.e = self; self.h = self
+            def screenshot(self): Clock.t += 0.5; return None
+            def read_text(self, img=None, **kw):
+                Clock.t += 0.5
+                return "Cửa hàng 1050 Coins" + (" Quảng cáo Đóng" if self.ad else "")
+            def find_text(self, needle, img=None, **kw):
+                return (600, 300) if (self.ad and "dong" in apimode.norm_text(needle)) else None
+            def tap_at(self, x, y, click=True, verify=None):
+                self.taps.append((x, y)); self.ad = False; return True
+            def send(self, cmd, wait=0.5):
+                self.sent.append(cmd); Clock.t += 0.2; return "OK " + cmd.split(" ")[0]
+        def ad_run(ad):
+            Clock.t = 0.0
+            nav = AdNav(ad)
+            steps = {"login": [], "finish": [], "otp": [], "nav": [], "after": [],
+                     "purchase": [{"type": "tap_if", "text": "Quảng cáo", "tap": "Đóng", "timeout": 0}, {"type": "tap_text", "text": "Gói không có trên màn hình"}]}
+            flow = apimode.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": prod_rules}, steps,
+                                   opts={"purchase_wait": 20, "clear_wait": 8}, log=lambda *a, **k: None)
+            return flow._buy_one({"code": "c", "name": "1050 Coins", "qty": 1}, {})[0], flow.risky, nav.taps, nav.sent
+        clean_, dirty_ = ad_run(False), ad_run(True)
+        ok(clean_[0] == "failed_tool" and clean_[1] is False and clean_[2] == [] and not any(c.startswith(("click", "key", "type")) for c in clean_[3]),
+           "giai đoạn mua: bước «nếu thấy thì bấm» KHÔNG thấy gì (bỏ qua, chưa đụng vào máy) rồi bước kế không thấy gói → «chưa mua» (lỗi tool), KHÔNG thành «không chắc» / đối soát giả", clean_)
+        ok(dirty_[0] == "uncertain" and dirty_[1] is True and dirty_[2] == [(600, 300)],
+           "…còn nếu bước đó ĐÃ BẤM đóng một hộp thoại thì từ đó là «đã chạm luồng mua» → trục trặc sau nó vẫn là «không chắc» (đối soát)", dirty_)
         ok(lag_run(0.0, None, 55.0) == "uncertain" and lag_run(0.0, None, 40.0) == "uncertain" and lag_run(0.0, None, 15.0) == "failed",
            "hằng số THẬT: chữ báo lỗi chỉ mới hiện vài giây trước khi hết giờ (chưa ổn định đủ lâu, success có thể còn đang tới) → «không xác nhận được» (đối soát), KHÔNG kết luận thất bại")
     finally:
@@ -1385,7 +1412,7 @@ def run_all(gw, rigs):
     apimode._sleep = lambda sec, abort=None: None
     try:
         ti = {"type": "tap_if", "text": "Game Center", "tap": "Hủy", "timeout": 8}
-        n1 = Popup([gc])
+        n1 = Popup([gc, title])
         r1 = apimode.exec_step(n1, ti, {})
         ok(r1[0] is True and r1[2] is True and n1.taps == [(73, 33)] and n1.sent == ["click"] and "đã bấm «Hủy»" in r1[1],
            "thấy hộp thoại → bấm đúng chữ cần bấm (một lần), báo «đã bấm»", (r1, n1.taps, n1.sent))
@@ -1393,17 +1420,17 @@ def run_all(gw, rigs):
         r2 = apimode.exec_step(n2, dict(ti, timeout=0), {})
         ok(r2 == (True, "không thấy «Game Center» — bỏ qua", False) and n2.taps == [] and n2.sent == [] and n2.n == 1,
            "không có hộp thoại (timeout 0: chỉ xem một lần) → bước XONG, không bấm gì", (r2, n2.n))
-        n3 = Popup([title, title, gc])
+        n3 = Popup([title, title, gc, title])
         r3 = apimode.exec_step(n3, ti, {})
-        ok(r3[0] is True and n3.taps == [(73, 33)] and n3.n == 3, "hộp thoại hiện CHẬM (lần chụp thứ 3) → vẫn bắt được trong thời gian chờ rồi bấm", (r3, n3.n))
+        ok(r3[0] is True and n3.taps == [(73, 33)] and n3.n == 4, "hộp thoại hiện CHẬM (lần chụp thứ 3) → vẫn bắt được trong thời gian chờ rồi bấm", (r3, n3.n))
         n4 = Popup([(["Game Center", "ID Apple"], {"Game Center": (668, 308)})])
         r4 = apimode.exec_step(n4, dict(ti, timeout=0), {})
         ok(r4[0] is False and r4[2] is False and n4.taps == [] and "không thấy chữ «Hủy» để bấm" in r4[1],
            "hết thời gian chờ mà vẫn thấy hộp thoại nhưng KHÔNG thấy chữ cần bấm → bước hỏng (màn hình đang bị chắn — không đi tiếp bấm nhầm)", r4)
         slide = (["Game Center"], {})                  # hộp thoại đang trượt vào: tiêu đề đã hiện, nút «Hủy» chưa
-        n4b = Popup([slide, slide, gc])
+        n4b = Popup([slide, slide, gc, title])
         r4b = apimode.exec_step(n4b, ti, {})
-        ok(r4b[0] is True and n4b.taps == [(73, 33)] and n4b.n == 3, "nút cần bấm hiện CHẬM hơn chữ (hộp thoại đang trượt vào) → nhìn lại rồi bấm, không báo hỏng vội", (r4b, n4b.n))
+        ok(r4b[0] is True and n4b.taps == [(73, 33)] and n4b.n == 4, "nút cần bấm hiện CHẬM hơn chữ (hộp thoại đang trượt vào) → nhìn lại rồi bấm, không báo hỏng vội", (r4b, n4b.n))
         # đo thật trên iPhone 8: trước trang «Chào mừng đến Game Center» (có «Hủy») còn trang «Tính năng mới trong Game Center» (chỉ có «Tiếp tục»)
         news = (["Tính năng mới trong", "Game Center", "Tiếp tục"], {"Tiếp tục": (668, 694), "Game Center": (324, 405)})
         real = {"type": "tap_if", "timeout": 0, "cases": [{"text": "Game Center", "tap": "Hủy"}, {"text": "Tính năng mới", "tap": "Tiếp tục"}]}
@@ -1411,7 +1438,7 @@ def run_all(gw, rigs):
         r4c = apimode.exec_step(n4c, real, {})
         ok(r4c[0] is True and n4c.taps == [(668, 694), (73, 33)],
            "hai màn hình cùng có chữ «Game Center»: màn nào không có nút của trường hợp thứ nhất thì xét trường hợp kế (bấm «Tiếp tục»), màn sau mới bấm «Hủy»", (r4c, n4c.taps))
-        n5 = Popup([gc])
+        n5 = Popup([gc, title])
         r5 = apimode.exec_step(n5, {"type": "tap_if", "text": "Game Center|Trung tâm trò chơi"}, {})
         ok(r5[0] is True and n5.taps == [(668, 308)], "không ghi «bấm vào đâu» → bấm chính chữ vừa thấy; nhiều cách viết ngăn bằng «|»", (r5, n5.taps))
 
@@ -1467,7 +1494,7 @@ def run_all(gw, rigs):
            "trong các bước đăng nhập, bước dọn hộp thoại thuộc «đoạn mở game» (chạy cả khi kiểm «game chưa đăng nhập» trước lúc nhận đơn); chốt chặn vẫn ở bước gõ tài khoản")
         # bộ chạy kịch bản thường dùng CÙNG cách làm
         import engine
-        n7 = Popup([gc])
+        n7 = Popup([gc, title])
         ok7, msg7 = engine.run_step(n7, ti)
         n8 = Popup([title])
         ok8, msg8 = engine.run_step(n8, dict(ti, timeout=0))
@@ -1484,6 +1511,152 @@ def run_all(gw, rigs):
         ok(q7[0] is True and m7.taps == [(300, 500), (73, 33)],
            "bấm xong một hộp thoại thì thời gian chờ được tính LẠI từ lúc đó (đưa con trỏ tới nơi đã ngốn hết thời gian chờ ban đầu) → hộp thoại kế hiện sau một nhịp vẫn được xử lý",
            (q7, m7.taps))
+
+        # «thì NHẤN PHÍM»: hộp «lưu mật khẩu» của iOS không nhận cú bấm của con trỏ, chỉ đóng được bằng phím esc (đo trên trang đăng nhập KONAMI)
+        sp = (["Bạn có muốn lưu mật khẩu này để sử dụng với các", "ứng dụng và trang web không?", "Lưu mật khẩu", "Không lưu cho trang này", "Để sau"],
+              {"Lưu mật khẩu": (667, 433), "Không lưu cho trang này": (663, 550), "Để sau": (667, 675)})
+        # Cú bấm lên hộp thoại hệ thống có lúc KHÔNG «ăn» (đo trên iPhone 8: bước báo đã bấm mà hộp thoại vẫn còn) → bước một trường hợp
+        # cũng phải nhìn lại: còn thì bấm lần nữa, hết mới báo xong; bấm đủ số lần vẫn còn thì HỎNG (không báo ✓ để các bước sau trượt khó hiểu).
+        k1 = Popup([gc, gc, gc, title])
+        j1 = apimode.exec_step(k1, ti, {})
+        ok(j1[0] is True and k1.taps == [(73, 33), (73, 33)] and "đã bấm «Hủy» (2 lần)" in j1[1], "bấm lần đầu không ăn (nhìn lại rồi kiểm thêm lần nữa vẫn còn hộp thoại) → bấm lần nữa, báo rõ đã bấm 2 lần", (j1, k1.taps))
+        k1b = Popup([gc, gc, title])
+        j1b = apimode.exec_step(k1b, ti, {})
+        ok(j1b[0] is True and k1b.taps == [(73, 33)] and "2 lần" not in j1b[1], "hộp thoại ĐÓNG CHẬM (lần nhìn lại còn, kiểm thêm thì đã hết) → KHÔNG bấm lần hai, bước xong", (j1b, k1b.taps))
+
+        class LateClose(Popup):                      # hộp thoại tự đóng đúng lúc con trỏ đang đi tới để bấm lần hai
+            def tap_at(self, x, y, click=True, verify=None):
+                if self.taps:
+                    self.cur = title
+                    self.shots = [title]
+                    return False
+                return super().tap_at(x, y, click, verify)
+        k1c = LateClose([gc, gc, gc, gc])
+        j1c = apimode.exec_step(k1c, ti, {})
+        ok(j1c[0] is True and k1c.taps == [(73, 33)], "lần bấm lặp bị chặn vì hộp thoại vừa đóng trong lúc con trỏ đang đi → nhìn lại thấy đã hết → bước XONG (không báo «con trỏ không tới nơi»)", (j1c, k1c.taps))
+        flick = [gc, gc] + [title, gc] * 40          # sau lần bấm đầu: lần nhìn thấy hộp thoại, lần kiểm lại thì không, cứ thế mãi
+        k1e = Popup(flick)
+        j1e = apimode.exec_step(k1e, ti, {})
+        ok(j1e[0] is False and j1e[2] is True and k1e.taps == [(73, 33)] and "lúc thấy lúc không" in j1e[1] and k1e.n <= 4 + 2 * (apimode.IF_FLIPS_MAX + 2),
+           "hộp thoại lúc thấy lúc không (chữ nhấp nháy / đọc lúc được lúc không) → bước DỪNG sau %d lần nhìn lại, không nhìn mãi và không bấm thêm" % apimode.IF_FLIPS_MAX, (j1e, k1e.n))
+        k1f = Popup([sp, sp] + [title, sp] * 40)
+        j1f = apimode.exec_step(k1f, {"type": "tap_if", "text": "lưu mật khẩu này", "key": "esc", "timeout": 0}, {})
+        ok(j1f[0] is False and k1f.sent == ["key esc"] and "lúc thấy lúc không" in j1f[1], "…trường hợp «nhấn phím» cũng có chốt dừng đó (và không nhấn phím thêm)", (j1f, k1f.sent))
+        k1d = Popup([sp, sp, title])
+        j1d = apimode.exec_step(k1d, {"type": "tap_if", "text": "lưu mật khẩu này", "key": "esc", "timeout": 0}, {})
+        ok(j1d[0] is True and k1d.sent == ["key esc"], "trường hợp «nhấn phím» mà hộp thoại đóng chậm → chỉ nhấn phím MỘT lần (phím esc thứ hai sẽ rơi vào màn hình bên dưới)", (j1d, k1d.sent))
+        k2 = Popup([gc])
+        j2 = apimode.exec_step(k2, ti, {})
+        ok(j2[0] is False and j2[2] is True and len(k2.taps) == apimode.IF_REPEAT and "đã bấm «Hủy» %d lần mà vẫn còn thấy «Game Center»" % apimode.IF_REPEAT in j2[1],
+           "bước MỘT trường hợp: bấm %d lần mà hộp thoại vẫn còn → HỎNG (trước đây báo ✓ ngay sau lần bấm đầu)" % apimode.IF_REPEAT, (j2, k2.taps))
+        ke = {"type": "tap_if", "text": "lưu mật khẩu này", "key": "esc", "timeout": 0}
+        k3 = Popup([sp, title])
+        j3 = apimode.exec_step(k3, ke, {})
+        ok(j3 == (True, "thấy «lưu mật khẩu này» → đã nhấn phím esc", True) and k3.sent == ["key esc"] and k3.taps == [], "trường hợp «nhấn phím»: thấy chữ → nhấn đúng phím đó (không bấm vào đâu), kiểm lại đã đóng", (j3, k3.sent))
+        k4 = Popup([title])
+        j4 = apimode.exec_step(k4, ke, {})
+        ok(j4 == (True, "không thấy «lưu mật khẩu này» — bỏ qua", False) and k4.sent == [], "…không thấy hộp thoại → KHÔNG nhấn phím nào (phím esc lúc không có hộp thoại có thể đóng nhầm thứ khác)", (j4, k4.sent))
+        k5 = Popup([sp])
+        j5 = apimode.exec_step(k5, ke, {})
+        ok(j5[0] is False and k5.sent == ["key esc"] * apimode.IF_REPEAT and "đã nhấn phím esc %d lần mà vẫn còn thấy" % apimode.IF_REPEAT in j5[1], "…nhấn đủ số lần mà hộp thoại vẫn còn → hỏng", (j5, k5.sent))
+        mixed = {"type": "tap_if", "timeout": 0, "cases": [{"text": "lưu mật khẩu này", "key": "esc"}, {"text": "Game Center", "tap": "Hủy"}]}
+        k6 = Popup([sp, gc, title])
+        j6 = apimode.exec_step(k6, mixed, {})
+        ok(j6[0] is True and k6.sent == ["key esc", "click"] and k6.taps == [(73, 33)] and "nhấn phím esc (thấy «lưu mật khẩu này»)" in j6[1] and "bấm «Hủy» (thấy «Game Center»)" in j6[1],
+           "một bước lẫn cả hai kiểu: hộp thoại nào nhấn phím thì nhấn phím, hộp thoại nào bấm chữ thì bấm chữ", (j6, k6.sent, k6.taps))
+        for badk in ("f13", "ctrl a", "esc\nclick"):
+            try:
+                apimode.exec_step(Popup([sp]), dict(ke, key=badk), {}); raised = False
+            except apimode.ConfigError:
+                raised = True
+            ok(raised, "phím lạ ở trường hợp «nhấn phím» (%r) → báo lỗi cấu hình, không gửi gì xuống board" % badk)
+        ok(apimode.describe(ke) == "Nếu thấy chữ «lưu mật khẩu này» thì nhấn phím esc" and apimode.describe(mixed) == "Nếu thấy chữ «lưu mật khẩu này» thì nhấn phím esc; Nếu thấy chữ «Game Center» thì bấm «Hủy»",
+           "mô tả bước có trường hợp «nhấn phím»", apimode.describe(mixed))
+        # một bước xử lý tối đa IF_MAX_TAPS hộp thoại: quá số đó thì dừng với đúng lý do (không phải «bấm rồi vẫn còn»)
+        chain = [([("Hop thoai %d" % i), "Dong %d" % i], {"Dong %d" % i: (100 + i, 200)}) for i in range(apimode.IF_MAX_TAPS + 1)]
+        many = {"type": "tap_if", "timeout": 0, "cases": [{"text": "Hop thoai %d" % i, "tap": "Dong %d" % i} for i in range(apimode.IF_MAX_TAPS + 1)]}
+        k7 = Popup(chain + [title])
+        j7 = apimode.exec_step(k7, many, {})
+        ok(j7[0] is False and len(k7.taps) == apimode.IF_MAX_TAPS and "đã xử lý %d hộp thoại liên tiếp" % apimode.IF_MAX_TAPS in j7[1] and "Hop thoai %d" % apimode.IF_MAX_TAPS in j7[1],
+           "hộp thoại hiện nối nhau quá %d cái trong một bước → dừng, nói đúng lý do" % apimode.IF_MAX_TAPS, (j7, len(k7.taps)))
+
+        print("\n== 30b. «Gõ chữ» từng ký tự; «Mở app» tắt hẳn rồi mở mới ==")
+        t1, t2, t3 = Popup([title]), Popup([title]), Popup([title])
+        g1_ = apimode.exec_step(t1, {"type": "type", "text": "{{otp}}", "gap": 0.4}, {"otp": "135790"})
+        g2_ = apimode.exec_step(t2, {"type": "type", "text": "{{otp}}"}, {"otp": "135790"})
+        g3_ = apimode.exec_step(t3, {"type": "type", "text": "a b", "gap": 5}, {})
+        ok(g1_ == (True, "", True) and t1.sent == ["type 1", "type 3", "type 5", "type 7", "type 9", "type 0"] and t2.sent == ["type 135790"] and t3.sent == ["type a", "key space", "type b"],
+           "có ghi quãng nghỉ → gõ TỪNG ký tự (ô mã mỗi số một ô không bị rơi phím); không ghi → gõ liền một mạch như trước; dấu cách đi bằng phím space", (t1.sent, t2.sent, t3.sent))
+        for badg in ("nhanh", [1]):
+            try:
+                apimode.exec_step(Popup([title]), {"type": "type", "text": "x", "gap": badg}, {}); raised = False
+            except apimode.ConfigError:
+                raised = True
+            ok(raised, "quãng nghỉ giữa các ký tự không phải số (%r) → báo lỗi cấu hình" % (badg,))
+
+        class Stop(Popup):                           # board ngừng trả lời giữa chừng lúc đang gõ từng ký tự
+            def send(self, cmd, wait=0.5):
+                self.sent.append(cmd)
+                return "OK" if len(self.sent) < 3 else ""
+        t4 = Stop([title])
+        g4_ = apimode.exec_step(t4, {"type": "type", "text": "123456", "gap": 0.4}, {})
+        ok(g4_[0] is False and g4_[2] is True and len(t4.sent) == 3, "đang gõ từng ký tự mà board không trả lời → DỪNG ngay (không gõ tiếp các ký tự sau), báo là đã có gõ dở", (g4_, t4.sent))
+
+        import iosapp
+
+        class Usb(Popup):
+            def __init__(self, shots, fail=None):
+                super().__init__(shots); self.opened, self.fail = [], fail
+
+            def relaunch(self, name):
+                if self.fail:
+                    raise self.fail if isinstance(self.fail, Exception) else RuntimeError(self.fail)
+                self.opened.append(name); return "jp.vi.du"
+        fr = {"type": "launch", "app": "efootball", "fresh": True}
+        u1, u2, u3 = Usb([title]), Usb([title], fail=iosapp.AppNotFound("máy không có app nào tên «efootball»")), Usb([title])
+        f1_ = apimode.exec_step(u1, fr, {})
+        f2_ = apimode.exec_step(u2, fr, {})
+        f3_ = apimode.exec_step(u3, {"type": "launch", "app": "efootball"}, {})
+        ok(f1_ == (True, "đã tắt hẳn rồi mở mới", True) and u1.opened == ["efootball"] and u1.sent == [], "«tắt hẳn rồi mở mới»: đi qua USB, KHÔNG gõ phím nào", (f1_, u1.opened, u1.sent))
+        ok(f2_[0] is False and f2_[2] is False and "không tắt hẳn / mở mới được app «efootball»: máy không có app nào tên" in f2_[1] and u2.sent == [],
+           "…không làm được → bước HỎNG kèm lý do, KHÔNG lặng lẽ quay về cách mở cũ (app sẽ ở màn hình dở dang)", f2_)
+        ok(f3_[0] is True and u3.opened == [] and any(c.startswith("type efootball") for c in u3.sent) and "combo gui space" in u3.sent, "không chọn «mở mới» → vẫn mở bằng ô tìm kiếm như trước", u3.sent)
+        u5, u6, u7 = Usb([title], fail="hết giờ"), Usb([title]), Usb([title])
+        f5_ = apimode.exec_step(u5, fr, {})
+        f6_ = apimode.exec_step(u6, {"type": "launch", "app": "Cài đặt", "fresh": True}, {})
+        f7_ = apimode.exec_step(u7, {"type": "launch", "app": "efootball", "fresh": "false"}, {})
+        ok(f5_[0] is False and f5_[2] is True and "hết giờ" in f5_[1], "mở mới hỏng GIỮA CHỪNG (hết giờ, rút cáp…) → app có thể đã bị tắt → báo là «đã đụng vào máy»; chỉ «không chọn được app» mới chắc chắn chưa đụng", f5_)
+        ok(f6_[0] is True and u6.opened == ["Cài đặt"] and u6.sent == [], "mở mới không gõ phím nên tên app CÓ DẤU vẫn dùng được", (f6_, u6.opened))
+        ok(f7_[0] is True and u7.opened == [] and "combo gui space" in u7.sent, "cờ «mở mới» ghi sai kiểu (chuỗi \"false\") không bị hiểu thành bật", u7.sent)
+        ok(apimode.describe(fr) == "Mở app efootball (tắt hẳn rồi mở mới)" and [x["type"] for x in apimode.open_prefix([fr, ti, {"type": "tap_text", "text": "x"}])] == ["launch", "tap_if"],
+           "mô tả nói rõ kiểu mở; bước mở mới vẫn thuộc «đoạn mở game»")
+        u4, t5 = Usb([title]), Popup([title])
+        ok16, msg16 = engine.run_step(u4, fr)
+        ok17, msg17 = engine.run_step(t5, {"type": "type", "text": "12", "gap": 0.3})
+        ok(ok16 is True and u4.opened == ["efootball"] and "tắt hẳn rồi mở mới" in msg16 and ok17 is True and t5.sent == ["type 1", "type 2"], "kịch bản thường / «thử một bước» dùng chung cách làm cho hai kiểu mới", (msg16, msg17))
+
+        import iosapp
+        apps = {"jp.konami.pesactionmobile": {"CFBundleDisplayName": "eFootball™", "CFBundleName": "PESmobile"},
+                "com.apple.Preferences": {"CFBundleDisplayName": "Cài đặt", "CFBundleName": "Settings"},
+                "com.vidu.hub": {"CFBundleDisplayName": "eFootball Hub"}, "com.vidu.fm": {"CFBundleName": "Football Manager"}, "com.vidu.rong": None,
+                # app ẨN của hệ thống trùng tên với app thường (đo trên iPhone 8: ba app cùng tên «Cài đặt», hai cái ẩn)
+                "com.apple.MBHelperApp": {"CFBundleDisplayName": "Cài đặt", "SBAppTags": ["hidden"]}, "com.apple.CarPlaySettings": {"CFBundleDisplayName": "Cài đặt", "SBAppTags": ["hidden"]}}
+
+        def pick(name):
+            try:
+                return iosapp.pick_bundle(apps, name)
+            except LookupError as e:
+                return "LỖI: %s" % e
+        ok(pick("efootball") == "jp.konami.pesactionmobile" and pick("eFootball™") == "jp.konami.pesactionmobile" and pick("PESmobile") == "jp.konami.pesactionmobile"
+           and pick("jp.konami.pesactionmobile") == "jp.konami.pesactionmobile",
+           "mở mới theo tên: tên hiển thị ĐÚNG BẰNG tên gõ thắng app chỉ «có chứa» («eFootball™» chứ không phải «eFootball Hub»); nhận cả tên gói và bundle id")
+        ok(pick("Settings") == "com.apple.Preferences" and pick("cai dat") == "com.apple.Preferences" and pick("hub") == "com.vidu.hub", "không phân biệt dấu / hoa thường / khoảng trắng; một app duy nhất «có chứa» thì nhận")
+        ok(pick("football").startswith("LỖI: có 3 app cùng khớp") and "eFootball Hub" in pick("football") and pick("khong co app nay").startswith("LỖI: máy không có app nào tên")
+           and pick("").startswith("LỖI: chưa ghi tên app") and pick("™").startswith("LỖI: chưa ghi tên app"),
+           "nhiều app cùng khớp / không có app nào / tên rỗng → báo rõ, KHÔNG đoán (tắt nhầm app còn tệ hơn không tắt)", (pick("football"), pick("khong co app nay")))
+        ok(pick("Cai dat") == "com.apple.Preferences" and pick("com.apple.CarPlaySettings") == "com.apple.CarPlaySettings" and pick("CarPlaySettings").startswith("LỖI: máy không có app nào"),
+           "app ẨN của hệ thống trùng tên («Cài đặt» có ba cái) không làm tên bị «nhiều app cùng khớp»; app ẩn chỉ chọn được bằng đúng bundle id")
+        ok(iosapp.norm("eFootball™ 2027") == "efootball2027" and iosapp.norm("Cài đặt") == "caidat" and iosapp.norm(None) == "", "chuẩn hoá tên app: bỏ dấu, ký hiệu, khoảng trắng")
 
         print("\n== 31. «Bấm / giữ vào chữ» chờ chữ hiện ra (màn hình game chuyển cảnh chậm) ==")
         # đo thật trên eFootball: bấm biểu tượng menu ở màn tiêu đề → danh sách có «Data Transfer»; bấm nó → màn «Data Transfer» với hai dòng «Transfer data linked to …»
@@ -1555,6 +1728,173 @@ def run_all(gw, rigs):
            and ok11 is True and getattr(e3, "old", None) == "Data Transfer" and e3.n == 0 and e3.taps == [] and ok12 is True and e4.holds == [(951, 378, 1.2)],
            "bộ chạy kịch bản thường: bước có ghi thời gian chờ dùng chung cách làm (chờ rồi bấm / giữ, báo rõ đã chờ bao lâu); bước không ghi vẫn đi đường cũ",
            (ok9, msg9, ok10, msg10, ok11, ok12, msg12))
+
+        print("\n== 32. «Bấm vào vùng ảnh» (nút không có chữ: tìm đúng HÌNH rồi bấm, thay cho toạ độ cố định) ==")
+        import base64
+        import cv2
+        import eyes as eyes_mod
+        MENU = (1257, 682)                             # chỗ nút menu ở màn tiêu đề eFootball (iPhone 8 xoay ngang, ảnh 1334×750)
+
+        def scene(btn=MENU, extra=None, dim=1.0, gray=False, blur=0):
+            rng = np.random.RandomState(7)             # nền nhiều mảng màu, giống nhau ở mọi lần dựng
+            im = np.full((750, 1334, 3), (90, 40, 120), np.uint8)
+            for _ in range(70):
+                cv2.circle(im, (int(rng.randint(0, 1334)), int(rng.randint(0, 750))), int(rng.randint(15, 70)), tuple(int(v) for v in rng.randint(30, 255, 3)), -1)
+            for at in (btn, extra):
+                if at:                                 # nút tròn có ba gạch
+                    cv2.circle(im, at, 34, (250, 250, 250), 4)
+                    for k in (-12, 0, 12):
+                        cv2.line(im, (at[0] - 14, at[1] + k), (at[0] + 16, at[1] + k), (250, 250, 250), 4)
+            if blur:
+                im = cv2.GaussianBlur(im, (blur, blur), 0)
+            if dim != 1.0:
+                im = cv2.convertScaleAbs(im, alpha=dim, beta=0)
+            if gray:
+                im = cv2.cvtColor(cv2.cvtColor(im, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+            return im
+
+        def b64png(im):
+            return base64.b64encode(cv2.imencode(".png", im)[1].tobytes()).decode()
+
+        class Pic:                                     # máy giả cho bước tìm hình: ảnh chụp theo từng lần nhìn, tìm hình bằng CHÍNH hàm của app
+            def __init__(self, shots):
+                self.shots, self.n, self.taps, self.cur, self.sent = list(shots), 0, [], None, []
+                self.e, self.h = self, self
+
+            def screenshot(self):
+                self.cur = self.shots[min(self.n, len(self.shots) - 1)]; self.n += 1
+                return self.cur
+
+            def find_image(self, tmpl, img=None, min_score=0.9, near=None):
+                return eyes_mod.locate_image(self.cur if img is None else img, tmpl, min_score, near)
+
+            def tap_at(self, x, y, click=True, verify=None):
+                if verify is not None and not verify(self.cur):
+                    return False
+                self.taps.append((x, y))
+                return True
+
+            def send(self, cmd, wait=0.5):
+                self.sent.append(cmd)
+                return "OK"
+        title_scr = scene()
+        crop = title_scr[MENU[1] - 45:MENU[1] + 45, MENU[0] - 45:MENU[0] + 45]
+        ti_ = {"type": "tap_image", "image": b64png(crop), "x": MENU[0] - 45, "y": MENU[1] - 45, "w": 90, "h": 90}
+        p1 = Pic([title_scr])
+        i1 = apimode.exec_step(p1, ti_, {})
+        ok(i1 == (True, "", True) and p1.taps == [MENU] and p1.sent == ["home", "click"] and p1.n == 1,
+           "thấy đúng hình → bấm vào GIỮA hình, đúng một lần (trước khi tìm, con trỏ được cất về góc để không che hình)", (i1, p1.taps, p1.sent))
+        p2 = Pic([scene(btn=(1000, 300))])
+        i2 = apimode.exec_step(p2, ti_, {})
+        ok(i2[0] is True and p2.taps == [(1000, 300)], "nút nằm ở chỗ KHÁC với lúc cắt hình → vẫn tìm ra và bấm đúng chỗ mới (không bấm theo toạ độ cũ)", (i2, p2.taps))
+        p3 = Pic([scene(btn=None)])
+        i3 = apimode.exec_step(p3, ti_, {})
+        ok(i3[0] is False and i3[2] is False and p3.taps == [] and p3.sent == ["home"] and p3.n == 1 and i3[1].startswith("không thấy vùng ảnh cần bấm trên màn hình (chỗ giống nhất ") and "cần 90%" in i3[1],
+           "màn hình KHÔNG có hình đó → không bấm gì, báo rõ chỗ giống nhất được bao nhiêu %", i3)
+        p4 = Pic([scene(btn=None), scene(btn=None), title_scr])
+        i4 = apimode.exec_step(p4, dict(ti_, timeout=5), {})
+        ok(i4[0] is True and p4.taps == [MENU] and p4.n == 4, "hình hiện CHẬM (game đang tải) + có ghi thời gian chờ → nhìn lại tới khi thấy, chờ đứng yên rồi bấm", (i4, p4.n))
+        p5 = Pic([scene(btn=None)])
+        i5 = apimode.exec_step(p5, dict(ti_, timeout=0.3), {})
+        ok(i5[0] is False and i5[1].startswith("chờ 0.3s không thấy vùng ảnh") and p5.taps == [] and p5.n > 1, "hết thời gian chờ vẫn không có → hỏng, kèm số giây đã chờ", i5)
+        for label, shot in (("màn hình bị PHỦ MỜ (hộp thoại che lên)", scene(dim=0.6)), ("hình cùng dạng nhưng MẤT MÀU (nút xám «chưa bấm được»)", scene(gray=True)),
+                            ("màn hình khác cỡ, nhỏ hơn cả hình mẫu", title_scr[:60, :60])):
+            pz = Pic([shot])
+            iz = apimode.exec_step(pz, ti_, {})
+            ok(iz[0] is False and pz.taps == [] and "click" not in pz.sent, "%s → không coi là «giống», không bấm" % label, iz)
+        two = title_scr.copy()                         # HAI chỗ giống hệt nhau: chép nguyên vùng nút sang một chỗ khác
+        two[200 - 45:200 + 45, 300 - 45:300 + 45] = crop
+        p6 = Pic([two]); apimode.exec_step(p6, ti_, {})
+        p7 = Pic([two]); apimode.exec_step(p7, dict(ti_, x=300 - 45, y=200 - 45), {})
+        ok(p6.taps == [MENU] and p7.taps == [(300, 200)], "hai chỗ giống hệt nhau → bấm chỗ GẦN nơi hình được cắt ra nhất", (p6.taps, p7.taps))
+        soft = scene(blur=7)                           # hình hơi nhoè (nền sau nút đổi nhẹ)
+        s_soft = eyes_mod.locate_image(soft, crop, 0.5)[1]
+        p8, p9, p10 = Pic([soft]), Pic([soft]), Pic([soft])
+        i8 = apimode.exec_step(p8, dict(ti_, min=0.99), {})
+        i9 = apimode.exec_step(p9, dict(ti_, min=round(s_soft - 0.03, 3)), {})
+        i10 = apimode.exec_step(p10, dict(ti_, min=int(round((s_soft - 0.03) * 100))), {})
+        ok(0.6 < s_soft < 0.97 and i8[0] is False and p8.taps == [] and i9[0] is True and p9.taps == [MENU] and i10[0] is True,
+           "«độ giống tối thiểu»: đòi 99%% thì hình hơi nhoè (%.0f%%) không đạt; hạ ngưỡng thì bấm; ghi theo phần trăm (vd 90) cũng nhận" % (s_soft * 100), (s_soft, i8, i9, i10))
+
+        class Gone(Pic):                               # hình biến mất trong lúc con trỏ đang đi tới
+            def tap_at(self, x, y, click=True, verify=None):
+                self.cur = scene(btn=None)
+                return super().tap_at(x, y, click, verify)
+        p11 = Gone([title_scr])
+        i11 = apimode.exec_step(p11, ti_, {})
+        ok(i11[0] is False and p11.taps == [] and "click" not in p11.sent, "hình biến mất trước khi con trỏ tới nơi → KHÔNG bấm vào chỗ cũ", i11)
+        # NHIỀU chỗ giống hệt nhau (dãy nút mua không chữ): phải xét HẾT rồi mới chọn chỗ gần nơi cắt hình — trước đây chỉ xét 4 chỗ đầu
+        row = title_scr.copy()
+        spots = [(120 + 160 * i, 150) for i in range(7)]
+        for cx, cy in spots:
+            row[cy - 45:cy + 45, cx - 45:cx + 45] = crop
+        hit_ = []
+        for cx, cy in spots:
+            pr = Pic([row]); apimode.exec_step(pr, dict(ti_, x=cx - 45, y=cy - 45), {})
+            hit_.append(pr.taps)
+        ok(hit_ == [[s_] for s_ in spots], "7 nút giống hệt nhau xếp hàng (+ nút gốc): khoanh nút nào thì bấm ĐÚNG nút đó, kể cả nút thứ 5, 6, 7", hit_)
+        hit2_ = []
+        for cx, cy in spots:                           # nút đã xê dịch chút ít so với lúc cắt (chỗ cắt không còn trùng khít bản sao nào)
+            pr = Pic([row]); apimode.exec_step(pr, dict(ti_, x=cx - 45 + 30, y=cy - 45 + 20), {})
+            hit2_.append(pr.taps)
+        ok(hit2_ == [[s_] for s_ in spots], "…nút xê dịch chút ít so với lúc cắt → vẫn chọn đúng bản sao GẦN nhất trong cả 8 chỗ giống nhau", hit2_)
+        # ảnh mẫu TRÙM nhiều chu kỳ của một nội dung lặp (khoanh trùm 2,4 hàng giống hệt nhau): hình còn đúng chỗ cũ thì phải ra đúng chỗ đó
+        stripes = np.full((750, 1334, 3), (60, 60, 60), np.uint8)
+        for r_ in range(10):
+            y_ = 100 + 50 * r_
+            cv2.rectangle(stripes, (200, y_ + 6), (900, y_ + 40), (200, 120, 40), -1)
+            cv2.circle(stripes, (260, y_ + 23), 12, (250, 250, 250), -1)
+            cv2.putText(stripes, "Mua", (300, y_ + 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        wrong = []
+        for r_ in (1, 3, 6):
+            y_ = 100 + 50 * r_
+            tm = stripes[y_:y_ + 120, 220:420].copy()
+            got = eyes_mod.locate_image(stripes, tm, 0.9, (320, y_ + 60))[0]
+            if got != (320, y_ + 60):
+                wrong.append((r_, got))
+        ok(wrong == [], "ảnh mẫu trùm 2,4 hàng giống hệt nhau: hình còn nằm ĐÚNG chỗ được cắt → trả đúng chỗ đó (trước đây lệch một hàng ở 2/3 vị trí)", wrong)
+        small = crop[30:60, 30:60]
+        wall = np.full((750, 1334, 3), (90, 40, 120), np.uint8)
+        for gy in range(8):
+            for gx in range(9):
+                wall[40 + gy * 80:70 + gy * 80, 40 + gx * 120:70 + gx * 120] = small
+        pw_, pw2_ = Pic([wall]), Pic([wall])
+        iw_ = apimode.exec_step(pw_, {"type": "tap_image", "image": b64png(small), "x": 445, "y": 395, "w": 30, "h": 30}, {})      # chỗ cắt nằm GIỮA các bản sao
+        iw2_ = apimode.exec_step(pw2_, {"type": "tap_image", "image": b64png(small), "x": 400, "y": 360, "w": 30, "h": 30}, {})    # chỗ cắt vẫn còn đúng hình đó
+        ok(iw_[0] is False and pw_.taps == [] and "quá nhiều chỗ giống hệt" in iw_[1] and eyes_mod.locate_image(wall, small, 0.9, (460, 410)) == (None, eyes_mod.IMAGE_TOO_MANY)
+           and eyes_mod.locate_image(wall, small, 0.9)[0] is None,
+           "hình lặp lại quá nhiều chỗ (72 chỗ, quá %d) mà chỗ cắt không còn hình đó → không phân xử được → KHÔNG bấm, báo đúng lý do" % eyes_mod.IMAGE_PEAKS_MAX, iw_)
+        ok(iw2_[0] is True and pw2_.taps == [(415, 375)], "…còn nếu hình vẫn nằm ĐÚNG chỗ được cắt thì bấm chỗ đó (không cần phân xử)", (iw2_, pw2_.taps))
+        flat = np.full((40, 40, 3), 77, np.uint8)
+        red = np.zeros((40, 40, 3), np.uint8); red[:, :, 2] = 255
+        bads = {"ảnh một màu ĐẬM (đỏ thuần)": dict(ti_, image=b64png(red)), "thiếu ảnh": {"type": "tap_image"}, "ảnh không phải base64": dict(ti_, image="không phải ảnh"), "base64 nhưng không phải ảnh": dict(ti_, image=base64.b64encode(b"abc").decode()),
+                "ảnh một màu": dict(ti_, image=b64png(flat)), "ảnh quá nhỏ": dict(ti_, image=b64png(crop[:5, :5])), "ảnh quá lớn": dict(ti_, image=b64png(title_scr[:700, :700])),
+                "độ giống không phải số": dict(ti_, min="cao"), "thời gian chờ không phải số": dict(ti_, timeout="lâu")}
+        for why, bad in bads.items():
+            pb = Pic([title_scr])
+            try:
+                apimode.exec_step(pb, bad, {}); raised = False
+            except apimode.ConfigError:
+                raised = True
+            ok(raised and pb.taps == [], "bước cấu hình sai (%s) → báo lỗi cấu hình, không bấm" % why)
+        pic_, need_, near_ = apimode.step_image(dict(ti_, image="data:image/png;base64," + ti_["image"], min=5))
+        ok(pic_.shape == (90, 90, 3) and need_ == 0.5 and near_ == MENU and apimode.step_image({"image": ti_["image"]})[1:] == (apimode.IMAGE_MIN, None)
+           and apimode.step_image(dict(ti_, min=100))[1] == 0.99 and apimode.step_image(dict(ti_, min=-3))[1] == apimode.IMAGE_MIN
+           and apimode.step_image(dict(ti_, min=float("nan")))[1] == apimode.IMAGE_MIN and apimode.describe(dict(ti_, w="<b>", h=None)) == "Bấm vào vùng ảnh"
+           and apimode.describe(dict(ti_, w=float("inf"))) == "Bấm vào vùng ảnh" and apimode.step_image(dict(ti_, x=float("inf")))[2] is None,
+           "đọc bước: nhận cả ảnh có tiền tố «data:»; độ giống bị chặn trong 50…99%; không ghi chỗ cắt thì không ưu tiên chỗ nào")
+        login2 = [{"type": "launch", "app": "efootball"}, {"type": "wait_text", "text": "Konami"}, ti_, {"type": "type", "text": "{{username}}"}]
+        ok("tap_image" in apimode.INPUT_TYPES and [x["type"] for x in apimode.open_prefix(login2)] == ["launch", "wait_text"] and apimode.describe(ti_) == "Bấm vào vùng ảnh 90×90"
+           and apimode.describe({"type": "tap_image"}) == "Bấm vào vùng ảnh",
+           "bước bấm vào vùng ảnh là bước CHẠM vào máy: đoạn mở game dừng trước nó; mô tả không chứa dữ liệu ảnh")
+        p12, p13 = Pic([title_scr]), Pic([scene(btn=None)])
+        ok14, msg14 = engine.run_step(p12, ti_)
+        ok15, msg15 = engine.run_step(p13, ti_)
+        ok(ok14 is True and p12.taps == [MENU] and msg14 == "Bấm vào vùng ảnh 90×90" and ok15 is False and p13.taps == [] and "không thấy vùng ảnh" in msg15 and "tap_image" in engine.STEP_TYPES,
+           "kịch bản thường / «thử một bước» dùng chung cách làm", (msg14, msg15))
+        ok(eyes_mod.locate_image(None, crop) == (None, 0.0) and eyes_mod.locate_image(title_scr, None) == (None, 0.0) and eyes_mod.locate_image(title_scr[:, :, 0], crop) == (None, 0.0)
+           and eyes_mod.locate_image(np.dstack([title_scr, title_scr[:, :, :1]]), crop) == (None, 0.0) and eyes_mod.locate_image(title_scr.astype(np.float32), crop) == (None, 0.0),
+           "thiếu ảnh / ảnh không đủ ba kênh màu / 4 kênh / không phải 8 bit → «không thấy», không ném lỗi")
     finally:
         apimode.LOOK_SETTLE, apimode._sleep = real_settle, real_sleep
 
@@ -1580,6 +1920,8 @@ def run_all(gw, rigs):
        "máy hiện đang chạy «nhóm · kịch bản» ở chế độ nhận đơn", stk)
     ok([c["name"] for c in rk.runner.customers()] == [rk.name], "…và được tính là MÁY CỦA KHÁCH (mọi luật riêng tư / không chạy đè của chế độ nhận đơn áp dụng)")
     ok(wait_until(lambda: gk.user is None, 5), "xong đơn: đã đăng xuất (bước kết thúc lấy từ pool)", gk.user)
+    wait_until(lambda: rk.status().get("status") == "Chờ đơn", 8)       # máy báo «trống» cho gateway SAU khi đăng xuất xong → chờ nó về «Chờ đơn» rồi mới đọc
+    wait_until(lambda: gw.sql("SELECT state FROM devices WHERE name=?", (rk.name,)) == [("free",)], 5)
     devk = gw.sql("SELECT state, pool_code FROM devices WHERE name=?", (rk.name,))
     ok(devk == [("free", "game-test")], "gateway thấy máy đang trống ở đúng pool của kịch bản", devk)
     rk.stop()

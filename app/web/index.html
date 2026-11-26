@@ -448,6 +448,7 @@
                           <div class="pal-title">Chạm</div>
                           <button class="pal-item" data-add="tap_text"><i class="ti tabler-hand-finger"></i>Bấm vào chữ</button>
                           <button class="pal-item" data-add="pick" title="Bật «bấm vào ảnh» rồi bấm lên ảnh màn hình để lấy toạ độ"><i class="ti tabler-pointer"></i>Bấm theo vị trí trên ảnh</button>
+                          <button class="pal-item" data-add="tap_image" title="Kéo một khung quanh nút / biểu tượng trên ảnh màn hình — máy tìm đúng hình đó rồi bấm (thay cho toạ độ cố định)"><i class="ti tabler-photo-search"></i>Bấm vào vùng ảnh</button>
                           <button class="pal-item" data-add="tap_if" title="Cho thứ lúc có lúc không: hộp thoại, thông báo, quảng cáo…"><i class="ti tabler-arrows-split"></i>Nếu thấy chữ thì bấm</button>
                           <button class="pal-item" data-add="hold_text"><i class="ti tabler-hand-stop"></i>Bấm giữ vào chữ</button>
                           <button class="pal-item" data-add="hold"><i class="ti tabler-hand-stop"></i>Bấm giữ theo toạ độ</button>
@@ -481,7 +482,8 @@
                       <button class="btn btn-sm btn-primary" id="btn-shot" title="Chụp màn hình máy đang chọn"><i class="ti tabler-camera me-1"></i>Chụp</button>
                     </div>
                     <div id="screen-wrap">
-                      <img id="screen" alt="Ảnh màn hình iPhone">
+                      <img id="screen" alt="Ảnh màn hình iPhone" draggable="false">
+                      <div id="screen-sel" hidden></div>
                       <div id="screen-hint">
                         <i class="ti tabler-device-mobile mb-2" style="font-size:38px"></i>
                         <div>Chọn máy rồi bấm «Chụp».</div>
@@ -493,6 +495,7 @@
                         <input class="form-check-input" type="checkbox" id="pick-mode">
                         <label class="form-check-label" for="pick-mode">Bấm vào ảnh để thêm bước chạm</label>
                       </div>
+                      <small class="text-muted" id="pick-hint" hidden>Bấm một điểm = bấm theo toạ độ · kéo một khung = bấm vào vùng ảnh đó</small>
                       <small class="text-muted" id="screen-info">—</small>
                     </div>
                   </aside>

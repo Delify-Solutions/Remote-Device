@@ -264,6 +264,34 @@ def main():
                            ("alert_edge", (149, 37), "con trỏ vừa chạm mép trên của nút (nút đã sẫm)")):
         got = e.pointer_blobs(aref, fx(fn))
         ok(len(got) == 1 and abs(got[0][0] - want[0]) <= 5 and abs(got[0][1] - want[1]) <= 5, "ảnh thật: %s → vẫn ĐO được vị trí con trỏ" % what, got)
+    # Trang WEB: nút đổi màu khi con trỏ rê tới (:hover). Ảnh thật — nút «Login» 932×92px của trang đăng nhập my.konami.net trên iPhone 8
+    # đang xoay NGANG (cắt riêng vùng nút): nút đổi từ đỏ sang trắng, chữ trên nút đổi từ trắng sang xám.
+    wref = fx("web_hover_ref")
+    ok(wref is not None and Eyes.pointer_size(wref) == 38 and Eyes.pointer_size(np.zeros((750, 1334, 3), np.uint8)) == 38
+       and Eyes.pointer_size(np.zeros((1125, 2436, 3), np.uint8)) == 57,
+       "cỡ con trỏ không đổi khi ảnh chụp nằm NGANG (iPhone 8: 1334×750 vẫn là máy ×2; máy ×3 nằm ngang vẫn là ×3)")
+    for fn, want, what in (("web_hover_in", (403, 55), "con trỏ nằm trong nút vừa đổi từ đỏ sang trắng"),
+                           ("web_hover_text", (550, 55), "con trỏ đè lên CHỮ của nút (chữ cũng đổi màu)")):
+        got = e.pointer_blobs(wref, fx(fn))
+        ok(len(got) == 1 and abs(got[0][0] - want[0]) <= 6 and abs(got[0][1] - want[1]) <= 6, "ảnh thật (web): %s → vẫn ĐO được vị trí con trỏ" % what, got)
+    ok(e.pointer_blobs(wref, fx("web_hover_none")) == [], "ảnh thật (web): nút đang đổi màu mà KHÔNG có con trỏ → không báo gì (chữ đổi màu không bị nhận nhầm là con trỏ)",
+       e.pointer_blobs(wref, fx("web_hover_none")))
+    # Bước «bấm vào chữ» đưa con trỏ tới ĐÚNG GIỮA CHỮ của nút → con trỏ đè lên chữ đang đổi màu vẫn phải đo được ở mọi vị trí
+    # (vẽ con trỏ lên ảnh thật của nút đang đổi màu; chữ «Login» nằm quanh x=519, y=59 của ảnh cắt).
+    whover = fx("web_hover_none")
+
+    def dot(img, x, y):
+        out, mask = img.copy(), np.zeros(img.shape[:2], np.uint8)
+        cv2.circle(mask, (x, y), R, 255, -1)
+        out[mask > 0] = (img.astype(np.float32) * 0.45 + 70 * 0.55).astype(np.uint8)[mask > 0]
+        return out
+    missed = []
+    for y in (40, 50, 58, 66, 76):
+        for x in range(430, 610, 5):
+            got = e.pointer_blobs(wref, dot(whover, x, y))
+            if not (len(got) == 1 and abs(got[0][0] - x) <= 6 and abs(got[0][1] - y) <= 6):
+                missed.append((x, y, got))
+    ok(not missed, "ảnh thật (web): con trỏ đè lên chữ «Login» đang đổi màu — đo đúng ở cả 180 vị trí quét quanh chữ", missed[:6])
 
     def tinted(img, box, by=-19):
         out = img.copy()
@@ -297,6 +325,30 @@ def main():
     badge = tinted(base, btn)                       # trong nút bị tô có một mảnh đổi KHÁC nhưng không đúng cỡ con trỏ (nhãn dài)
     cv2.rectangle(badge, (430, 760), (560, 800), (60, 60, 200), -1)
     ok(e.pointer_blobs(base, badge) == [], "mảnh đổi khác trong nút mà KHÔNG đúng cỡ con trỏ (một cái nhãn dài) → không nhận", e.pointer_blobs(base, badge))
+
+    # nút LỚN của trang web (dài gần hết màn hình) đổi màu nền VÀ màu chữ khi con trỏ rê tới
+    def web_button(img, box, hover, text="Log In with Another KONAMI ID", lines=1):
+        out = img.copy()
+        x0, y0, x1, y1 = box
+        cv2.rectangle(out, (x0, y0), (x1 - 1, y1 - 1), (255, 255, 255) if hover else (40, 30, 170), -1)
+        for k in range(lines):
+            cv2.putText(out, text, (x0 + 24, y0 + 44 + 34 * k), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (90, 90, 90) if hover else (255, 255, 255), 3)
+        return out
+    wide = (25, 1000, 725, 1100)                    # 700×100 = 70.000px ≈ 62 lần diện tích con trỏ (trên giới hạn cũ 60 lần)
+    wbase = web_button(base, wide, False)
+    got = e.pointer_blobs(wbase, draw_pointer(web_button(base, wide, True), 600, 1052))
+    ok(len(got) == 1 and abs(got[0][0] - 600) <= 4 and abs(got[0][1] - 1052) <= 4, "nút web LỚN đổi cả màu nền lẫn màu chữ: con trỏ ở chỗ trống của nút → đo được", got)
+    got = e.pointer_blobs(wbase, draw_pointer(web_button(base, wide, True), 200, 1040))
+    ok(len(got) == 1 and abs(got[0][0] - 200) <= 6 and abs(got[0][1] - 1040) <= 6, "…con trỏ đè lên dòng chữ dài của nút → vẫn đo được (nét chữ mảnh bị bào bỏ)", got)
+    ok(e.pointer_blobs(wbase, web_button(base, wide, True)) == [], "…nút đổi màu mà không có con trỏ → không báo gì", e.pointer_blobs(wbase, web_button(base, wide, True)))
+    huge = (20, 300, 730, 560)                      # 710×260 ≈ 163 lần diện tích con trỏ: lớn hơn một cái nút → không soi
+    hbase = web_button(base, huge, False)
+    ok(e.pointer_blobs(hbase, draw_pointer(web_button(base, huge, True), 400, 500)) == [],
+       "khối đổi màu LỚN hơn một cái nút (quá %d lần diện tích con trỏ) → không đoán con trỏ trong đó" % Eyes.BLOCK_MAX)
+    wordy = (25, 960, 725, 1140)                    # cùng cỡ nút nhưng kín chữ đổi màu (một đoạn văn, không phải nhãn của nút)
+    wb2 = web_button(base, wordy, False, text="Noi dung moi hien ra kin ca khoi nay", lines=5)
+    ok(e.pointer_blobs(wb2, draw_pointer(web_button(base, wordy, True, text="Noi dung moi hien ra kin ca khoi nay", lines=5), 640, 1120)) == [],
+       "khối đổi màu mà phần «đổi khác» quá nhiều (kín chữ) → không coi là nút được phủ sáng, không đoán")
 
     card = base.copy()                              # một khối NỘI DUNG mới hiện ra (hai mảng màu + một icon tròn cỡ con trỏ), không phải «tô đều»
     cv2.rectangle(card, (150, 215), (370, 295), (215, 215, 215), -1)

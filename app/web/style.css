@@ -240,7 +240,10 @@
   align-items: center; justify-content: center; overflow: hidden;
 }
 #screen { max-width: 100%; max-height: 520px; display: none; border-radius: 6px; }
-#screen.pick { cursor: crosshair; }
+#screen.pick { cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
+/* khung đang kéo trên ảnh màn hình để chọn «vùng ảnh cần bấm» */
+#screen-sel { position: absolute; z-index: 2; pointer-events: none; border: 2px solid var(--bs-primary); border-radius: 3px; background: rgba(var(--bs-primary-rgb), .18); }
+#screen-sel[hidden] { display: none; }
 #screen-hint { text-align: center; color: var(--bs-secondary-color); font-size: .86rem; padding: 2rem; }
 .screen-spinner { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   background: rgba(var(--bs-body-bg-rgb), .7); }
@@ -538,6 +541,9 @@ html.ipf-menu-off.layout-navbar-fixed .layout-navbar.navbar-detached { inline-si
 .flow-text .flow-dim { color: var(--bs-secondary-color); font-size: .84rem; }
 .flow-text code { font-size: .82em; padding: .05rem .35rem; border-radius: .3rem; background: var(--bs-primary-bg-subtle); color: var(--bs-primary);
   white-space: nowrap; display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+/* hình cần bấm của bước «bấm vào vùng ảnh», hiện ngay trong câu của bước */
+.flow-thumb { height: 1.9rem; max-width: 7.5rem; object-fit: contain; vertical-align: middle; margin: 0 .25rem; border-radius: 4px; border: 1px solid var(--bs-border-color); background: #000; }
+.modal-thumb { display: block; max-width: 100%; max-height: 180px; margin: .2rem auto .3rem; border-radius: 6px; border: 1px solid var(--bs-border-color); background: #000; image-rendering: auto; }
 .flow-tag { font-size: .72rem; padding: .05rem .45rem; margin-left: .4rem; border-radius: 2rem; background: var(--bs-warning-bg-subtle); color: var(--bs-warning); white-space: nowrap; }
 .flow-result { margin: .2rem 0 0 1.55rem; font-size: .8rem; color: var(--bs-secondary-color); overflow-wrap: anywhere; }
 .flow-step.is-ok .flow-result { color: var(--bs-success); }

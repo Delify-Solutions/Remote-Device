@@ -150,6 +150,43 @@ out.waitSentence = [stepSentence({ type: "tap_text", text: "A", timeout: 5 }), s
 out.waitField = [textWaitField(null).value, textWaitField({ type: "tap_text", text: "A" }).value, textWaitField({ type: "tap_text", text: "A", timeout: 7 }).value, textWaitField({ timeout: "x" }).value];
 const ws = (raw) => { const st = { type: "tap_text", text: "A", timeout: 9 }; setTextWait(st, raw); return "timeout" in st ? st.timeout : null; };
 out.waitSet = [ws("5"), ws("0"), ws(""), ws("abc"), ws("-3"), ws("999"), ws("2.5")];
+
+// ---- 6. bước «bấm vào vùng ảnh» ----
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+out.imgSentence = [stepSentence({ type: "tap_image", image: PNG, w: 90, h: 90, timeout: 5 }), stepSentence({ type: "tap_image", image: PNG }),
+                   stepSentence({ type: "tap_image", image: X }), stepSentence({ type: "tap_image" }), stepSentence({ type: "tap_image", image: PNG + '" onerror="alert(1)' })];
+out.imgText = [stepText({ type: "tap_image", image: PNG, w: 90, h: 90, timeout: 5 }), stepText({ type: "tap_image", image: PNG, w: X, h: X })];
+out.imgSrc = [imageSrc(PNG) === "data:image/png;base64," + PNG, imageSrc(""), imageSrc(null), imageSrc("abc def"), imageSrc("data:image/png;base64," + PNG), imageSrc("AAAA===="), imageSrc("A".repeat(1200001))];
+out.imgKind = stepKind("tap_image");
+out.imgMin = ["90", "80", "0.8", "1", "", "abc", "-5", "0", "20", "100", "99.6"].map(parseImageMin);
+const POOL = { code: "p", steps: { login: [{ type: "home" }], purchase: [{ type: "tap_text", text: "Mua" }], nav: "rác" } };
+out.gwSteps = [gatewaySteps({ pool: "p" }, POOL, "purchase").length, gatewaySteps({ pool: "khac" }, POOL, "purchase").length, gatewaySteps({ pool: "" }, POOL, "purchase").length,
+               gatewaySteps({ pool: "p" }, null, "purchase").length, gatewaySteps(null, POOL, "purchase").length, gatewaySteps({ pool: "p" }, POOL, "nav").length, gatewaySteps({ pool: "p" }, POOL, "otp").length,
+               gatewaySteps({ pool: "p" }, { code: "p" }, "login").length];
+const px = (list) => { const d = []; list.forEach(([r, g, b]) => d.push(r, g, b, 255)); return d; };
+out.flat = [flatPixels(px(Array(100).fill([255, 0, 0]))), flatPixels(px(Array(100).fill([77, 77, 77]))), flatPixels(px(Array(50).fill([255, 0, 0]).concat(Array(50).fill([0, 255, 0])))),
+            flatPixels(px(Array(50).fill([200, 200, 200]).concat(Array(50).fill([20, 20, 20])))), flatPixels([])];
+const RECT = { left: 100, top: 50, width: 667, height: 375 }, SCR = { w: 1334, h: 750 };      // ảnh 1334×750 hiện thu nhỏ một nửa
+out.region = [dragRegion({ x: 706, y: 368 }, { x: 751, y: 413 }, RECT, SCR),                    // kéo quanh nút menu (1257,682)
+              dragRegion({ x: 751, y: 413 }, { x: 706, y: 368 }, RECT, SCR),                    // kéo ngược (từ dưới-phải lên trên-trái)
+              dragRegion({ x: 300, y: 200 }, { x: 303, y: 204 }, RECT, SCR),                    // gần như không kéo → là một cú bấm
+              dragRegion({ x: 300, y: 200 }, { x: 304, y: 208 }, RECT, SCR),                    // kéo tí tẹo → quá nhỏ
+              dragRegion({ x: 110, y: 60 }, { x: 760, y: 420 }, RECT, SCR),                     // khoanh gần hết màn hình → quá lớn
+              dragRegion({ x: 700, y: 380 }, { x: 900, y: 600 }, RECT, SCR),                    // kéo ra NGOÀI ảnh → cắt gọn trong ảnh
+              dragRegion({ x: 300, y: 200 }, { x: 400, y: 300 }, { left: 0, top: 0, width: 0, height: 0 }, SCR), dragRegion({ x: 1, y: 1 }, { x: 50, y: 50 }, RECT, { w: 0, h: 0 }), dragRegion(null, null, RECT, SCR)];
+
+// ---- 7. «nhấn phím» trong bước có điều kiện; mở mới app; gõ từng ký tự; «Chạy lại» máy đang giữ ----
+out.keyParse = parseIfCases("lưu mật khẩu này => phím esc\nGame Center => Hủy\nx => key ENTER\ny => phim tab\nz => phím f13\nw => phím\nv => phím delete");
+out.keyLines = out.keyParse.map(ifCaseLine);
+out.keySentence = [stepSentence({ type: "tap_if", text: "lưu mật khẩu này", key: "esc", timeout: 5 }), stepSentence({ type: "tap_if", timeout: 0, cases: [{ text: "A", key: "esc" }, { text: "B", tap: "C" }] }),
+                   stepSentence({ type: "tap_if", text: "A", key: X }), stepText({ type: "tap_if", text: "A", key: "esc", timeout: 3 })];
+out.keyCases = [ifCases({ type: "tap_if", text: "A", key: "esc" }), ifKey({ key: " ESC " }), ifKey({ key: X }), ifKey(null)];
+out.fresh = [stepSentence({ type: "launch", app: "efootball", fresh: true }), stepSentence({ type: "launch", app: "efootball" }), stepText({ type: "launch", app: "efootball", fresh: true }), stepText({ type: "launch", app: "efootball" })];
+out.gap = [stepSentence({ type: "type", text: "{{otp}}", gap: 0.4 }), stepSentence({ type: "type", text: "abc" }), stepSentence({ type: "type", text: "abc", gap: X })];
+const G = { id: "g1" }, S = { id: "s1", mode: "orders" };
+out.rerun = [canRerunHeld({ hold: "đơn cần đối soát", group_id: "g1", script_id: "s1" }, G, S), canRerunHeld({ hold: "x", group_id: "g1", script_id: "khac" }, G, S),
+             canRerunHeld({ hold: "x", group_id: "khac", script_id: "s1" }, G, S), canRerunHeld({ hold: "x", group_id: "g1", script_id: "s1", running: true }, G, S),
+             canRerunHeld({ group_id: "g1", script_id: "s1" }, G, S), canRerunHeld({ hold: "x", group_id: "g1", script_id: "s1" }, G, { id: "s1", mode: "once" }), canRerunHeld(null, G, S)];
 console.log(JSON.stringify(out));
 """
 
@@ -161,9 +198,10 @@ def main():
         return 0
     src = open(APP_JS, encoding="utf-8").read()
     esc_line = next(l for l in src.splitlines() if l.startswith("const esc ="))
-    parts = [esc_line] + [const_source(src, n) for n in ("SWIPE_DIR", "STEP_LABEL", "STEP_KIND", "API_PHASES", "ORDER_LABEL", "TEXT_WAIT_NEW")]
+    parts = [esc_line] + [const_source(src, n) for n in ("SWIPE_DIR", "STEP_LABEL", "STEP_KIND", "API_PHASES", "ORDER_LABEL", "TEXT_WAIT_NEW", "REGION_DRAG", "IF_KEYS")]
     parts += [function_source(src, n) for n in ("ifCases", "parseIfCases", "stepText", "stepKind", "stepVal", "stepSentence", "normApi", "scriptStepCount", "setScriptMode", "addPicked",
-                                                "orderVars", "varChips", "insertAtCursor", "textWaitField", "setTextWait")]
+                                                "orderVars", "varChips", "insertAtCursor", "textWaitField", "setTextWait", "imageSrc", "dragRegion",
+                                                "ifKey", "ifCaseLine", "canRerunHeld", "parseImageMin", "gatewaySteps", "flatPixels")]
     stubs = ("let FLOW = { steps: [] }; let PICK_TO = null; let ORDERS = null; let RENDERS = 0; const TOASTS = []; let CFG = null; let GW_POOL = null;\n"
              "function scriptOrders() { return ORDERS; }\nfunction ordersCfg() { return CFG; }\nfunction renderSteps() { RENDERS++; }\nfunction toast(m) { TOASTS.push(m); }\n")
     r = subprocess.run([node, "-e", stubs + "\n".join(parts) + HARNESS], capture_output=True, text=True, timeout=60)
@@ -248,6 +286,42 @@ def main():
     ok("trong 1 giây · chờ chữ tối đa 3 giây" in w[3] and "chờ chữ" not in w[4] and w[5] == "“A” (chờ 5s)" and w[6] == "“A”", "bấm giữ vào chữ và dòng nhật ký cũng nói thời gian chờ", w[3:])
     ok(o["waitField"] == ["5", "0", "7", "0"], "bước MỚI mặc định chờ 5 giây; bước cũ không ghi gì hiện 0 (đang nhìn một lần) — không tự đổi hành vi của bước đã có", o["waitField"])
     ok(o["waitSet"] == [5, None, None, None, None, 60, 2.5], "lưu: 0 / trống / không phải số / âm → bỏ trường (nhìn một lần); quá lớn → 60 giây; số lẻ giữ nguyên", o["waitSet"])
+
+    print("== 6. Bước «bấm vào vùng ảnh» ==")
+    g = o["imgSentence"]
+    ok(g[0].startswith('Bấm vào hình <img class="flow-thumb" src="data:image/png;base64,iVBOR') and g[0].endswith('<span class="flow-dim">chờ tối đa 5 giây</span>') and "flow-dim" not in g[1] and "<img" in g[1],
+       "câu của bước hiện luôn HÌNH cần bấm (và thời gian chờ nếu có)", g[:2])
+    ok(all("<img" not in x and "ảnh không đọc được" in x for x in g[2:]) and "onerror" not in "".join(g[2:]).replace("&quot;", ""),
+       "ảnh không phải base64 / thiếu ảnh / có ký tự chen vào → KHÔNG đưa vào trang, ghi «ảnh không đọc được»", g[2:])
+    ok(o["imgText"] == ["vùng ảnh 90×90 (chờ 5s)", "vùng ảnh ?×?"] and o["imgKind"] == ["touch", "tabler-photo-search"], "dòng nhật ký ghi cỡ vùng ảnh (cỡ lạ → «?»); bước thuộc nhóm «chạm»", [o["imgText"], o["imgKind"]])
+    ok(o["imgMin"] == [90, 80, 80, 99, 90, 90, 90, 90, 50, 99, 99],
+       "ô «giống tối thiểu (%)»: gõ 0.8 hiểu là 80%; trống / chữ / số âm / 0 → 90 (mặc định, không tụt về mức dễ dãi nhất); kẹp trong 50…99", o["imgMin"])
+    ok(o["gwSteps"] == [1, 0, 0, 0, 0, 0, 0, 0],
+       "«Thử» giai đoạn chưa có bước riêng: chỉ lấy bước của gateway khi pool đang nạp ĐÚNG là pool của kịch bản (pool khác / chưa nạp / chưa chọn → không có bước nào để chạy thử)", o["gwSteps"])
+    ok(o["flat"] == [True, True, False, False, True],
+       "vùng «gần như một màu» xét theo TỪNG kênh màu như phía máy: mảng đỏ thuần / xám thuần bị từ chối; hai màu đồng độ sáng hay sáng–tối đều được nhận", o["flat"])
+    ok(o["imgSrc"] == [True, "", "", "", "", "", ""], "chỉ chuỗi base64 thuần (không khoảng trắng, không tiền tố, đệm đúng, không quá lớn) mới thành địa chỉ ảnh", o["imgSrc"])
+    r = o["region"]
+    ok(r[0] == {"x": 1212, "y": 636, "w": 90, "h": 90} and r[1] == r[0], "kéo một khung trên ảnh đang thu nhỏ → đúng vùng theo điểm ảnh của ảnh chụp, kéo xuôi hay ngược đều như nhau", r[:2])
+    ok(r[2] is None and "quá nhỏ" in (r[3] or {}).get("error", "") and "quá lớn" in (r[4] or {}).get("error", ""),
+       "gần như không kéo → coi là một cú BẤM (toạ độ); khung quá nhỏ / quá lớn → báo, không tạo bước", r[2:5])
+    ok(r[5] == {"x": 1200, "y": 660, "w": 134, "h": 90} and r[6] is None and r[7] is None and r[8] is None,
+       "kéo ra ngoài ảnh → vùng được cắt gọn trong ảnh; chưa có ảnh / thiếu điểm → không tạo gì", r[5:])
+
+    print("== 7. «Nhấn phím» trong bước có điều kiện; mở mới app; gõ từng ký tự; «Chạy lại» ==")
+    ok(o["keyParse"] == [{"text": "lưu mật khẩu này", "key": "esc"}, {"text": "Game Center", "tap": "Hủy"}, {"text": "x", "key": "enter"}, {"text": "y", "key": "tab"},
+                         {"text": "z", "tap": "phím f13"}, {"text": "w", "tap": "phím"}, {"text": "v", "tap": "phím delete"}],
+       "gõ «=> phím esc» (hoặc «key», không dấu): thành trường hợp NHẤN PHÍM; phím lạ / thiếu tên phím thì vẫn là «bấm vào chữ» như đã gõ", o["keyParse"])
+    ok(o["keyLines"][:4] == ["lưu mật khẩu này => phím esc", "Game Center => Hủy", "x => phím enter", "y => phím tab"], "mở bước ra sửa: mỗi trường hợp hiện lại đúng một dòng như lúc gõ", o["keyLines"])
+    ks = o["keySentence"]
+    ok(ks[0].startswith("Nếu thấy chữ <b>«lưu mật khẩu này»</b> thì nhấn phím <b>esc</b>") and "nhấn phím <b>esc</b><br>Nếu thấy chữ <b>«B»</b> thì bấm <b>«C»</b>" in ks[1]
+       and "<img" not in ks[2] and "nhấn phím" not in ks[2] and ks[3] == "“A” → phím esc (3s)",
+       "câu của bước nói «nhấn phím …»; phím lạ trong dữ liệu không được đưa vào trang (coi như bấm chính chữ đó)", ks)
+    ok(o["keyCases"] == [[{"text": "A", "key": "esc"}], "esc", "", ""], "bước một trường hợp ghi gọn `text` + `key`; tên phím được chuẩn hoá, phím lạ → rỗng", o["keyCases"])
+    ok(o["fresh"] == ['Mở app <b>efootball</b> <span class="flow-dim">tắt hẳn rồi mở mới</span>', "Mở app <b>efootball</b>", "efootball (mở mới)", "efootball"], "câu của «Mở app» nói rõ khi chọn tắt hẳn rồi mở mới", o["fresh"])
+    ok("từng ký tự, cách nhau 0.4 giây" in o["gap"][0] and "từng ký tự" not in o["gap"][1] and "từng ký tự" not in o["gap"][2] and "<img" not in o["gap"][2], "câu của «Gõ chữ» nói rõ khi gõ từng ký tự; giá trị lạ không được in ra", o["gap"])
+    ok(o["rerun"] == [True, False, False, False, False, False, False],
+       "«Chạy lại» chỉ hiện cho máy đang DỪNG CHỜ KIỂM TRA sau đơn của CHÍNH nhóm + kịch bản nhận đơn đang mở (không phải kịch bản khác, nhóm khác, máy đang chạy, máy không giữ, kịch bản thường)", o["rerun"])
 
     print("\n%s" % ("✅ TẤT CẢ %d kiểm tra đều đạt." % PASS if not FAIL else "❌ %d lỗi / %d kiểm tra." % (FAIL, PASS + FAIL)))
     return 1 if FAIL else 0

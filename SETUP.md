@@ -4,7 +4,7 @@ Mục tiêu: dùng 1 Mac điều khiển ~20 iPhone 8 (iOS 16) qua USB để t�
 mở game → đăng nhập tài khoản khách → chọn gói → thanh toán (xác nhận bằng mật khẩu)
 → kiểm tra kết quả, đồng thời kiểm tra thông số từng máy có chuẩn không.
 
-Cập nhật lần cuối: 2026-11-18
+Cập nhật lần cuối: 2026-11-27
 
 ---
 
@@ -33,6 +33,16 @@ Cập nhật lần cuối: 2026-11-18
     `.venv/bin/pymobiledevice3 amfi reveal-developer-mode`
   - Bật xong máy khởi động lại → mở khoá → xác nhận "Bật" → nhập mật khẩu.
 - [x] Developer Disk Image đã mount (`pymobiledevice3 mounter auto-mount`).
+- [x] **Bàn phím phần cứng: tắt cả ba mục** — Cài đặt → Cài đặt chung → Bàn phím → Bàn phím thực → «Tự động viết hoa», «Tự động sửa»,
+  «Phím tắt "."». Để bật thì iOS tự viết HOA chữ cái đầu của thứ tool gõ vào ô chữ (đo trên trang đăng nhập KONAMI: email của khách bị đổi
+  chữ đầu thành chữ hoa) và có thể «sửa» / chèn dấu chấm vào tài khoản. Hai máy 01 và 002 đã tắt (26/11/2026).
+- [ ] **Tắt «Tự động điền mật khẩu»** — Cài đặt → Mật khẩu → Tùy chọn mật khẩu (phải có Touch ID / mật mã của chủ máy nên tool không tự làm
+  được). Để bật thì sau mỗi lần đăng nhập trên trang web iOS hỏi «Bạn có muốn lưu mật khẩu này…?»; hộp đó **không nhận cú bấm của con
+  trỏ**, chỉ đóng được bằng phím Esc (kịch bản phải có bước «nếu thấy `lưu mật khẩu này` thì nhấn phím esc») — và tuyệt đối không được lưu
+  mật khẩu của khách lên máy.
+- **Không khởi động lại / respring máy đã bypass** để gỡ kẹt. Gặp cảnh «hộp thoại hệ thống hiện ra mà bấm không ăn, trong game thì bấm bình
+  thường» (đo trên máy 01, sau lần iOS hỏi lưu mật khẩu): tắt riêng dịch vụ con trỏ trợ năng là hết —
+  `pymobiledevice3 developer dvt proclist` tìm pid của `assistivetouchd` rồi `pymobiledevice3 developer dvt kill <pid>` (iOS tự mở lại sau vài giây).
 
 ### Trên Mac
 | Đã cài | Cách cài | Dùng để |
@@ -283,7 +293,8 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   diện (chưa đăng nhập / đăng nhập thành công / nạp thành công…) và gói nạp vẫn lấy từ pool.
   - Nó chạy bằng **đúng bộ máy của chế độ nhận đơn** (`Runner._run_api`): cùng vòng xin đơn, sổ đơn, «dừng chờ kiểm tra», nhịp tim — nên **bản web
     không chạy được** (từ chối như nhóm nhận đơn), máy đang nhận đơn bằng kịch bản được coi là máy của khách, và máy đang giữ chỉ «Chạy lại» được
-    bằng CHÍNH kịch bản đó. Bấm «Chạy» ở app cửa sổ có hỏi lại vì máy sẽ nhận ĐƠN THẬT. `list_groups` (AI / dòng lệnh) ghi «NHẬN ĐƠN THẬT từ pool …».
+    bằng CHÍNH kịch bản đó (nút «Chạy lại» hiện cạnh máy ấy trong dải «Chạy» của trình sửa kịch bản, có hỏi lại). «Thử» một giai đoạn chưa có
+    bước riêng chỉ dùng bước của gateway khi pool đang nạp trong trình sửa đúng là pool của kịch bản. Bấm «Chạy» ở app cửa sổ có hỏi lại vì máy sẽ nhận ĐƠN THẬT. `list_groups` (AI / dòng lệnh) ghi «NHẬN ĐƠN THẬT từ pool …».
   - Đổi kịch bản thường sang «nhận đơn»: các bước đang có thành giai đoạn «Đăng nhập». Đổi ngược lại: nếu chỉ «Đăng nhập» có bước thì chúng quay
     về làm danh sách bước thường; cấu hình nhận đơn đã soạn vẫn được giữ.
   - «Thử» giai đoạn «Mua một gói» có hỏi lại (bấm mua thật). Thời gian chờ đăng nhập / chờ kết quả mua hiện dùng mặc định (45 / 60 giây).
@@ -300,20 +311,63 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   - màn hình game chuyển cảnh mất 1–3 giây: bấm «Data Transfer» xong, 0,9 giây sau màn kế chưa vẽ xong nên bước bấm chữ kế tiếp «không thấy chữ»;
   - khởi động mới, game mất **~24 giây** mới tới màn tiêu đề (màn đen → logo KONAMI → «THE PITCH IS OURS» → tiêu đề). Bước bấm theo **toạ độ** luôn
     báo ✓ dù bấm vào đâu, nên trước nó phải có «Chờ thấy chữ» của màn hình cần tới (vd `Konami Digital Entertainment`, tối đa 60 giây);
-  - **«Mở app» chỉ đưa game ra trước, không khởi động lại**: game đang nằm ở màn nào từ lượt trước thì vẫn ở màn đó (vd «Data Transfer»), kịch bản
-    chờ màn tiêu đề sẽ hết giờ. Hiện chưa có bước «đóng hẳn app» — kịch bản phải tự đưa game về màn đầu (vd bấm «Back») ở giai đoạn «Kết thúc đơn».
+  - **«Mở app» bằng ô tìm kiếm chỉ đưa game ra trước, không khởi động lại**: game đang nằm ở màn nào từ lượt trước thì vẫn ở màn đó (vd «Data
+    Transfer»), kịch bản chờ màn tiêu đề sẽ hết giờ → dùng «tắt hẳn rồi mở mới» (mục dưới).
+- **«Mở app»: tắt hẳn rồi mở mới** (`"fresh": true`; bước mới trong trình sửa mặc định chọn kiểu này) — đi qua USB (`app/iosapp.py`, cùng kênh
+  với chụp màn hình), không gõ phím nào, ~1 giây: app bị tắt hẳn rồi khởi động lại nên lần nào kịch bản cũng bắt đầu từ màn đầu. App được tìm theo
+  tên hiển thị / tên gói / bundle id: đúng bằng tên gõ thì thắng app chỉ «có chứa»; app ẩn của hệ thống (máy thật có hơn trăm cái, ba cái cùng
+  tên «Cài đặt») chỉ chọn được bằng đúng bundle id; không thấy / nhiều app cùng khớp → bước hỏng kèm lý do (không đoán, không lặng lẽ quay về
+  cách mở cũ). Trong kịch bản nhận đơn, bước này thuộc «đoạn mở game» nên mỗi lần kiểm «game chưa đăng nhập» game cũng được mở mới.
+- **«Bấm vào vùng ảnh»** (`tap_image`) — cho nút KHÔNG có chữ (biểu tượng menu, nút tròn…), thay cho bấm theo toạ độ cố định (toạ độ thì bấm
+  bừa cả khi nút chưa hiện / đang ở màn hình khác). Trong trình sửa: «Thêm bước» → «Bấm vào vùng ảnh» → **kéo một khung** quanh nút trên ảnh
+  màn hình (lúc bật «Bấm vào ảnh để thêm bước chạm»: bấm một điểm = toạ độ, kéo một khung = vùng ảnh). Hình vừa khoanh hiện ngay trong câu của
+  bước. Lúc chạy máy tìm đúng hình đó ở BẤT KỲ chỗ nào trên màn hình rồi bấm vào giữa; có ghi thời gian chờ thì hình chưa hiện sẽ được chờ
+  (bước mới mặc định 5 giây — đặt 60 giây cho nút ở màn tiêu đề thì khỏi cần bước «chờ game tải xong» riêng).
+  - Điểm giống = độ khớp hình dạng × (1 − chênh lệch màu / độ sáng); mặc định phải ≥ 90% (sửa bước để đổi). Đo trên iPhone 8, nút menu ở màn
+    tiêu đề eFootball: đúng hình 100% trên cả hai máy; nén ảnh / nhoè nhẹ 95–97%; **màn hình bị phủ mờ (hộp thoại che lên) 87%, mất màu 75%,
+    ảnh lệch tỉ lệ 3% 79% → không bấm**; chỗ giống nhì trên cùng màn hình 33%. Tìm một lần ~30 ms.
+  - Nhiều chỗ giống hệt nhau (dãy nút mua không chữ) → xét HẾT rồi bấm chỗ gần nơi hình được cắt ra nhất; quá 60 chỗ (hoa văn lặp kín màn
+    hình) mà chỗ cắt không còn hình đó → không phân xử được, không bấm (báo «quá nhiều chỗ giống»); hình còn nằm đúng chỗ được cắt thì bấm
+    luôn chỗ đó. Hình biến mất trước khi con trỏ tới nơi → không bấm. Trước khi tìm, con trỏ được cất về góc. Nên khoanh SÁT một nút — khoanh
+    trùm nhiều nút giống nhau thì khi dãy nút xê dịch máy có thể chọn lệch một nút.
+  - Phần giao diện của bước này gắn với trang (kéo khung, cắt ảnh, hộp sửa bước) chỉ được thử TAY trên trình sửa thật với hai iPhone 8; bài
+    thử tự động (`test_ui_steps.py`) chỉ phủ các hàm thuần (đổi khung kéo ra toạ độ, kiểm ảnh, đọc ô «giống tối thiểu», lấy bước của gateway…).
+  - Giới hạn: hình chỉ khớp với máy CÙNG độ phân giải và cùng chiều xoay với lúc cắt; nền phía sau nút thay đổi nhiều (video, hiệu ứng)
+    thì phải khoanh sát nút hoặc hạ độ giống. Ảnh mẫu (PNG) nằm trong chính dữ liệu của bước; không gửi lên gateway.
+- **«Gõ chữ» từng ký tự** (`"gap": giây`, 0 = gõ liền một mạch như trước). Đo trên trang đăng nhập KONAMI (iPhone 8):
+  - ô mã «mỗi số một ô» tự nhảy sang ô kế bằng mã của trang — gõ liền 6 số chỉ vào được 2 số; gõ từng số cách nhau 0,4–0,6 giây thì đủ cả 6;
+  - gõ liền một mạch email 24 ký tự vào ô KONAMI ID có lần **rơi mất 6 ký tự ở giữa** (trang báo «The email address you entered is invalid»);
+    gõ từng ký tự thì đúng. Kịch bản «nạp Efootball» vì thế gõ tài khoản / mật khẩu với quãng nghỉ 0,12 giây.
+  - **Tool chưa kiểm lại được chữ vừa gõ** (ô mật khẩu thì không thể): gõ sai tài khoản sẽ ra «sai tài khoản / mật khẩu» ở game chứ không phải
+    lỗi của tool — luật «đăng nhập thất bại» của pool vì thế chưa đủ để kết luận khách đưa sai. Việc cần làm tiếp.
 - **Bước có điều kiện «Nếu thấy chữ … thì bấm …»** (`tap_if`) — cho thứ lúc có lúc không ngay sau một bước (hộp thoại Game Center, hỏi mật khẩu,
   thông báo, quảng cáo). Một bước chứa được NHIỀU trường hợp, gõ mỗi dòng một cái: `thấy chữ gì => bấm chữ gì` (bỏ «=> …» thì bấm chính chữ đó;
-  nhiều cách viết ngăn bằng `|`). Máy nhìn màn hình tối đa «chờ … giây»: không thấy trường hợp nào → bước XONG, kịch bản đi tiếp; thấy → bấm rồi nhìn
-  tiếp cho tới khi không còn gì (các hộp thoại hay hiện nối nhau). Một trường hợp chỉ tính là «xảy ra» khi thấy **cả chữ của nó lẫn chữ cần bấm**:
-  thấy chữ mà chưa có nút thì xét trường hợp kế và nhìn lại; hết thời gian chờ vẫn vậy, hoặc bấm 2 lần vẫn còn → bước hỏng (màn hình đang bị chắn,
-  đi tiếp là bấm nhầm). Vì thế **mỗi trang ghi một dòng với chữ riêng của trang đó** — đo trên iPhone 8: lần đầu mở eFootball, iOS hiện «Tính năng
+  nhiều cách viết ngăn bằng `|`; **`=> phím esc`** = NHẤN PHÍM đó thay cho bấm — cho hộp thoại không nhận cú bấm của con trỏ, vd iOS hỏi lưu mật
+  khẩu; phím dùng được: esc, enter, tab, back, space). Máy nhìn màn hình tối đa «chờ … giây»: không thấy trường hợp nào → bước XONG, kịch bản
+  đi tiếp; thấy → bấm (hoặc nhấn phím) rồi **nhìn lại xem hộp thoại đã đóng chưa**: còn thì làm lại, hết thì xong (cú bấm lên hộp thoại hệ
+  thống có lúc không «ăn» — trước đây bước một trường hợp báo ✓ ngay sau lần bấm đầu nên các bước sau trượt khó hiểu). Bước nhiều trường hợp
+  còn chờ thêm xem hộp thoại khác có hiện nối theo không. Trước khi làm lại, bước chờ thêm 1,5 giây rồi nhìn lần nữa — hộp thoại đóng chậm
+  không bị bấm / nhấn phím lần hai (phím esc thứ hai sẽ rơi vào màn hình bên dưới). Hộp thoại «lúc thấy lúc không» quá 4 lần nhìn lại → bước
+  hỏng (không nhìn mãi). Một trường hợp «bấm chữ» chỉ tính là «xảy ra» khi thấy **cả chữ của nó lẫn chữ cần
+  bấm**: thấy chữ mà chưa có nút thì xét trường hợp kế và nhìn lại; hết thời gian chờ vẫn vậy, hoặc làm 2 lần vẫn còn → bước hỏng (màn hình
+  đang bị chắn, đi tiếp là bấm nhầm). Vì bước đòi hộp thoại phải ĐÓNG, đừng dùng nó cho thứ bấm xong vẫn còn trên màn hình (thẻ, nút bật / tắt)
+  — dùng «bấm vào chữ». Trong giai đoạn mua, bước này bị bỏ qua (không thấy gì) thì KHÔNG tính là «đã chạm luồng mua»; đã bấm thì có tính. Vì thế **mỗi trang ghi một dòng với chữ riêng của trang đó** — đo trên iPhone 8: lần đầu mở eFootball, iOS hiện «Tính năng
   mới trong Game Center» (chỉ có «Tiếp tục») rồi mới tới «Chào mừng đến Game Center» (có «Hủy»); ghi chung một dòng «Game Center => Hủy» thì trang
   đầu không có gì để bấm. Dữ liệu: `{"type":"tap_if","cases":[{"text":"Tính năng mới","tap":"Tiếp tục"},{"text":"Chào mừng đến","tap":"Hủy"}],"timeout":8}`
   (một trường hợp thì ghi gọn `text` / `tap`). iOS thôi hỏi Game Center sau vài lần bấm «Hủy» cho cùng một game, nên máy đã chạy lâu sẽ không còn
-  gặp — khi đó bước tốn trọn thời gian chờ rồi bỏ qua. Trong kịch bản nhận đơn, bước này ở đầu giai đoạn «Đăng nhập» được coi là thuộc **đoạn mở game** —
+  gặp — khi đó bước tốn trọn thời gian chờ rồi bỏ qua. (Vì vậy chuỗi «Tiếp tục» → «Hủy» của Game Center mới chỉ được kiểm bằng bài thử dựng lại
+  đúng chữ đã đọc trên máy thật, CHƯA bấm lại được trên máy thật.) Trong kịch bản nhận đơn, bước này ở đầu giai đoạn «Đăng nhập» được coi là thuộc **đoạn mở game** —
   nó cũng chạy khi máy kiểm «game chưa đăng nhập» trước lúc nhận đơn (không dọn hộp thoại thì không nhìn thấy gì). Đừng dùng nó để bấm vào thứ đụng
   tới tài khoản của khách.
+- **Tìm chữ: dòng khớp NGUYÊN DÒNG được chọn trước** dòng chỉ «có chứa» chữ đó (cùng loại thì lấy dòng đầu theo thứ tự đọc; dấu câu / ký
+  hiệu quanh chữ không tính). Đo trên trang đăng nhập KONAMI: tìm «Login» từng khớp cả dòng «Log In with Another KONAMI ID» nằm phía trên nút
+  «Login» (so chữ bỏ qua khoảng trắng) — bấm theo chỗ khớp đầu tiên là bấm nhầm sang nút đổi tài khoản. Kịch bản / luật pool cân chỉnh theo
+  quy tắc cũ («chỗ khớp đầu tiên») nên được chạy thử lại trên máy thật; bộ đọc chữ Vision cũng đọc được nhiều chữ hơn tesseract trước đây.
+- **Nút của trang web đổi màu khi con trỏ rê tới** (hover): bộ định vị con trỏ trước đây chỉ tách được con trỏ khỏi «nút được phủ sáng» cỡ nhỏ
+  (≤ 60 lần diện tích con trỏ, và chữ trên nút không đổi màu) nên nút «Login» của trang KONAMI (932×92 px, đổi cả màu nền lẫn màu chữ) làm tool
+  mất dấu con trỏ → không bấm. Nay nhận nút tới 140 lần diện tích con trỏ, cho phép chữ trên nút đổi màu theo (tối đa 8% diện tích nút) và bào bỏ
+  nét chữ trước khi tìm chấm tròn — đo đúng ở 180/180 vị trí quét quanh chữ «Login» trên ảnh thật. Cỡ con trỏ nay tính theo CẠNH NGẮN của ảnh
+  (ảnh chụp ngang của iPhone 8 từng bị coi là máy ×3).
 - **Máy xoay NGANG (game)**: chuột Bluetooth luôn chạy theo trục DỌC của máy — «về góc» ghim con trỏ ở góc trên-phải (hoặc dưới-trái) của ảnh chụp
   ngang, di +x làm con trỏ đi xuống trên ảnh. `nav.tap_at` tự nhận ra hướng ở mỗi lần bấm (xem con trỏ rời góc nào), quay ảnh về hệ trục của chuột để
   đo, đổi điểm cần bấm và hướng vuốt sang hệ đó (`nav.Frame`). Không phân định được hướng → không bấm. Đo trên iPhone 8 đang mở eFootball: tới đích
@@ -337,8 +391,9 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
       lại thì máy vẫn còn được báo rảnh cho tới lượt quét kế;
     - tiến trình đang báo chỉ biết việc của CHÍNH NÓ: mở bản web trước rồi mới mở app cửa sổ thì app cửa sổ không báo, và gateway không thấy máy nào
       app cửa sổ đang chạy kịch bản / đang dừng (chỉ đơn dở trong sổ là thấy). Khi chạy thật chỉ mở MỘT trong hai;
-    - sổ đơn (`api_state.json`) bị hỏng thì bị đọc như «không có đơn dở» (ghi sổ là ghi trọn nên hiếm; gateway vẫn tự chặn máy nó biết đang giữ đơn).
-  - Kiểm bằng `app/tests/test_presence.py` (115 mục, có chạy với gateway thật). Hiện mới là BÁO TIN: gateway chưa giao việc theo kịch bản,
+    - sổ đơn (`api_state.json`) bị hỏng: luồng tự báo đọc CHẶT (`Journal.peek`) nên báo máy đó «đang giữ» chứ không báo rảnh; các chỗ khác vẫn
+      đọc nó như «không có đơn dở» (ghi sổ là ghi trọn nên hiếm; gateway vẫn tự chặn máy nó biết đang giữ đơn).
+  - Kiểm bằng `app/tests/test_presence.py` (116 mục, có chạy với gateway thật). Hiện mới là BÁO TIN: gateway chưa giao việc theo kịch bản,
     và kịch bản chạy tay chưa thế `{{biến}}` bằng dữ liệu.
 - MCP / CLI: `list_groups` liệt kê kịch bản (tên, số bước, cách chạy — không lộ nội dung bước); `start_run` nhận `script` (bỏ trống được khi nhóm
   chỉ có 1 kịch bản; nhóm nhiều kịch bản mà không nêu thì bị từ chối).
@@ -382,6 +437,8 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
 | `app/control.py` | bộ công cụ dùng chung (đọc màn hình, bấm, gõ, vuốt, chạy nhóm…), máy chủ trong app, chế độ tự mở cổng |
 | `app/cli.py`, `farm` | dòng lệnh |
 | `app/fastshot.py` | chụp màn hình qua một kết nối giữ mở (~0,33s/ảnh thay vì ~1,3s) |
+| `app/iosapp.py` | tắt hẳn rồi mở mới một app qua USB (kênh công cụ nhà phát triển); chọn app theo tên hiển thị / tên gói / bundle id, bỏ qua app ẩn của hệ thống |
+| `app/eyes.py` | chụp màn hình, tìm chữ / tìm hình, định vị con trỏ. Bộ đọc chữ của macOS (Vision) báo lỗi giữa chừng mà máy không cài tesseract → `read_text` / `find_text` BÁO LỖI, không lặng lẽ trả «màn hình trống» / «không thấy chữ» |
 | `app/ocr.py` | đọc chữ bằng bộ có sẵn của macOS (Apple Vision, nạp bằng pyobjc-core, không cài thêm). Tesseract không đọc được chữ trên nền nhiều màu của game (màn hình tiêu đề eFootball: 0 dòng) còn Vision đọc được (~0,3–0,4s). `eyes.read_text` GHÉP hai bộ (riêng kiểu đọc một dòng `psm` — phép thử bàn phím — giữ tesseract); `find_text` / `ocr_lines` dùng Vision trước, không thấy thì hỏi tesseract. Vision không «sửa chính tả». Đặt `IPF_OCR=tesseract` để tắt Vision. |
 | `app/web/ai.js` | trang «Kết nối AI» |
 

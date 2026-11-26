@@ -44,6 +44,94 @@ def text_has(haystack_norm: str, needle) -> bool:
 VENV_PMD = os.path.join(os.path.dirname(__file__), "..", ".venv", "bin", "pymobiledevice3")
 
 
+IMAGE_SIDE_MIN, IMAGE_SIDE_MAX = 8, 600      # cạnh nhỏ nhất / lớn nhất (điểm ảnh) của ảnh mẫu trong bước «bấm vào vùng ảnh»
+
+
+def decode_image(b64):
+    """Ảnh mẫu của bước «bấm vào vùng ảnh» (PNG / JPEG mã hoá base64, có hay không tiền tố `data:…,`) → ảnh BGR.
+    Không đọc được, sai cỡ, hoặc gần như một màu (không có gì để nhận dạng) → ValueError kèm lý do."""
+    import base64, binascii
+    s = str(b64 or "").strip()
+    if s.startswith("data:"):
+        s = s.split(",", 1)[-1]
+    try:
+        raw = base64.b64decode(s, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("ảnh mẫu không đọc được")
+    img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR) if raw else None
+    if img is None:
+        raise ValueError("ảnh mẫu không đọc được")
+    h, w = img.shape[:2]
+    if min(h, w) < IMAGE_SIDE_MIN or max(h, w) > IMAGE_SIDE_MAX:
+        raise ValueError("ảnh mẫu %d×%d nằm ngoài cỡ cho phép (mỗi cạnh %d…%d điểm ảnh)" % (w, h, IMAGE_SIDE_MIN, IMAGE_SIDE_MAX))
+    if float(img.reshape(-1, 3).std(axis=0).max()) < 4.0:      # độ lệch trong TỪNG kênh màu (mảng một màu bất kỳ đều ~0)
+        raise ValueError("ảnh mẫu gần như một màu — chọn vùng có hình hoặc chữ")
+    return img
+
+
+IMAGE_PEAKS_MAX = 60      # số chỗ giống nhau nhiều nhất còn phân xử được; quá số này (hoa văn lặp kín màn hình) → không chọn bừa, coi như không thấy
+IMAGE_TOO_MANY = 2.0      # «điểm» trả về khi quá nhiều chỗ giống nhau (điểm thật không bao giờ vượt 1) → bên gọi báo đúng lý do
+
+
+def locate_image(img, tmpl, min_score: float = 0.9, near=None):
+    """Tìm ảnh mẫu `tmpl` trong ảnh `img` (cùng BGR, cùng tỉ lệ). Trả ((cx, cy) | None, điểm giống cao nhất 0…1).
+
+    Điểm giống = độ khớp HÌNH DẠNG (so khớp mẫu chuẩn hoá) × (1 − chênh lệch MÀU / ĐỘ SÁNG trung bình). Chỉ khớp hình dạng thì một
+    nút đang bị phủ mờ sau hộp thoại, hay cùng hình nhưng khác màu (nút xám «chưa bấm được»), vẫn ra điểm ~1 — nhân thêm phần màu để
+    những chỗ đó KHÔNG còn «giống». Đo trên iPhone 8 (nút menu ở màn tiêu đề eFootball): đúng hình 1,00 trên cả hai máy; nén ảnh / làm
+    mờ nhẹ 0,95–0,97; phủ mờ 70% 0,87; mất màu 0,75; ảnh thu còn 97% 0,79; chỗ giống nhì trên cùng màn hình 0,33.
+
+    Nhiều chỗ cùng đạt `min_score` (dãy nút giống hệt nhau): xét HẾT các chỗ đó — có `near` thì lấy chỗ GẦN `near` nhất, không thì lấy
+    chỗ giống nhất; hình còn nằm đúng chỗ `near` thì lấy luôn chỗ đó. Quá IMAGE_PEAKS_MAX chỗ (hoa văn lặp kín màn hình) → không phân xử
+    được → trả (None, IMAGE_TOO_MANY), không chọn bừa.
+    Ảnh mẫu lớn hơn màn hình (máy khác độ phân giải / đang xoay chiều khác), ảnh không phải 3 kênh màu 8 bit → không thấy, không ném lỗi."""
+    def bgr8(a):
+        return getattr(a, "ndim", 0) == 3 and a.shape[2] == 3 and a.dtype == np.uint8
+    if img is None or tmpl is None or not bgr8(img) or not bgr8(tmpl):
+        return None, 0.0
+    th, tw = tmpl.shape[:2]
+    ih, iw = img.shape[:2]
+    if th > ih or tw > iw or th < 2 or tw < 2:
+        return None, 0.0
+    try:
+        res = np.nan_to_num(cv2.matchTemplate(img, tmpl, cv2.TM_CCOEFF_NORMED), nan=-1.0, posinf=-1.0, neginf=-1.0)
+    except cv2.error:
+        return None, 0.0
+    t16 = tmpl.astype(np.int16)
+
+    def score_at(x, y):
+        return float(res[y, x]) * (1.0 - float(np.mean(np.abs(img[y:y + th, x:x + tw].astype(np.int16) - t16))) / 255.0)
+    if near is not None:
+        # Hình còn nằm ĐÚNG chỗ nó được cắt ra → lấy luôn chỗ đó. (Tìm đỉnh rồi xoá vùng quanh đỉnh sẽ nuốt mất đỉnh thật khi ảnh mẫu trùm
+        # từ hai chu kỳ của một nội dung lặp — vd khoanh trùm hai nút giống hệt trong một dãy — và trả về chỗ lệch một chu kỳ.)
+        x0, y0 = int(near[0]) - tw // 2, int(near[1]) - th // 2
+        if 0 <= y0 < res.shape[0] and 0 <= x0 < res.shape[1] and res[y0, x0] >= min_score:
+            s0 = score_at(x0, y0)
+            if s0 >= min_score:
+                return (x0 + tw // 2, y0 + th // 2), s0
+    found, best = [], 0.0
+    for n in range(IMAGE_PEAKS_MAX + 1):
+        _, ncc, _, (x, y) = cv2.minMaxLoc(res)
+        if ncc <= 0:
+            break
+        if n == IMAGE_PEAKS_MAX and ncc >= min_score:       # vẫn còn chỗ đạt ngưỡng sau ngần ấy chỗ → không phân xử
+            return None, IMAGE_TOO_MANY
+        score = score_at(x, y)
+        best = max(best, score)
+        if ncc < min_score:                              # các đỉnh sau chỉ thấp hơn nữa
+            break
+        if score >= min_score:
+            found.append((x + tw // 2, y + th // 2, score))
+        res[max(0, y - th // 2):y + th // 2 + 1, max(0, x - tw // 2):x + tw // 2 + 1] = -1.0      # xoá đỉnh này để tìm đỉnh kế
+    if not found:
+        return None, best
+    if near is not None and len(found) > 1:
+        found.sort(key=lambda p: (p[0] - near[0]) ** 2 + (p[1] - near[1]) ** 2)
+    else:
+        found.sort(key=lambda p: -p[2])
+    return (int(found[0][0]), int(found[0][1])), best
+
+
 class Eyes:
     def __init__(self, udid: str, pmd: str | None = None):
         self.udid = udid
@@ -151,8 +239,9 @@ class Eyes:
     @staticmethod
     def pointer_size(img) -> int:
         """Đường kính con trỏ AssistiveTouch trên ảnh chụp (px) = 19pt × hệ số điểm ảnh của máy
-        (iPhone 8/SE: ×2 → 38px; dòng Plus / X trở lên: ×3 → 57px)."""
-        return 19 * (3 if img.shape[1] > 900 else 2)
+        (iPhone 8/SE: ×2 → 38px; dòng Plus / X trở lên: ×3 → 57px). Xét theo CẠNH NGẮN của ảnh để ảnh chụp lúc máy xoay
+        ngang (iPhone 8: 1334×750) không bị coi nhầm là máy ×3."""
+        return 19 * (3 if min(img.shape[0], img.shape[1]) > 900 else 2)
 
     @staticmethod
     def _diff_max(a, b):
@@ -210,6 +299,9 @@ class Eyes:
                 take(x + sx, y + sy, sw, sh, sa)
         return out
 
+    BLOCK_MAX = 140          # nút «được phủ sáng» lớn nhất còn soi tìm con trỏ bên trong, tính bằng số lần diện tích con trỏ
+    BLOCK_TEXT = 0.08        # phần diện tích nút lớn được phép «đổi khác» ngoài con trỏ (chữ trên nút đổi màu theo)
+
     @staticmethod
     def _pointer_inside(ref, img, raw, lab, i, box, D, disc):
         """Con trỏ nằm LẪN trong một vệt thay đổi TO hơn nó. Hai kiểu đã gặp trên iPhone thật:
@@ -219,26 +311,33 @@ class Eyes:
             ĐỀU một độ lệch màu (đo trên iPhone 8: 271×88px, lệch ≈ −19 mức xám, chỉ riêng chỗ con trỏ là khác)
             → trừ độ lệch chung đó đi, phần còn lại (đổi KHÁC hẳn) chính là con trỏ. Chữ trên nút không đổi
             màu nên tự rơi ra.
+          • NÚT CỦA TRANG WEB đổi màu khi con trỏ rê tới (:hover) — đo trên trang đăng nhập my.konami.net, iPhone 8 xoay ngang:
+            nút «Login» 932×92px đổi từ đỏ sang trắng và CHỮ trên nút cũng đổi màu (trắng → xám). Nền nút vẫn đổi đều;
+            phần đổi khác gồm con trỏ + các nét chữ mảnh → nét chữ bị bào bỏ ở bước dưới, còn lại chấm tròn.
           • DÍNH VÀO NÉT MẢNH đang chuyển động (kim của icon Đồng hồ) → bào bỏ nét mảnh, còn lại chấm tròn.
 
-        Chỉ xét vệt cỡ một cái nút (≤ 60 lần diện tích con trỏ): cả màn hình đổi (chuyển trang, hộp thoại mới
-        bật lên) thì KHÔNG đoán — ở đó có vô số mảnh cỡ con trỏ. Trả các mảnh [(x, y, w, h, diện_tích)] theo toạ
-        độ trong ô `box`; bên gọi lọc lại theo đúng cỡ con trỏ."""
+        Chỉ xét vệt cỡ một cái nút (≤ BLOCK_MAX lần diện tích con trỏ — vừa một nút dài hết chiều ngang màn hình): cả màn
+        hình đổi (chuyển trang, hộp thoại mới bật lên) thì KHÔNG đoán — ở đó có vô số mảnh cỡ con trỏ. Trả các mảnh
+        [(x, y, w, h, diện_tích)] theo toạ độ trong ô `box`; bên gọi lọc lại theo đúng cỡ con trỏ."""
         x, y, w, h, area = box
         comp = lab[y:y + h, x:x + w] == i
         k = int(0.45 * D) | 1
         if area >= 2 * disc:
-            if area > 60 * disc or area < 0.75 * w * h:
+            if area > Eyes.BLOCK_MAX * disc or area < 0.75 * w * h:
                 return []                                   # không phải một khối đặc cỡ cái nút
             core = comp & (raw[y:y + h, x:x + w] > 0)
             d = img[y:y + h, x:x + w].astype(np.int16) - ref[y:y + h, x:x + w].astype(np.int16)
             resid = np.abs(d - np.median(d[core], axis=0)).max(axis=2)
-            # «Đổi đều» = cả vùng đổi cùng một độ lệch, TRỪ tối đa một mảnh cỡ con trỏ. Tính theo diện tích tuyệt
-            # đối chứ không theo tỉ lệ: nút nhỏ (60×60) thì riêng con trỏ đã chiếm 1/3; vùng lớn thì 20% đã là
-            # cả chục «con trỏ» nội dung lạ.
-            if int((resid[core] > 10).sum()) > 2.2 * disc or int((resid[core] <= 10).sum()) < disc:
+            # «Đổi đều» = cả vùng đổi cùng một độ lệch, TRỪ một mảnh cỡ con trỏ và (với nút lớn) các nét chữ đổi màu theo nút.
+            # Nút nhỏ tính theo diện tích tuyệt đối (nút 60×60 thì riêng con trỏ đã chiếm 1/3); nút lớn cho thêm phần chữ, tối
+            # đa BLOCK_TEXT diện tích nút (đo thật: chữ «Login» đậm ≈ 1,5% nút). Nội dung lạ hiện ra thì đổi KHÁC ở phần lớn vùng.
+            if int((resid[core] > 10).sum()) > max(2.2 * disc, Eyes.BLOCK_TEXT * area) or int((resid[core] <= 10).sum()) < disc:
                 return []                                   # không «đổi đều» → không phải nút được phủ sáng
             m = ((resid > 14) & core).astype(np.uint8) * 255
+            # Bỏ NÉT CHỮ đổi màu theo nút TRƯỚC khi lấp khe: nét chữ mảnh hơn con trỏ nhiều, nhưng lấp khe trước thì các chữ cái dính
+            # lại thành một khối dày, dính luôn vào con trỏ đang đè lên chữ — đúng chỗ bước «bấm vào chữ» đưa con trỏ tới.
+            k1 = int(0.34 * D) | 1
+            m = cv2.morphologyEx(m, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k1, k1)))
             m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
         else:
             m = comp.astype(np.uint8) * 255
@@ -290,12 +389,15 @@ class Eyes:
         if region:
             x0, y0, x1, y1 = region
             img = img[y0:y1, x0:x1]
+        broken = None
         if not psm:
             try:
                 seen = ocr.text(img)                 # trên ảnh gốc (Vision tự lo cỡ chữ)
-            except Exception:
-                seen = ""
+            except Exception as e:
+                seen, broken = "", e
         if pytesseract is None:
+            if broken is not None:                   # Vision hỏng giữa chừng mà không có tesseract đỡ: KHÔNG lặng lẽ trả «màn hình trống»
+                raise RuntimeError("Bộ đọc chữ của macOS (Vision) báo lỗi (%s) và máy không cài tesseract — không đọc được màn hình" % broken)
             if seen or (not psm and ocr.available()):
                 return seen
             raise RuntimeError("Thiếu pytesseract (pip install pytesseract) + tesseract (brew)")
@@ -312,17 +414,21 @@ class Eyes:
     def find_text(self, needle: str, img=None, scale=2):
         """Tìm nhãn chữ trên màn (OCR). Trả (cx, cy) = tâm của ĐÚNG CÁC CHỮ KHỚP (pixel ảnh
         gốc) hoặc None. So khớp không phân biệt hoa thường, bỏ dấu tiếng Việt, bỏ qua khoảng
-        trắng (OCR hay tách/gộp chữ). Nhiều chỗ khớp thì lấy chỗ đầu tiên theo thứ tự đọc.
+        trắng (OCR hay tách/gộp chữ). Nhiều chỗ khớp: dòng mà CẢ DÒNG đúng bằng chữ cần tìm được chọn trước dòng chỉ «có
+        chứa» nó; cùng loại thì lấy chỗ đầu tiên theo thứ tự đọc.
         Tìm bằng Apple Vision trước (đọc được chữ trên nền game); không thấy thì tìm bằng tesseract như trước."""
         if img is None:
             img = self.screenshot()
+        broken = None
         try:
             hit = ocr.find(img, needle)
-        except Exception:
-            hit = None
+        except Exception as e:
+            hit, broken = None, e
         if hit:
             return (int(hit[0]), int(hit[1]))
         if pytesseract is None:
+            if broken is not None:                   # Vision hỏng giữa chừng mà không có tesseract đỡ: «không thấy chữ» ở đây là sai lý do
+                raise RuntimeError("Bộ đọc chữ của macOS (Vision) báo lỗi (%s) và máy không cài tesseract — không tìm được chữ trên màn hình" % broken)
             if ocr.available():
                 return None
             raise RuntimeError("Thiếu pytesseract")
@@ -345,6 +451,7 @@ class Eyes:
                 continue
             key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
             lines.setdefault(key, []).append(i)
+        first = None
         for key, idxs in lines.items():
             joined = ""
             owner = []                    # owner[k] = chỉ số từ chứa ký tự thứ k của `joined`
@@ -360,8 +467,23 @@ class Eyes:
             y0 = min(data["top"][i] for i in used)
             x1 = max(data["left"][i] + data["width"][i] for i in used)
             y1 = max(data["top"][i] + data["height"][i] for i in used)
-            return (int((x0 + x1) / 2 / scale), int((y0 + y1) / 2 / scale))
-        return None
+            hit = (int((x0 + x1) / 2 / scale), int((y0 + y1) / 2 / scale))
+            if ocr.whole_line(joined, nd):                   # cả dòng đúng bằng chữ cần tìm → chọn trước dòng chỉ «có chứa» (xem ocr.find)
+                return hit
+            if first is None:
+                first = hit
+        return first
+
+    def relaunch(self, name: str) -> str:
+        """Tắt hẳn rồi mở MỚI app `name` trên máy này qua USB (xem iosapp.relaunch). Trả bundle id; không làm được → ném lỗi kèm lý do."""
+        import iosapp
+        return iosapp.relaunch(self.udid, name)
+
+    def find_image(self, tmpl, img=None, min_score: float = 0.9, near=None):
+        """Tìm ảnh mẫu `tmpl` (BGR) trên màn hình — xem locate_image(). Trả ((cx, cy) | None, điểm giống cao nhất)."""
+        if img is None:
+            img = self.screenshot()
+        return locate_image(img, tmpl, min_score, near)
 
     def find(self, template_path: str, img=None, threshold: float = 0.8):
         """Tìm mẫu template trong ảnh. Trả (cx, cy, score) hoặc None nếu < threshold."""

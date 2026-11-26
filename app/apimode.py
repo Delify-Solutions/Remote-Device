@@ -27,7 +27,7 @@ import json, os, re, threading, time
 
 import cv2
 
-from eyes import norm_text, text_has
+from eyes import IMAGE_TOO_MANY, decode_image, norm_text, text_has
 from gateway import GatewayError, call_retry
 
 PHASES = ["login", "otp", "nav", "purchase", "after", "finish"]
@@ -36,7 +36,7 @@ GW_LISTS = {"login": "login_steps", "otp": "otp_steps", "nav": "nav_steps",
 PHASE_LABEL = {"login": "Đăng nhập", "otp": "Nhập OTP", "nav": "Vào danh sách gói",
                "purchase": "Mua 1 gói", "after": "Sau khi mua", "finish": "Kết thúc đơn"}
 DEFAULT_OTP_STEPS = [{"type": "type", "text": "{{otp}}"}, {"type": "key", "name": "enter"}]
-INPUT_TYPES = ("tap", "tap_text", "tap_if", "type", "key", "combo", "launch", "home",
+INPUT_TYPES = ("tap", "tap_text", "tap_image", "tap_if", "type", "key", "combo", "launch", "home",
                "swipe", "hold", "hold_text")                                    # bước có (thể) gửi thao tác vào máy
 SWIPE_DIRS = {"left": "trái", "right": "phải", "up": "lên", "down": "xuống"}
 KEYS = ("enter", "return", "tab", "esc", "back", "space")
@@ -62,6 +62,7 @@ STEP_GAP = 0.35
 # đủ cho hiệu ứng chuyển màn của iOS chạy xong). Bước «nhìn MỘT lần rồi quyết» (bấm chữ, kiểm chữ, giữ chữ)
 # vì thế phải chờ màn hình đứng yên trước khi nhìn — nếu không sẽ đọc phải khung hình đang trượt dở.
 LOOK_SETTLE = 0.9
+FRESH_SETTLE = 2.0       # nghỉ sau khi «tắt hẳn rồi mở mới» một app, cho app kịp lên màn hình
 PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
 
 
@@ -201,9 +202,16 @@ def _describe(step: dict, vars: dict) -> str:
     if t in ("tap_text", "wait_text", "assert_text"):
         name = {"tap_text": "Tap chữ", "wait_text": "Chờ chữ", "assert_text": "Kiểm chữ"}[t]
         return f"{name} «{show(str(step.get('text') or ''), vars)}»"
+    if t == "tap_image":
+        try:
+            size = "%d×%d" % (int(step.get("w")), int(step.get("h")))
+        except (TypeError, ValueError, OverflowError):
+            size = ""
+        return ("Bấm vào vùng ảnh " + size).strip()
     if t == "tap_if":
         cases = step.get("cases") if isinstance(step.get("cases"), list) and step.get("cases") else [step]
-        return "; ".join("Nếu thấy chữ «%s» thì bấm «%s»" % (show(str(c.get("text") or ""), vars), show(str(c.get("tap") or "") or str(c.get("text") or ""), vars))
+        return "; ".join(("Nếu thấy chữ «%s» thì nhấn phím %s" % (show(str(c.get("text") or ""), vars), str(c.get("key")).strip().lower())) if c.get("key") else
+                         "Nếu thấy chữ «%s» thì bấm «%s»" % (show(str(c.get("text") or ""), vars), show(str(c.get("tap") or "") or str(c.get("text") or ""), vars))
                          for c in cases if isinstance(c, dict))
     if t == "type":
         return f"Gõ «{show(str(step.get('text') or ''), vars)}»"
@@ -212,7 +220,7 @@ def _describe(step: dict, vars: dict) -> str:
     if t == "combo":
         return f"Tổ hợp {step.get('keys')}"
     if t == "launch":
-        return f"Mở app {step.get('app')}"
+        return f"Mở app {step.get('app')}" + (" (tắt hẳn rồi mở mới)" if step.get("fresh") else "")
     if t == "wait":
         return f"Chờ {step.get('seconds')}s"
     if t == "home":
@@ -387,6 +395,62 @@ def _find_wait(nav, alts: list, wait: float, abort=None):
         _sleep(1.0, abort)
 
 
+TYPE_GAP_MAX = 2.0       # quãng nghỉ dài nhất giữa hai ký tự của bước «gõ chữ» (trường `gap`)
+IMAGE_MIN = 0.9          # độ giống tối thiểu mặc định của bước «bấm vào vùng ảnh» (xem eyes.locate_image)
+
+
+def step_image(tmpl: dict):
+    """Đọc bước «bấm vào vùng ảnh»: (ảnh mẫu BGR, độ giống tối thiểu 0,5…0,99, chỗ hình được cắt ra (cx, cy) | None). Sai → ConfigError."""
+    try:
+        pic = decode_image(tmpl.get("image"))
+    except ValueError as e:
+        raise ConfigError("bước «Bấm vào vùng ảnh»: %s" % e)
+    try:
+        need = float(tmpl.get("min") or IMAGE_MIN)
+    except (TypeError, ValueError):
+        raise ConfigError("bước «Bấm vào vùng ảnh»: độ giống tối thiểu phải là số")
+    if not (need > 0):                                   # số âm, 0, NaN → mặc định (không tụt về mức dễ dãi nhất)
+        need = IMAGE_MIN
+    if need > 1:                                         # ghi theo phần trăm (90) cũng nhận
+        need /= 100.0
+    need = max(0.5, min(need, 0.99))
+    try:
+        near = (int(tmpl["x"]) + int(tmpl["w"]) // 2, int(tmpl["y"]) + int(tmpl["h"]) // 2)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        near = None
+    return pic, need, near
+
+
+def _find_image_wait(nav, pic, need: float, near, wait: float, abort=None):
+    """Tìm ảnh mẫu trên màn hình; chưa thấy thì nhìn lại mỗi giây tới hết `wait` giây. Trả ((x, y) | None, điểm giống cao nhất đã gặp).
+    Thấy ở lần nhìn LẠI thì chờ màn hình đứng yên rồi lấy lại vị trí (như _find_wait)."""
+    def look():
+        return nav.e.find_image(pic, nav.e.screenshot(), need, near)
+    end = time.time() + wait
+    again, top = False, 0.0
+    while True:
+        pos, score = look()
+        top = max(top, score)
+        if pos and again:
+            _sleep(LOOK_SETTLE, abort)
+            pos, score = look()
+            top = max(top, score)
+        if pos:
+            return pos, top
+        if time.time() >= end:
+            return None, top
+        again = True
+        _sleep(1.0, abort)
+
+
+def _image_still_there(nav, pic, need: float, pos, tol: int = 45):
+    """Hàm kiểm cho bước «bấm vào vùng ảnh»: hình cần bấm còn nằm quanh vị trí cũ trên ảnh `img` không."""
+    def check(img) -> bool:
+        p, _ = nav.e.find_image(pic, img, need, pos)
+        return bool(p) and abs(p[0] - pos[0]) <= tol and abs(p[1] - pos[1]) <= tol
+    return check
+
+
 def _not_seen(label: str, wait: float) -> str:
     return ("chờ %gs không thấy chữ «%s» trên màn hình" % (wait, label)) if wait else "không thấy chữ «%s» trên màn hình" % label
 
@@ -427,31 +491,57 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
                 return False, "chờ %ds không thấy chữ «%s»" % (int(timeout), label), False
             _sleep(1.0, abort)
 
+    if t == "tap_image":
+        # «Bấm vào VÙNG ẢNH»: tìm đúng hình đã cắt từ ảnh màn hình (nút không có chữ, biểu tượng…) rồi bấm vào GIỮA hình — thay cho bấm
+        # theo toạ độ cố định (toạ độ thì bấm bừa cả khi nút chưa hiện / màn hình khác). `timeout`: hình chưa hiện thì nhìn lại tới hết
+        # ngần ấy giây; `min`: độ giống tối thiểu (mặc định 0,9); `x,y,w,h`: chỗ hình được cắt ra — có nhiều chỗ giống thì lấy chỗ gần đó nhất.
+        pic, need, near = step_image(tmpl)
+        wait = _text_wait(tmpl, "Bấm vào vùng ảnh")
+        park(nav)               # con trỏ còn nằm trên chính hình cần tìm (vd vừa bấm nút đó ở bước trước) thì điểm giống tụt dưới ngưỡng
+        _sleep(LOOK_SETTLE, abort)
+        pos, best = _find_image_wait(nav, pic, need, near, wait, abort)
+        if not pos and best >= IMAGE_TOO_MANY:
+            return False, "có quá nhiều chỗ giống hệt vùng ảnh cần bấm trên màn hình — khoanh vùng đặc trưng hơn (kèm chữ / biểu tượng riêng của nút)", False
+        if not pos:
+            return False, "%s vùng ảnh cần bấm trên màn hình (chỗ giống nhất %d%%, cần %d%%)" % (
+                ("chờ %gs không thấy" % wait) if wait else "không thấy", int(best * 100), int(round(need * 100))), False
+        return _tap(nav, pos[0], pos[1], verify=_image_still_there(nav, pic, need, pos))
+
     if t == "tap_if":
-        # «NẾU thấy chữ A THÌ bấm chữ B» — cho thứ LÚC CÓ LÚC KHÔNG ngay sau một bước (hộp thoại Game Center, hỏi mật khẩu, thông báo,
-        # quảng cáo…). Một bước có thể mang NHIỀU trường hợp (`cases`); mỗi lần nhìn màn hình, trường hợp nào thấy trước thì xử lý trước.
+        # «NẾU thấy chữ A THÌ bấm chữ B» (hoặc nhấn một PHÍM) — cho thứ LÚC CÓ LÚC KHÔNG ngay sau một bước (hộp thoại Game Center, hỏi
+        # lưu mật khẩu, thông báo, quảng cáo…). Một bước có thể mang NHIỀU trường hợp (`cases`); mỗi lần nhìn, trường hợp nào thấy trước
+        # thì xử lý trước.
         #   • chờ tối đa `timeout` giây xem có trường hợp nào hiện ra không; KHÔNG thấy gì → bước XONG, không làm gì;
-        #   • thấy → bấm chữ của trường hợp đó, rồi nhìn tiếp (hộp thoại này đóng thì hộp thoại khác mới hiện) với cùng thời gian chờ;
-        #   • hết thời gian chờ mà vẫn thấy chữ của một trường hợp nhưng không có chữ cần bấm, hoặc bấm rồi vẫn thấy mãi → bước HỎNG
-        #     (màn hình đang bị chắn — đi tiếp là bấm nhầm).
+        #   • thấy → bấm chữ (hoặc nhấn phím) của trường hợp đó rồi NHÌN LẠI: còn thấy thì làm lại (cú bấm lên hộp thoại hệ thống có lúc
+        #     không «ăn» — đo trên iPhone 8), hết thì xong. Bước nhiều trường hợp còn chờ thêm `timeout` giây xem hộp thoại KHÁC có hiện
+        #     nối theo không; bước một trường hợp thì xong ngay khi hộp thoại đã đóng;
+        #   • làm IF_REPEAT lần mà vẫn thấy, hoặc hết thời gian chờ mà thấy chữ nhưng không có chữ cần bấm → bước HỎNG (màn hình đang bị
+        #     chắn — đi tiếp là bấm nhầm). Vì thế đừng dùng bước này cho thứ bấm xong VẪN CÒN trên màn hình (thẻ, nút bật / tắt): dùng
+        #     «bấm vào chữ».
         cases = if_cases(tmpl, vars)
         try:
             timeout = max(0.0, min(float(tmpl.get("timeout") or 0), 120.0))
         except (TypeError, ValueError):
             raise ConfigError("bước «Nếu thấy chữ … thì bấm»: thời gian chờ phải là số giây")
         done, hits, acted_any = [], [0] * len(cases), False
+        flips = 0                                     # số lần «thấy lại rồi lại không thấy» (chữ nhấp nháy / đọc lúc được lúc không)
         end = time.time() + timeout
         _sleep(LOOK_SETTLE, abort)
         while True:
+            if flips > IF_FLIPS_MAX:                  # chốt dừng: không kết luận được hộp thoại đã đóng hay chưa thì DỪNG, không nhìn mãi
+                return False, "hộp thoại lúc thấy lúc không sau %d lần nhìn lại — không xác định được đã đóng hay chưa" % flips, acted_any
             img = nav.e.screenshot()
             txt = norm_text(nav.e.read_text(img))
-            # Một trường hợp chỉ «xảy ra» khi thấy CẢ chữ của nó LẪN chữ cần bấm. Thấy chữ mà chưa thấy nút (hộp thoại đang trượt vào, hoặc
-            # đây là một màn hình khác cũng có chữ đó — vd «Tính năng mới trong Game Center» chỉ có nút «Tiếp tục») thì xét trường hợp
-            # kế; không trường hợp nào đủ thì NHÌN LẠI cho tới hết thời gian chờ rồi mới báo hỏng.
+            # Trường hợp «bấm chữ» chỉ «xảy ra» khi thấy CẢ chữ của nó LẪN chữ cần bấm. Thấy chữ mà chưa thấy nút (hộp thoại đang trượt
+            # vào, hoặc đây là một màn hình khác cũng có chữ đó — vd «Tính năng mới trong Game Center» chỉ có nút «Tiếp tục») thì xét
+            # trường hợp kế; không trường hợp nào đủ thì NHÌN LẠI tới hết thời gian chờ rồi mới báo hỏng. Trường hợp «nhấn phím»: thấy chữ là đủ.
             k, pos, blocked = None, None, None
             for i, c in enumerate(cases):
                 if not any(text_has(txt, a) for a in c["alts"]):
                     continue
+                if c["key"]:
+                    k = i
+                    break
                 pos = next((p for p in (nav.e.find_text(a, img) for a in c["tap_alts"]) if p), None)
                 if pos:
                     k = i
@@ -461,29 +551,74 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
                 if time.time() >= end:
                     if blocked:
                         return False, "thấy chữ «%s» nhưng không thấy chữ «%s» để bấm" % (blocked["label"], blocked["tap_label"]), acted_any
-                    msg = ("đã bấm " + ", ".join(done)) if done else "không thấy %s — bỏ qua" % " / ".join("«%s»" % c["label"] for c in cases)
-                    return True, msg, acted_any
+                    if not done:
+                        return True, "không thấy %s — bỏ qua" % " / ".join("«%s»" % c["label"] for c in cases), acted_any
+                    if len(cases) == 1:
+                        c = cases[0]
+                        return True, "thấy «%s» → đã %s%s" % (c["label"], c["act"], (" (%d lần)" % hits[0]) if hits[0] > 1 else ""), acted_any
+                    return True, "đã " + ", ".join(done), acted_any
                 _sleep(1.0, abort)
                 continue
             c = cases[k]
+            if hits[k]:
+                # Đã xử lý trường hợp này rồi mà vẫn thấy: hộp thoại ĐÓNG CHẬM hay cú bấm không ăn? Chờ thêm rồi nhìn lại một lần nữa —
+                # vẫn còn mới làm lại (nhấn phím esc lần hai lúc hộp thoại đã tự đóng sẽ rơi vào màn hình bên dưới).
+                _sleep(IF_RECHECK, abort)
+                img = nav.e.screenshot()
+                if not any(text_has(norm_text(nav.e.read_text(img)), a) for a in c["alts"]):
+                    flips += 1
+                    continue                          # đã đóng trong lúc chờ → nhìn lại từ đầu
+                if not c["key"]:
+                    pos = next((p for p in (nav.e.find_text(a, img) for a in c["tap_alts"]) if p), None)
+                    if not pos:
+                        flips += 1
+                        continue
             hits[k] += 1
-            if hits[k] > IF_REPEAT or len(done) >= IF_MAX_TAPS:
-                return False, "đã bấm «%s» mà vẫn còn thấy «%s» (hộp thoại không đóng)" % (c["tap_label"], c["label"]), acted_any
-            ok, why, acted = _tap(nav, pos[0], pos[1], verify=_still_there(nav, c["tap_alts"], pos))
+            if hits[k] > IF_REPEAT:
+                return False, "đã %s %d lần mà vẫn còn thấy «%s» (hộp thoại không đóng)" % (c["act"], IF_REPEAT, c["label"]), acted_any
+            if len(done) >= IF_MAX_TAPS:
+                return False, "đã xử lý %d hộp thoại liên tiếp mà vẫn còn thấy «%s» — dừng lại (một bước xử lý tối đa %d lần)" % (len(done), c["label"], IF_MAX_TAPS), acted_any
+            if c["key"]:
+                ok, why, acted = _keyed(hid(nav, "key " + c["key"]), abort)
+            else:
+                ok, why, acted = _tap(nav, pos[0], pos[1], verify=_still_there(nav, c["tap_alts"], pos))
             acted_any = acted_any or acted
             if not ok:
+                if hits[k] > 1 and not acted:
+                    # Lần bấm LẶP không thực hiện được (màn hình đổi trước khi con trỏ tới nơi): rất có thể hộp thoại vừa tự đóng trong lúc
+                    # con trỏ đang đi → nhìn lại; đã hết thì lần bấm trước là đủ, không tính đây là lỗi.
+                    _sleep(LOOK_SETTLE, abort)
+                    if not any(text_has(norm_text(nav.e.read_text(nav.e.screenshot())), a) for a in c["alts"]):
+                        hits[k] -= 1
+                        flips += 1
+                        end = time.time() + (timeout if len(cases) > 1 else 0)
+                        continue
                 return False, why, acted_any
-            done.append("«%s» (thấy «%s»)" % (c["tap_label"], c["label"]))
-            if len(cases) == 1:                       # chỉ một trường hợp: bấm xong là xong, không chờ thêm
-                return True, "thấy «%s» → đã bấm «%s»" % (c["label"], c["tap_label"]), acted_any
-            _sleep(IF_AFTER_TAP, abort)               # cho hộp thoại vừa bấm kịp đóng / hộp thoại kế kịp hiện
-            end = time.time() + timeout
+            done.append("%s (thấy «%s»)" % (c["act"], c["label"]))
+            _sleep(IF_AFTER_TAP, abort)               # cho hộp thoại vừa xử lý kịp đóng / hộp thoại kế kịp hiện
+            end = time.time() + (timeout if len(cases) > 1 else 0)      # một trường hợp: chỉ nhìn lại xem hộp thoại đã đóng chưa
 
     if t == "type":
         text = typable(str(tmpl.get("text") or ""), vars)
         if text == "":
             return True, "", False
-        return _keyed(hid(nav, "type " + text, wait=0.8 + 0.08 * len(text)), abort)
+        try:
+            gap = max(0.0, min(float(tmpl.get("gap") or 0), TYPE_GAP_MAX))
+        except (TypeError, ValueError):
+            raise ConfigError("bước «Gõ chữ»: quãng nghỉ giữa các ký tự phải là số giây")
+        if gap <= 0:
+            return _keyed(hid(nav, "type " + text, wait=0.8 + 0.08 * len(text)), abort)
+        # Gõ TỪNG ký tự, nghỉ `gap` giây sau mỗi ký tự: ô mã «mỗi số một ô» tự nhảy sang ô kế bằng mã của trang, gõ liền một mạch thì
+        # các phím tới trong lúc trang đang chuyển ô bị rơi (đo trên trang mã xác minh của KONAMI: gõ liền 6 số chỉ vào được 2 số).
+        acted = False
+        for ch in text:
+            ok, why, a = hid(nav, "key space" if ch == " " else "type " + ch, wait=0.8)
+            acted = acted or a
+            if not ok:
+                return False, why, acted
+            _sleep(gap, abort)
+        _sleep(max(0.0, KEY_SETTLE - gap), abort)        # sau ký tự cuối vẫn nghỉ đủ nhịp bàn phím như mọi lệnh gõ khác
+        return True, "", True
 
     if t == "key":
         name = str(tmpl.get("name") or "").strip().lower()
@@ -505,8 +640,22 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
         app = subst(str(tmpl.get("app") or ""), vars).strip()
         if not app:
             raise ConfigError("bước «Mở app» đang để trống tên app")
-        if any(not (32 <= ord(c) <= 126) for c in app):
+        fresh = tmpl.get("fresh")
+        fresh = fresh is True or fresh == 1 or (isinstance(fresh, str) and fresh.strip().lower() in ("1", "true", "yes"))
+        if not fresh and any(not (32 <= ord(c) <= 126) for c in app):
             raise ConfigError("tên app ở bước «Mở app» chỉ gõ được chữ không dấu (vd «Settings», «eFootball») — «%s» có ký tự không gõ được" % app)
+        if fresh:
+            # «Tắt hẳn rồi mở MỚI» qua USB (không gõ phím): mở bằng ô tìm kiếm chỉ đưa app ra trước, app đang chạy dở ở màn nào thì
+            # vẫn ở màn đó — kịch bản chạy lại sau một lượt dở dang sẽ bắt đầu từ một màn hình bất kỳ. Không làm được thì HỎNG
+            # (không lặng lẽ quay về cách mở cũ: người viết kịch bản đã yêu cầu «bắt đầu từ màn đầu»).
+            try:
+                nav.e.relaunch(app)
+            except LookupError as e:                 # không chọn được app theo tên → chắc chắn chưa đụng gì vào máy
+                return False, "không tắt hẳn / mở mới được app «%s»: %s" % (app, e), False
+            except Exception as e:                   # hết giờ, rút cáp… → app CÓ THỂ đã bị tắt mà chưa mở lại được
+                return False, "không tắt hẳn / mở mới được app «%s»: %s" % (app, e), True
+            _sleep(FRESH_SETTLE, abort)
+            return True, "đã tắt hẳn rồi mở mới", True
         acted = False
         # Quãng nghỉ sau từng phím: Spotlight cần thời gian mở ra và CHỌN xong kết quả đầu trước khi nhận Enter
         # (nhấn Enter sớm thì app không mở — gặp trên máy thật khi lệnh xuống board được gửi nhanh hơn).
@@ -558,12 +707,15 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
 IF_REPEAT = 2            # cùng một trường hợp của bước «nếu … thì bấm» được bấm tối đa chừng này lần (bấm rồi vẫn thấy mãi = hộp thoại không đóng)
 IF_MAX_TAPS = 6          # tổng số lần bấm tối đa của một bước «nếu … thì bấm»
 IF_AFTER_TAP = 1.2       # nghỉ sau mỗi lần bấm rồi mới nhìn lại
+IF_FLIPS_MAX = 4         # số lần tối đa «thấy lại hộp thoại vừa xử lý rồi lại không thấy» trong một bước; quá thì dừng (không nhìn mãi)
+IF_RECHECK = 1.5         # thấy lại một hộp thoại VỪA xử lý: chờ thêm chừng này rồi nhìn lần nữa, vẫn còn mới làm lại (hộp thoại đóng chậm ≠ cú bấm không ăn)
 
 
 def if_cases(tmpl: dict, vars: dict) -> list:
-    """Các trường hợp của bước «nếu thấy chữ … thì bấm …»: [{alts, tap_alts, label, tap_label}].
-    Bước ghi `cases: [{text, tap}, …]` (nhiều trường hợp) hoặc `text` / `tap` (một trường hợp). `tap` để trống = bấm chính chữ vừa thấy."""
-    raw_cases = tmpl.get("cases") if isinstance(tmpl.get("cases"), list) and tmpl.get("cases") else [{"text": tmpl.get("text"), "tap": tmpl.get("tap")}]
+    """Các trường hợp của bước «nếu thấy chữ … thì bấm …»: [{alts, tap_alts, label, tap_label, key, act}].
+    Bước ghi `cases: [{text, tap | key}, …]` (nhiều trường hợp) hoặc `text` + `tap` / `key` (một trường hợp). `tap` để trống = bấm chính chữ
+    vừa thấy. `key` = nhấn PHÍM đó thay cho bấm (hộp «lưu mật khẩu» của iOS không nhận cú bấm của con trỏ, chỉ đóng được bằng phím esc)."""
+    raw_cases = tmpl.get("cases") if isinstance(tmpl.get("cases"), list) and tmpl.get("cases") else [{"text": tmpl.get("text"), "tap": tmpl.get("tap"), "key": tmpl.get("key")}]
     out = []
     for c in raw_cases[:12]:
         if not isinstance(c, dict):
@@ -572,8 +724,13 @@ def if_cases(tmpl: dict, vars: dict) -> list:
         alts = alternatives(subst(raw, vars))
         if not alts:
             raise ConfigError("bước «Nếu thấy chữ … thì bấm» đang để trống chữ cần thấy")
+        key = str(c.get("key") or "").strip().lower()
+        if key and key not in KEYS:
+            raise ConfigError("bước «Nếu thấy chữ … thì nhấn phím»: phím «%s» không hỗ trợ (chỉ: %s)" % (key, ", ".join(KEYS)))
         tap_raw = str(c.get("tap") or "") or raw
-        out.append({"alts": alts, "tap_alts": alternatives(subst(tap_raw, vars)) or alts, "label": show(raw, vars), "tap_label": show(tap_raw, vars)})
+        tap_label = show(tap_raw, vars)
+        out.append({"alts": alts, "tap_alts": alternatives(subst(tap_raw, vars)) or alts, "label": show(raw, vars), "tap_label": tap_label,
+                    "key": key, "act": ("nhấn phím %s" % key) if key else "bấm «%s»" % tap_label})
     return out
 
 
@@ -699,7 +856,7 @@ def open_prefix(login: list) -> list:
     out = []
     for st in login or []:
         t = st.get("type")
-        if t in ("tap", "tap_text", "hold", "hold_text", "swipe") or _is_credential(st):
+        if t in ("tap", "tap_text", "tap_image", "hold", "hold_text", "swipe") or _is_credential(st):
             break
         out.append(st)
     return out
@@ -717,7 +874,7 @@ def credential_gate(login: list) -> int:
 def session_probe(nav, steps: dict, rules: list, timeout: float, abort=None) -> str:
     """Game đang ở trạng thái nào: "out" (chắc chắn chưa ai đăng nhập) | "in" (đang đăng nhập) |
     "unknown" (không nhận ra màn hình). Chỉ chạy «đoạn mở game» (xem open_prefix) rồi đọc màn hình —
-    không bấm vào đâu, không gõ gì của khách. Bước chờ/kiểm chữ trong đoạn đó hỏng thì bỏ qua (khi game
+    không gõ gì của khách; thứ duy nhất được bấm là hộp thoại chắn màn hình mà bước «nếu thấy chữ … thì bấm» trong đoạn đó dọn đi. Bước chờ/kiểm chữ trong đoạn đó hỏng thì bỏ qua (khi game
     đang đăng nhập sẵn thì màn hình chờ của nó khác)."""
     for st in open_prefix(steps.get("login") or []):
         ok, why, _ = exec_step(nav, st, {}, abort)
@@ -1040,7 +1197,8 @@ class JobFlow:
                 if getattr(self.nav, "_hid_sent", 0) != sent0:
                     self.risky = True
                 raise
-            if acted or (ok and st.get("type") in INPUT_TYPES):
+            # bước có điều kiện xong theo hai kiểu — đã bấm (acted) hay không thấy nên bỏ qua (chưa đụng gì vào máy): chỉ kiểu đầu mới là «đã chạm»
+            if acted or (ok and st.get("type") in INPUT_TYPES and st.get("type") != "tap_if"):
                 touched = True
                 self.risky = True                       # từ đây: chưa xác nhận thì không được báo failed
             if not ok and not st.get("optional"):

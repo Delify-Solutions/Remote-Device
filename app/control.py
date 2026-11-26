@@ -679,9 +679,15 @@ def build_tools(c: Control) -> list:
         Tool("run_steps", "Run a list of steps",
              "Run several steps in order on one device and stop at the first failure. Step types: tap {x,y}, tap_text {text,timeout} "
              "(`timeout` = seconds to wait for the text to appear before giving up; omit to look once — game screens take 1-3 s to change), "
+             "tap_image {image,x,y,w,h,timeout,min} (`image` = base64 PNG crop of a full-size screenshot: finds that picture on screen and taps its centre — "
+             "use it instead of fixed coordinates for buttons without text; ALWAYS pass `x,y,w,h` = the rectangle the crop was cut from: when several "
+             "identical pictures are on screen the one nearest to it is tapped, without them the best/first match wins; `min` = minimum similarity, default 0.9), "
              "hold {x,y,seconds}, hold_text {text,seconds,timeout}, swipe {dir} or {x1,y1,x2,y2}, type {text}, key {name}, combo {keys}, "
-             "launch {app}, home, wait {seconds}, wait_text {text,timeout}, assert_text {text}, tap_if {text,tap,timeout} (if `text` shows up within "
-             "`timeout` seconds tap the text `tap`, else do nothing and continue — for dialogs that only sometimes appear). "
+             "launch {app,fresh} (`fresh`: true = force-quit the app and start it again over USB so it always begins at its first screen; "
+             "without it a running app just comes to the front in whatever screen it was), home, wait {seconds}, wait_text {text,timeout}, "
+             "assert_text {text}, type also takes `gap` (seconds between characters — use ~0.4 for one-digit-per-box code inputs), "
+             "tap_if {text,tap|key,timeout} (if `text` shows up within `timeout` seconds tap the text `tap` — or press the key `key`, e.g. esc — "
+             "and check it went away; else do nothing and continue. For dialogs that only sometimes appear). "
              "Add \"optional\": true to skip a step on failure.",
              {"steps": {"type": "array", "items": {"type": "object"}, "description": "Steps to run."}, "device": _DEV,
               "vars": {"type": "object", "description": "Values for {{placeholders}} used in step texts."}}, ("steps",),

@@ -69,6 +69,11 @@ function askForm(title, msg, fields) {
     box.innerHTML = "";
     fields.forEach((f, i) => {
       const wrap = document.createElement("div");
+      if (f.type === "image") {                           // chỉ để XEM (ảnh mẫu của bước); `src` đã qua imageSrc()
+        wrap.innerHTML = f.src ? `<img class="modal-thumb" src="${f.src}" alt="Hình cần bấm">` : `<div class="text-danger small">Ảnh của bước này không đọc được.</div>`;
+        box.appendChild(wrap);
+        return;
+      }
       if (f.type === "select") {
         const opts = (f.options || []).map(o =>
           `<option value="${esc(o.value)}" ${String(o.value) === String(f.value) ? "selected" : ""}>${esc(o.label)}</option>`).join("");
@@ -1051,7 +1056,73 @@ async function shot(btn) {
   }
 }
 
+// Một VÙNG trên ảnh màn hình do người dùng kéo ra: hai điểm (toạ độ trang) + khung của ảnh trên trang + cỡ ảnh thật → {x, y, w, h} theo
+// điểm ảnh của ảnh chụp (cắt gọn trong ảnh). Kéo chưa tới REGION_DRAG điểm = một cú BẤM (trả null). Khung quá nhỏ / quá lớn → {error}.
+const REGION_DRAG = 6, REGION_MIN = 12, REGION_MAX = 400;
+function dragRegion(a, b, rect, screen) {
+  if (!a || !b || !rect || !(rect.width > 0) || !(rect.height > 0) || !screen || !(screen.w > 0) || !(screen.h > 0)) return null;
+  if (Math.abs(b.x - a.x) < REGION_DRAG && Math.abs(b.y - a.y) < REGION_DRAG) return null;
+  const cl = (v, hi) => Math.round(Math.max(0, Math.min(hi, v)));
+  const fx = screen.w / rect.width, fy = screen.h / rect.height;
+  const x0 = cl((Math.min(a.x, b.x) - rect.left) * fx, screen.w), x1 = cl((Math.max(a.x, b.x) - rect.left) * fx, screen.w);
+  const y0 = cl((Math.min(a.y, b.y) - rect.top) * fy, screen.h), y1 = cl((Math.max(a.y, b.y) - rect.top) * fy, screen.h);
+  const r = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  if (r.w < REGION_MIN || r.h < REGION_MIN) return { error: `Khung quá nhỏ (${r.w}×${r.h}) — kéo một khung bao trọn nút cần bấm, mỗi cạnh ít nhất ${REGION_MIN} điểm ảnh` };
+  if (r.w > REGION_MAX || r.h > REGION_MAX) return { error: `Khung quá lớn (${r.w}×${r.h}) — chỉ khoanh sát quanh nút cần bấm, mỗi cạnh tối đa ${REGION_MAX} điểm ảnh` };
+  return r;
+}
+// Dữ liệu điểm ảnh RGBA có «gần như một màu» không: độ lệch chuẩn của TỪNG kênh màu đều dưới 4 (cùng phép kiểm với phía máy — eyes.decode_image).
+function flatPixels(d) {
+  const sum = [0, 0, 0], sq = [0, 0, 0], n = d.length / 4;
+  for (let i = 0; i < d.length; i += 4) for (let c = 0; c < 3; c++) { const v = d[i + c]; sum[c] += v; sq[c] += v * v; }
+  return n < 1 || [0, 1, 2].every(c => Math.sqrt(Math.max(0, sq[c] / n - (sum[c] / n) ** 2)) < 4);
+}
+// Cắt vùng `r` từ ảnh màn hình đang hiện (ảnh PNG gốc, đủ điểm ảnh) → {image: PNG base64}; vùng gần như một màu (không có gì để nhận ra) → {error}.
+function cropRegion(img, r) {
+  const c = document.createElement("canvas");
+  c.width = r.w; c.height = r.h;
+  const g = c.getContext("2d");
+  g.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+  const d = g.getImageData(0, 0, r.w, r.h).data;
+  if (flatPixels(d)) return { error: "Vùng vừa chọn gần như một màu — khoanh vùng có hình hoặc chữ để máy nhận ra" };
+  return { image: c.toDataURL("image/png").split(",")[1] };
+}
+let DRAG = null;                        // đang kéo khung trên ảnh màn hình: điểm bắt đầu {x, y} (toạ độ trang)
+let DRAG_DONE = false;                  // vừa kéo xong một khung → bỏ qua sự kiện «click» đi liền sau
+function onScreenDown(e) {
+  if (!$("#pick-mode").checked || !SCREEN.w || e.button) return;
+  DRAG = { x: e.clientX, y: e.clientY };
+  DRAG_DONE = false;
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* trình duyệt cũ: vẫn kéo được trong phạm vi ảnh */ }
+}
+function onScreenMove(e) {
+  if (!DRAG) return;
+  const sel = $("#screen-sel"), wrap = $("#screen-wrap"), rect = $("#screen").getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+  if (Math.abs(e.clientX - DRAG.x) < REGION_DRAG && Math.abs(e.clientY - DRAG.y) < REGION_DRAG) { sel.hidden = true; return; }
+  const cl = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const x0 = cl(Math.min(DRAG.x, e.clientX), rect.left, rect.right), x1 = cl(Math.max(DRAG.x, e.clientX), rect.left, rect.right);
+  const y0 = cl(Math.min(DRAG.y, e.clientY), rect.top, rect.bottom), y1 = cl(Math.max(DRAG.y, e.clientY), rect.top, rect.bottom);
+  Object.assign(sel.style, { left: (x0 - wr.left - wrap.clientLeft) + "px", top: (y0 - wr.top - wrap.clientTop) + "px", width: (x1 - x0) + "px", height: (y1 - y0) + "px" });
+  sel.hidden = false;
+}
+function onScreenUp(e) {
+  if (!DRAG) return;
+  const a = DRAG, img = $("#screen");
+  DRAG = null;
+  $("#screen-sel").hidden = true;
+  const r = dragRegion(a, { x: e.clientX, y: e.clientY }, img.getBoundingClientRect(), SCREEN);
+  if (!r) return;                       // không kéo → sự kiện «click» sẽ thêm bước bấm theo toạ độ như cũ
+  DRAG_DONE = true;
+  setTimeout(() => { DRAG_DONE = false; }, 0);            // «click» (nếu có) tới ngay sau «pointerup»; kéo ra ngoài ảnh thì không có «click» nào → tự gỡ cờ
+  if (r.error) { toast(r.error, "warn"); return; }
+  const c = cropRegion(img, r);
+  if (c.error) { toast(c.error, "warn"); return; }
+  if (addPicked({ type: "tap_image", image: c.image, x: r.x, y: r.y, w: r.w, h: r.h, timeout: TEXT_WAIT_NEW })) toast(`Đã thêm bước: bấm vào vùng ảnh ${r.w}×${r.h}`, "ok");
+}
+function onScreenCancel() { DRAG = null; $("#screen-sel").hidden = true; }
+
 function onScreenClick(e) {
+  if (DRAG_DONE) { DRAG_DONE = false; return; }           // cú «click» này là phần đuôi của một lần kéo khung
   if (!$("#pick-mode").checked || !SCREEN.w) return;
   const img = $("#screen"), rect = img.getBoundingClientRect();
   const x = Math.round((e.clientX - rect.left) / rect.width * SCREEN.w);
@@ -1078,11 +1149,12 @@ function stepText(s) {
   switch (s.type) {
     case "tap": return `(${s.x}, ${s.y})`;
     case "tap_text": return `“${s.text}”` + (Number(s.timeout) > 0 ? ` (chờ ${Number(s.timeout)}s)` : "");
-    case "tap_if": return ifCases(s).map(k => `“${k.text}” → “${k.tap || k.text}”`).join("; ") + ` (${s.timeout || 0}s)`;
+    case "tap_image": return `vùng ảnh ${Number(s.w) || "?"}×${Number(s.h) || "?"}` + (Number(s.timeout) > 0 ? ` (chờ ${Number(s.timeout)}s)` : "");
+    case "tap_if": return ifCases(s).map(k => `“${k.text}” → ${ifKey(k) ? "phím " + ifKey(k) : `“${k.tap || k.text}”`}`).join("; ") + ` (${s.timeout || 0}s)`;
     case "type": return `“${s.text}”`;
     case "key": return s.name;
     case "combo": return s.keys;
-    case "launch": return s.app;
+    case "launch": return s.app + (s.fresh ? " (mở mới)" : "");
     case "home": return "màn hình chính";
     case "wait": return s.seconds + "s";
     case "wait_text": return `“${s.text}” (${s.timeout || 15}s)`;
@@ -1095,7 +1167,7 @@ function stepText(s) {
 }
 const SWIPE_DIR = { left: "sang trái (trang sau)", right: "sang phải (trang trước)", up: "lên (cuộn xuống dưới)", down: "xuống (cuộn lên trên)" };
 const STEP_LABEL = {
-  tap: "Tap", tap_text: "Tap chữ", tap_if: "Nếu thấy thì bấm", type: "Gõ", key: "Phím", combo: "Tổ hợp",
+  tap: "Tap", tap_text: "Tap chữ", tap_image: "Bấm vào", tap_if: "Nếu thấy thì bấm", type: "Gõ", key: "Phím", combo: "Tổ hợp",
   launch: "Mở app", home: "Home", wait: "Chờ", wait_text: "Chờ chữ", assert_text: "Kiểm chữ",
   swipe: "Vuốt", hold: "Bấm giữ", hold_text: "Giữ chữ",
 };
@@ -1104,6 +1176,7 @@ const STEP_LABEL = {
 const STEP_KIND = {
   tap: ["touch", "tabler-pointer"], tap_text: ["touch", "tabler-hand-finger"], hold: ["touch", "tabler-hand-stop"],
   hold_text: ["touch", "tabler-hand-stop"], swipe: ["touch", "tabler-hand-move"], tap_if: ["touch", "tabler-arrows-split"],
+  tap_image: ["touch", "tabler-photo-search"],
   type: ["key", "tabler-keyboard"], key: ["key", "tabler-keyboard"], combo: ["key", "tabler-command"],
   launch: ["app", "tabler-apps"], home: ["app", "tabler-home"],
   wait: ["wait", "tabler-clock"], wait_text: ["wait", "tabler-eye"], assert_text: ["wait", "tabler-checks"],
@@ -1115,19 +1188,35 @@ function stepKind(type) {                    // (hasOwnProperty: loại bước 
 function stepVal(v) {
   return `<b>${esc(String(v ?? "")).replace(/\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g, "<code>{{$1}}</code>")}</b>`;
 }
+// Ô «giống tối thiểu (%)» của bước «bấm vào vùng ảnh» → số phần trăm 50…99. Trống / không phải số / số âm → 90 (mặc định); gõ kiểu 0.8 → 80.
+function parseImageMin(raw) {
+  let pm = parseFloat(raw);
+  if (!(pm > 0)) pm = 90;
+  else if (pm <= 1) pm *= 100;
+  return Math.round(Math.min(99, Math.max(50, pm)));
+}
+// Ảnh mẫu của bước «bấm vào vùng ảnh» (PNG base64) → địa chỉ `data:` để hiện lên trang; không đúng dạng base64 → "" (không đưa chuỗi lạ vào trang).
+function imageSrc(b64) {
+  return typeof b64 === "string" && b64.length <= 1200000 && /^[A-Za-z0-9+/]+={0,2}$/.test(b64) ? "data:image/png;base64," + b64 : "";
+}
 // Một bước viết thành MỘT CÂU đọc được: «Bấm vào chữ «Mua»», «Chờ thấy chữ «Shop» tối đa 15 giây».
 function stepSentence(s) {
   const dim = (t) => ` <span class="flow-dim">${esc(t)}</span>`;
   switch (s.type) {
     case "tap": return `Bấm tại ${stepVal(`(${s.x}, ${s.y})`)}`;
     case "tap_text": return `Bấm vào chữ ${stepVal(`«${s.text}»`)}${Number(s.timeout) > 0 ? dim(`chờ tối đa ${Number(s.timeout)} giây`) : ""}`;
+    case "tap_image": {                                                // hình cần bấm hiện ngay trong câu
+      const src = imageSrc(s.image);
+      return `Bấm vào hình ${src ? `<img class="flow-thumb" src="${src}" alt="vùng ảnh cần bấm">` : stepVal("(ảnh không đọc được)")}`
+        + (Number(s.timeout) > 0 ? dim(`chờ tối đa ${Number(s.timeout)} giây`) : "");
+    }
     case "tap_if":                                                     // mỗi trường hợp một dòng: «Nếu thấy chữ A thì bấm B»
-      return ifCases(s).map(k => `Nếu thấy chữ ${stepVal(`«${k.text}»`)} thì bấm ${stepVal(`«${k.tap || k.text}»`)}`).join("<br>")
+      return ifCases(s).map(k => `Nếu thấy chữ ${stepVal(`«${k.text}»`)} thì ` + (ifKey(k) ? `nhấn phím ${stepVal(ifKey(k))}` : `bấm ${stepVal(`«${k.tap || k.text}»`)}`)).join("<br>")
         + dim((ifCases(s).length > 1 ? "không thấy gì thì bỏ qua · " : "") + (Number(s.timeout) > 0 ? `chờ tối đa ${s.timeout} giây` : "xem một lần"));
-    case "type": return `Gõ ${stepVal(`«${s.text}»`)}`;                  // có ngoặc: thấy được cả chữ rỗng / khoảng trắng ở đầu, cuối
+    case "type": return `Gõ ${stepVal(`«${s.text}»`)}` + (Number(s.gap) > 0 ? dim(`từng ký tự, cách nhau ${Number(s.gap)} giây`) : "");   // có ngoặc: thấy được cả chữ rỗng / khoảng trắng ở đầu, cuối
     case "key": return `Nhấn phím ${stepVal(s.name)}`;
     case "combo": return `Nhấn tổ hợp ${stepVal(s.keys)}`;
-    case "launch": return `Mở app ${stepVal(s.app)}`;
+    case "launch": return `Mở app ${stepVal(s.app)}` + (s.fresh ? dim("tắt hẳn rồi mở mới") : "");
     case "home": return "Về màn hình chính";
     case "wait": return `Chờ ${stepVal(`${s.seconds} giây`)}`;
     case "wait_text": return `Chờ thấy chữ ${stepVal(`«${s.text}»`)}${dim(`tối đa ${s.timeout || 15} giây`)}`;
@@ -1142,9 +1231,16 @@ function stepSentence(s) {
 // Bước «nếu thấy chữ … thì bấm …»: danh sách trường hợp [{text, tap}] — bước ghi `cases` (nhiều) hoặc `text` / `tap` (một).
 function ifCases(s) {
   const cs = Array.isArray(s.cases) ? s.cases.filter(k => k && typeof k === "object") : [];
-  return cs.length ? cs : [{ text: s.text, tap: s.tap }];
+  return cs.length ? cs : [{ text: s.text, tap: s.tap, key: s.key }];
+}
+// phím dùng được ở trường hợp «thì nhấn phím» (hộp thoại không nhận cú bấm của con trỏ)
+const IF_KEYS = ["esc", "enter", "tab", "back", "space"];
+function ifKey(k) {                      // phím hợp lệ của một trường hợp, hoặc "" (dữ liệu lạ không được đưa vào trang)
+  const v = String((k && k.key) || "").trim().toLowerCase();
+  return IF_KEYS.includes(v) ? v : "";
 }
 // Người dùng gõ mỗi dòng một trường hợp: «thấy chữ gì => bấm chữ gì» (bỏ «=> …» thì bấm chính chữ đó; cũng nhận «->» và «→»).
+// «=> phím esc» (hoặc «=> key esc»): NHẤN PHÍM thay cho bấm — cho hộp thoại không nhận cú bấm của con trỏ (vd iOS hỏi «lưu mật khẩu»).
 function parseIfCases(text) {
   const out = [];
   String(text || "").split(/\r?\n/).forEach(line => {
@@ -1152,10 +1248,15 @@ function parseIfCases(text) {
     const seen = (m ? m[1] : line).trim(), tap = m ? m[2].trim() : "";
     if (!seen) return;
     const one = { text: seen };
-    if (tap && tap !== seen) one.tap = tap;
+    const k = /^(?:phím|phim|key)\s+([a-z]+)$/i.exec(tap);
+    if (k && IF_KEYS.includes(k[1].toLowerCase())) one.key = k[1].toLowerCase();
+    else if (tap && tap !== seen) one.tap = tap;
     out.push(one);
   });
   return out.slice(0, 12);
+}
+function ifCaseLine(k) {                 // một trường hợp viết lại thành một dòng của ô nhập (ngược với parseIfCases)
+  return ifKey(k) ? `${k.text} => phím ${ifKey(k)}` : (k.tap && k.tap !== k.text) ? `${k.text} => ${k.tap}` : `${k.text}`;
 }
 
 let STEP_RES = new WeakMap();        // bước (đối tượng) → {ok, msg} của lần thử gần nhất. Sửa bước tạo đối tượng mới nên kết quả cũ tự mất.
@@ -1334,16 +1435,23 @@ function stepItem(l, s, i, no) {
     busy(b, false);
     if (out) STEP_RES.set(s, out); else STEP_RES.delete(s);
     renderSteps();
-    if (["tap", "tap_text", "tap_if", "swipe", "hold", "hold_text"].includes(s.type)) setTimeout(() => shot(null), 900);
+    if (["tap", "tap_text", "tap_image", "tap_if", "swipe", "hold", "hold_text"].includes(s.type)) setTimeout(() => shot(null), 900);
   };
   return li;
 }
 
+// Các bước mà GATEWAY cấu hình cho giai đoạn `key` — chỉ khi cấu hình pool đang nạp (`pool`) đúng là pool mà kịch bản đang chọn (`cfg.pool`);
+// pool khác / chưa nạp → [] (không bao giờ chạy thử bước của một pool khác, nhất là giai đoạn mua).
+function gatewaySteps(cfg, pool, key) {
+  if (!cfg || !pool || !cfg.pool || pool.code !== cfg.pool) return [];
+  const list = (pool.steps || {})[key];
+  return Array.isArray(list) ? list : [];
+}
 // Thử MỘT giai đoạn của kịch bản nhận đơn trên máy đang chọn (giai đoạn chưa có bước riêng thì thử bước của gateway).
 async function testPhase(l, btn) {
   if (!SEL) { toast("Chọn máy để thử ở khung màn hình", "warn"); return; }
   let steps = l.steps;
-  if (!steps.length && GW_POOL) steps = (GW_POOL.steps || {})[l.key] || [];
+  if (!steps.length) steps = gatewaySteps(ordersCfg(), GW_POOL, l.key);       // giai đoạn chưa có bước riêng: thử bước của gateway (chỉ khi đúng pool đang chọn)
   if (!steps.length) { toast("Giai đoạn này chưa có bước nào để thử", "warn"); return; }
   if (l.key === "purchase" && !confirmBox("Thử giai đoạn «Mua một gói» sẽ BẤM MUA THẬT trên máy đang chọn — có thể trừ tiền / tiêu gói của tài khoản đang đăng nhập trên máy đó.\n\nVẫn chạy thử?")) return;
   busy(btn, true);
@@ -1440,16 +1548,23 @@ async function pickAction(type) {
   const to = ADD_TO || { list: FLOW.steps, at: null };
   closePalette();
   if (type === "pick") { startPick(to); return; }
+  if (type === "tap_image") { startPick(to, true); return; }       // không hỏi gì: kéo một khung quanh nút trên ảnh màn hình
   await addStepPrompt(type, to);
 }
-function startPick(to) {               // «Bấm theo vị trí trên ảnh»: bật chế độ bấm ảnh; bước chạm sẽ vào đúng chỗ đang chọn
+function startPick(to, region) {       // «Bấm theo vị trí trên ảnh» / «Bấm vào vùng ảnh» (region): bật chế độ bấm ảnh; bước chạm sẽ vào đúng chỗ đang chọn
   // neo theo BƯỚC đứng trước (đối tượng), không theo số thứ tự: xoá / chèn bước khác trong lúc đang bấm ảnh cũng không làm lệch chỗ
   PICK_TO = { list: to.list, after: to.at == null ? (to.list[to.list.length - 1] || null) : (to.at > 0 ? to.list[to.at - 1] || null : null) };
-  $("#pick-mode").checked = true;
-  $("#screen").classList.add("pick");
-  if (SCREEN.w) { toast("Bấm lên ảnh màn hình để thêm bước chạm", "ok"); return; }
-  toast("Chụp màn hình rồi bấm lên ảnh để thêm bước chạm", "warn");
+  setPickMode(true);
+  const how = region ? "kéo một khung quanh nút cần bấm trên ảnh màn hình" : "bấm lên ảnh màn hình để thêm bước chạm";
+  if (SCREEN.w) { toast(how[0].toUpperCase() + how.slice(1), "ok"); return; }
+  toast("Chụp màn hình rồi " + how, "warn");
   if (SEL) shot(null);
+}
+function setPickMode(on) {             // bật / tắt «bấm vào ảnh để thêm bước chạm» (bấm một điểm = toạ độ, kéo một khung = vùng ảnh)
+  $("#pick-mode").checked = !!on;
+  $("#screen").classList.toggle("pick", !!on);
+  $("#pick-hint").hidden = !on;
+  if (!on) { PICK_TO = null; onScreenCancel(); }
 }
 function addPicked(step) {             // gọi khi người dùng bấm lên ảnh màn hình ở chế độ «bấm ảnh để thêm bước chạm»
   if (!PICK_TO) {
@@ -1497,25 +1612,41 @@ async function stepPrompt(type, cur, list) {
   if (type === "type") {
     const vars = orderVars(list);                         // kịch bản nhận đơn: tài khoản, mật khẩu… của từng đơn
     const r = await askForm(T + "Gõ chữ", vars && vars.items.length ? "Gõ chữ cố định, hoặc bấm một ô «Lấy từ đơn» để gõ dữ liệu của từng đơn (mỗi đơn một khác)." : "",
-      [{ key: "v", label: "Nội dung cần gõ", value: c.text ?? "", placeholder: "Nội dung…", vars }]);
+      [{ key: "v", label: "Nội dung cần gõ", value: c.text ?? "", placeholder: "Nội dung…", vars },
+       { key: "gap", label: "Nghỉ giữa các ký tự (giây) — 0 = gõ liền một mạch; ô mã «mỗi số một ô» nên để 0.4", value: String(Number(c.gap) > 0 ? Number(c.gap) : 0) }]);
     if (!r) return null; s.text = r.v;
+    const gap = Math.min(2, Math.max(0, parseFloat(r.gap) || 0));
+    if (gap > 0) s.gap = gap; else delete s.gap;
   } else if (type === "tap_text") {
     const r = await askForm(T + "Bấm vào chữ", "", [
       { key: "text", label: "Chữ hiển thị trên màn (OCR)", value: c.text ?? "", placeholder: "VD: Đăng nhập", vars: pkg },
       textWaitField(cur),
     ]);
     if (!r || !r.text) return null; s.text = r.text; setTextWait(s, r.timeout);
+  } else if (type === "tap_image") {
+    if (!cur) return null;                                 // thêm mới không qua hộp thoại: kéo khung trên ảnh màn hình (xem startPick)
+    const m0 = Number(c.min) > 1 ? Number(c.min) / 100 : Number(c.min) > 0 ? Number(c.min) : 0.9;
+    const r = await askForm(T + "Bấm vào vùng ảnh", "Máy tìm đúng hình này trên màn hình rồi bấm vào giữa nó. Muốn đổi hình: xoá bước này rồi kéo khung mới trên ảnh màn hình.", [
+      { type: "image", src: imageSrc(c.image) },
+      Object.assign(textWaitField(cur), { label: "Hình chưa hiện thì chờ, tối đa (giây) — 0 = chỉ nhìn một lần" }),
+      { key: "min", label: "Giống tối thiểu (%) — hạ xuống nếu nền phía sau hình thay đổi", value: String(Math.round(m0 * 100)) },
+    ]);
+    if (!r) return null;
+    setTextWait(s, r.timeout);
+    const m = parseImageMin(r.min);
+    if (m === 90) delete s.min; else s.min = m / 100;       // 90% là mặc định → không ghi
   } else if (type === "tap_if") {
-    const lines = (cur ? ifCases(c).filter(k => k.text) : []).map(k => (k.tap && k.tap !== k.text) ? `${k.text} => ${k.tap}` : `${k.text}`).join("\n");
+    const lines = (cur ? ifCases(c).filter(k => k.text) : []).map(ifCaseLine).join("\n");
     const r = await askForm(T + "Nếu thấy chữ … thì bấm",
-      "Cho thứ lúc có lúc không (hộp thoại, thông báo, quảng cáo). Thấy trường hợp nào thì bấm trường hợp đó; không thấy gì thì bước coi như xong và kịch bản đi tiếp. Mỗi trang ghi một dòng, dùng chữ chỉ trang đó có.", [
-      { key: "cases", type: "textarea", label: "Mỗi dòng một trường hợp:  thấy chữ gì  =>  bấm chữ gì", value: lines, placeholder: "Tính năng mới => Tiếp tục\nChào mừng đến => Hủy" },
-      { key: "timeout", label: "Chờ xem có hiện không, tối đa (giây) — 0 = chỉ xem một lần", value: String(c.timeout ?? 8) },
+      "Cho hộp thoại lúc có lúc không (thông báo, quảng cáo, hỏi lưu mật khẩu). Thấy trường hợp nào thì xử lý trường hợp đó rồi kiểm lại là nó đã đóng; không thấy gì thì bước coi như xong. Mỗi hộp thoại ghi một dòng, dùng chữ chỉ nó có.", [
+      { key: "cases", type: "textarea", label: "Mỗi dòng một trường hợp:  thấy chữ gì  =>  bấm chữ gì   (hoặc  =>  phím esc)", value: lines, placeholder: "Tính năng mới => Tiếp tục\nChào mừng đến => Hủy\nlưu mật khẩu này => phím esc" },
+      // bước cũ không ghi thời gian thì đang chạy «xem một lần» (0) → hiện đúng 0, không tự đổi hành vi khi người dùng chỉ mở ra xem
+      { key: "timeout", label: "Chờ xem có hiện không, tối đa (giây) — 0 = chỉ xem một lần", value: String(c.timeout ?? (cur ? 0 : 8)) },
     ]);
     if (!r) return null;
     const cases = parseIfCases(r.cases);
     if (!cases.length) { toast("Ghi ít nhất một dòng: thấy chữ gì => bấm chữ gì", "warn"); return null; }
-    delete s.text; delete s.tap; delete s.cases;
+    delete s.text; delete s.tap; delete s.key; delete s.cases;
     if (cases.length === 1) Object.assign(s, cases[0]);        // một trường hợp: ghi gọn `text` / `tap`
     else s.cases = cases;
     s.timeout = Math.min(120, Math.max(0, parseFloat(r.timeout) || 0));
@@ -1532,8 +1663,15 @@ async function stepPrompt(type, cur, list) {
     const t = await askOne(T + "Tổ hợp phím", "Tổ hợp (VD: gui h, gui space, ctrl space)", c.keys ?? "gui h");
     if (!t) return null; s.keys = t.trim();
   } else if (type === "launch") {
-    const t = await askOne(T + "Mở app", "Tên app cần mở", c.app ?? "", "VD: efootball");
-    if (!t) return null; s.app = t.trim();
+    const r = await askForm(T + "Mở app", "", [
+      { key: "app", label: "Tên app cần mở (không dấu)", value: c.app ?? "", placeholder: "VD: efootball" },
+      { key: "fresh", type: "select", label: "Nếu app đang chạy dở", value: (cur ? c.fresh : true) ? "1" : "0", options: [
+        { value: "1", label: "Tắt hẳn rồi mở mới — luôn bắt đầu từ màn đầu (qua USB)" },
+        { value: "0", label: "Chỉ đưa ra trước — giữ nguyên màn hình đang dở" }] },
+    ]);
+    if (!r || !r.app.trim()) return null;
+    s.app = r.app.trim();
+    if (r.fresh === "1") s.fresh = true; else delete s.fresh;
   } else if (type === "wait") {
     const t = await askOne(T + "Chờ", "Số giây chờ", String(c.seconds ?? "1.5"));
     if (!t) return null; s.seconds = parseFloat(t) || 0;
@@ -1731,10 +1869,18 @@ function renderScriptMachines() {
     const busy = running || held || parked;              // máy đang dừng để xử lý tay cũng không tích được — bấm Tiếp tục trên máy đó trước
     const mine = running && st.group_id === GROUP.id && st.script_id === sc.id;
     const note = running ? (mine ? `<span class="pill ok">▶ đang chạy kịch bản này</span>` : `<span class="pill warn">đang chạy ${esc(whatRuns(st))}</span>`) : "";
+    // Máy đang DỪNG CHỜ KIỂM TRA sau một đơn của CHÍNH kịch bản nhận đơn này: «Chạy lại» được (máy tự kiểm game đã sạch rồi mới nhận đơn tiếp);
+    // máy giữ vì việc khác thì chỉ có «Đã kiểm tra xong».
+    const again = canRerunHeld(st, GROUP, sc);
     return `<div class="script-machine-row"><label class="script-machine ${busy ? "busy" : ""}"><input type="checkbox" data-m="${esc(n)}" ${busy ? "disabled" : (SCRIPT_SEL[n] !== false ? "checked" : "")}> ${esc(d ? (d.label || d.name) : n)} ${note}</label>
-      <span class="script-machine-acts">${runControlsHtml(n, st)}</span></div>`;
+      <span class="script-machine-acts">${again ? `<button class="btn btn-sm btn-success" data-mrerun="${esc(n)}" title="Chạy lại CHÍNH kịch bản này trên máy đang dừng chờ kiểm tra: máy tự kiểm game đã đăng xuất sạch rồi mới nhận đơn tiếp">Chạy lại</button>` : ""}${runControlsHtml(n, st)}</span></div>`;
   }).join("");
   $$("input[data-m]", box).forEach(cb => cb.onchange = () => { SCRIPT_SEL[cb.dataset.m] = cb.checked; });
+  $$("[data-mrerun]", box).forEach(b => b.onclick = () => {
+    const n = b.dataset.mrerun, st = RUN_STATUS[n] || {};
+    if (!confirmBox(`Chạy lại kịch bản «${sc.name}» trên máy ${n}?\n\nMáy đang DỪNG CHỜ KIỂM TRA: ${st.hold || "(không rõ lý do)"}\n\nChạy lại là gỡ trạng thái đó: máy tự kiểm game đã đăng xuất sạch rồi nhận ĐƠN THẬT tiếp theo của khách.`)) return;
+    runMachine(n, sc.id);
+  });
   bindRunControls(box);
 }
 async function runScript(btn) {
@@ -2399,13 +2545,17 @@ async function stopGroup(btn) {
   busy(btn, false);
   pollStatus();
 }
-async function runMachine(name) {
+// Máy đang dừng chờ kiểm tra có «Chạy lại» được bằng kịch bản `sc` của nhóm `group` không: chỉ khi nó dừng sau một đơn của CHÍNH kịch bản nhận đơn đó.
+function canRerunHeld(st, group, sc) {
+  return !!(st && !st.running && st.hold && group && sc && sc.mode === "orders" && st.group_id === group.id && st.script_id === sc.id);
+}
+async function runMachine(name, scriptId) {       // scriptId: chạy một kịch bản nhận đơn cụ thể (không ghi = nhóm nhận đơn kiểu cũ)
   if (!GROUP) return;
-  const why = groupNotReady();
+  const why = scriptId ? "" : groupNotReady();
   if (why) { toast(why, "warn"); return; }
-  await saveGroupSilent();
+  if (!(await saveGroupSilent())) { toast("Lỗi lưu nhóm — chưa chạy", "bad"); return; }
   try {
-    const r = await API().machine_run(GROUP.id, name);
+    const r = await (scriptId ? API().machine_run(GROUP.id, name, scriptId) : API().machine_run(GROUP.id, name));
     if (r && r.ok) log(`▶ Chạy máy ${name}`);
     else toast((r && r.error) || "Lỗi không rõ", "bad");
   } catch (e) { toast("Lỗi: " + e, "bad"); }
@@ -2634,7 +2784,11 @@ function init() {
   $("#btn-shot").onclick = (e) => shot(e.currentTarget);
   $("#btn-ble").onclick = (e) => bleStatus(e.currentTarget);
   $("#screen").onclick = onScreenClick;
-  $("#pick-mode").onchange = (e) => { $("#screen").classList.toggle("pick", e.target.checked); if (!e.target.checked) PICK_TO = null; };
+  $("#screen").onpointerdown = onScreenDown;
+  $("#screen").onpointermove = onScreenMove;
+  $("#screen").onpointerup = onScreenUp;
+  $("#screen").onpointercancel = onScreenCancel;
+  $("#pick-mode").onchange = (e) => setPickMode(e.target.checked);
 
   // trình dựng kịch bản
   $("#btn-step-add").onclick = () => openPalette({ list: FLOW.steps, at: null }, null);
