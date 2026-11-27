@@ -9,3 +9,5 @@ esptool>=4.7,<5                    # nạp / xoá firmware ESP32
 rapidocr==3.10.0                   # bộ đọc chữ (thay Apple Vision) — 3.x nhớ thiết lập giữa các lần gọi, app đã xử lý theo đúng bản này
 onnxruntime>=1.19,<1.23            # rapidocr KHÔNG tự kéo theo gói này — thiếu là không đọc được chữ
 pytesseract==0.3.13                # tuỳ chọn: chỉ dùng khi có cài thêm chương trình tesseract
+anthropic>=0.125,<2                # AI xem màn hình lạ (aiscreen.py) — Claude
+openai>=1.50,<3                    # AI xem màn hình lạ — OpenAI / máy chủ tương thích OpenAI

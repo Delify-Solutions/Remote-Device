@@ -76,8 +76,73 @@ class Runner:
         TẠM DỪNG MÁY ngay tại bước đó, báo admin (Telegram, kèm ảnh màn hình trừ lúc đang làm đơn của khách), chờ admin xử lý tay rồi bấm
         «Tiếp tục» → làm tiếp bước (admin đã xác nhận). Bấm Dừng → bước không làm; «Dừng ngay» giữa đơn → Aborted như mọi lần dừng ngay."""
         def helper(step, why, img):
+            r = self._ai_fix(name, w, step, why, img)
+            if r is not None and r[0]:
+                return r
+            if r is not None:
+                if w["stop"].is_set():
+                    return False, "đã dừng theo yêu cầu — %s" % why
+                # Máy nhận đơn: lời của AI («màn hình có …») có thể nhắc chữ trên màn hình của khách → Telegram chỉ nhận câu cố định; lời đầy
+                # đủ của AI đã ở nhật ký trên máy.
+                ai = r[1] if w.get("mode") != "api" else "AI không xử lý được (chi tiết trong nhật ký của máy)"
+                why, img = "%s — %s" % (why, ai), (r[2] if len(r) > 2 and r[2] is not None else img)
             return self._admin_pause(name, w, step, why, img)
         return helper
+
+    def _ai_fix(self, name, w, step, why, img):
+        """Hỏi AI xử lý màn hình lạ (quảng cáo / hộp thông báo → bấm nút đóng / bỏ qua) — xem aiscreen.handle. Trả None khi không dùng AI
+        (chưa cấu hình / tắt / đã bấm Dừng), (True, "") khi màn hình đã KHỚP ảnh mẫu sau khi AI xử lý, (False, lý do, ảnh mới nhất) khi không
+        xử lý được (bên gọi tạm dừng máy chờ admin, kèm lý do của AI). «Dừng ngay» trong lúc AI xử lý → Aborted như mọi lần dừng ngay."""
+        import aiscreen, screencheck
+        stop, abort = w["stop"], w.get("abort")
+        if stop.is_set() or (abort is not None and abort.is_set()):
+            return None
+        try:
+            cfg = aiscreen.config(store.get_settings())
+        except Exception:
+            return None
+        if not aiscreen.usable(cfg):
+            return None
+        nav = w.get("nav")
+        if nav is None:
+            return None
+        if getattr(nav, "buying", False):
+            # Giai đoạn MUA: AI không được bấm gì — một cú bấm «đóng» nhầm lúc đang mua có thể là bấm mua / xác nhận thanh toán, và đơn phải
+            # luôn đối soát được (mọi cú bấm của tool trong lúc mua đều phải được tính là «đã chạm»). Màn hình lạ lúc mua → admin xử lý.
+            self._log(name, "Màn hình lạ trong giai đoạn mua — không hỏi AI, tạm dừng chờ admin", "warn")
+            return None
+        aborted = (lambda: abort.is_set()) if abort is not None else None
+
+        def cancel():
+            if abort is not None and abort.is_set():
+                return "abort"
+            return "stop" if stop.is_set() else None
+        latest = {"img": img}
+
+        def matches():
+            try:
+                shot = nav.e.screenshot()
+                latest["img"] = shot
+                sc = screencheck.score(step["screen"], shot, nav.e.text_lines(shot))
+                return sc["ok"], shot, screencheck.describe(sc)
+            except Exception as e:
+                return False, None, "không đọc được màn hình (%s)" % e
+
+        def tap(x, y, verify=None):
+            ok, twhy, _ = apimode._tap(nav, x, y, verify=verify)
+            return ok, twhy
+        w_status = w.get("status")
+        w["status"] = "Màn hình lạ ở bước «%s» — đang hỏi AI" % apimode.observed_what(step, {})
+        self._log(name, "Màn hình lạ ở bước «%s»: %s — hỏi AI (%s)" % (apimode.observed_what(step, {}), why, cfg["model"]), "warn")
+        try:
+            ok, ai_why = aiscreen.handle(nav, step, why, img, cfg, matches, tap, say=lambda t, k="": self._log(name, t, k),
+                                         sleep=lambda sec: apimode._sleep(sec, aborted), cancel=cancel)
+        finally:
+            w["status"] = w_status
+        if ok:
+            self._log(name, "AI đã xử lý màn hình lạ — làm tiếp bước «%s»" % apimode.observed_what(step, {}), "ok")
+            return True, ""
+        return False, ai_why, latest["img"]
 
     def _admin_pause(self, name, w, step, why, img=None):
         what = apimode.observed_what(step, {})

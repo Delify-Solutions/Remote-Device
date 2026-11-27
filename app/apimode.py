@@ -1599,13 +1599,28 @@ class JobFlow:
         for i, st in enumerate(plist):
             # Kiểm màn hình trước bước mua (bước có ảnh mẫu): khác ảnh mẫu → không làm bước này. Chưa chạm gì → «lỗi tool»;
             # đã chạm (risky) → đi tiếp xuống phần đọc kết quả như mọi lần mua dở (không chắc thì đối soát, không báo «chưa mua»).
-            seen, gwhy = screen_gate(self.nav, st, self.abort)
+            # `buying`: bộ xử lý màn hình lạ không cho AI bấm trong giai đoạn mua. Đếm lệnh xuống board TỪ TRƯỚC bước kiểm: lệnh nào đi ra
+            # trong lúc kiểm (cất con trỏ, hay bất cứ cú bấm nào) cũng làm đơn thành «không chắc», không bao giờ thành «chắc chắn chưa mua».
+            sent0 = getattr(self.nav, "_hid_sent", 0)
+            try:
+                self.nav.buying = True
+            except Exception:
+                pass
+            try:
+                seen, gwhy = screen_gate(self.nav, st, self.abort)
+            finally:
+                try:
+                    self.nav.buying = False
+                except Exception:
+                    pass
+            if getattr(self.nav, "_hid_sent", 0) != sent0:     # có lệnh bấm / gõ ra board trong lúc kiểm màn hình → coi như đã chạm
+                touched = True
+                self.risky = True
             if not seen:
                 if st.get("optional"):
                     continue
                 failed, fail_why = True, "%s — %s" % (said(st, pv), gwhy)
                 break
-            sent0 = getattr(self.nav, "_hid_sent", 0)
             try:
                 ok, why, acted = exec_step(self.nav, st, pv, self.abort)
             except Exception:

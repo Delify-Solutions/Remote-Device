@@ -217,6 +217,21 @@ def main():
                 ok(v == "failed_tool" and not sent and "khác ảnh mẫu" in why, label, (v, why, sent))
             else:
                 ok(v != "failed" and v != "ok" and jf.risky and sent == [{"type": "key", "name": "tab"}], label, (v, why, sent, jf.risky))
+        # có lệnh ra board TRONG LÚC kiểm màn hình trước bước mua (vd một cú bấm của bộ xử lý) → đơn thành «không chắc», không phải «lỗi tool»
+        sent.clear()
+        nav = Nav([(img, SHOP)]); nav.e = BuyEyes([(img, SHOP)])
+
+        def helper(st, why, im):
+            nav._hid_sent = getattr(nav, "_hid_sent", 0) + 1
+            return False, "đã dừng"
+        nav.screen_helper = helper
+        steps = {"login": [], "finish": [], "otp": [], "nav": [], "after": [], "purchase": [dict(step)]}
+        jf = apimode.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": []}, steps,
+                             opts={"purchase_wait": 0.3, "clear_wait": 0.1}, log=lambda *a, **k: None)
+        jf.PRE_LOOKS = 1
+        v, why = jf._buy_one({"code": "c", "name": "1050 Coins", "qty": 1}, {})
+        ok(v not in ("failed", "failed_tool", "ok") and jf.risky and getattr(nav, "buying", None) is False,
+           "có lệnh ra board trong lúc kiểm màn hình trước bước mua → tính «đã chạm» (không chắc), không bao giờ «chưa mua»", (v, jf.risky))
     finally:
         apimode.exec_step = real_exec
         apimode._sleep = real_sleep

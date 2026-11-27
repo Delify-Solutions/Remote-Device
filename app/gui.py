@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import cv2
 import webview
 
-import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth, presence, history, notify
+import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth, presence, history, notify, aiscreen
 from nav import Nav
 from hands import Hands
 from eyes import Eyes
@@ -177,7 +177,7 @@ WEB_SAFE_WITH_CUSTOMERS = frozenset((
     "get_flows", "groups_list", "group_save", "group_add_device", "group_remove_device",
     "group_run", "group_stop", "machine_run", "machine_pause", "machine_resume", "machine_stop", "machine_ack", "stop_all",
     "run_status", "run_log", "history_live", "history_machine", "history_orders", "history_order", "gateway_get", "gateway_test", "gateway_pools", "gateway_pool", "gateway_sync", "ai_info",
-    "telegram_get",                                                                    # chỉ đọc, không có mã bot
+    "telegram_get", "ai_screen_get",                                                   # chỉ đọc, không có mã bot / API key
 ))
 
 
@@ -1361,6 +1361,65 @@ class Api:
                 return {"ok": True, "screen": apimode.capture_screen(nav)}
             except Exception as e:
                 return {"ok": False, "error": str(e)}
+
+    # ---- AI xử lý màn hình lạ (quảng cáo / hộp thông báo) ----
+    def ai_screen_get(self):
+        c = aiscreen.config(store.get_settings())
+        k = c["key"]
+        return {"provider": c["provider"], "model": c["model"], "base_url": c["base_url"], "enabled": c["enabled"],
+                "has_key": bool(k), "key_hint": ("…" + k[-4:]) if len(k) >= 24 else ("đã lưu" if k else ""),
+                "usable": aiscreen.usable(c), "defaults": aiscreen.DEFAULT_MODEL}
+
+    def ai_screen_save(self, provider=None, model=None, key=None, base_url=None, enabled=None):
+        """Lưu cấu hình AI. `key` để trống = giữ key đang lưu (chỉ khi KHÔNG đổi nhà cung cấp / máy chủ — đổi nơi gửi thì phải nhập lại key).
+        Không bao giờ trả key về giao diện."""
+        if WEBDEV is not None:
+            # Ảnh màn hình (kể cả lúc làm đơn của khách) được gửi tới máy chủ AI này: bản web (có thể đang do AI điều khiển) không được đổi nơi gửi.
+            return {"ok": False, "error": "Cấu hình AI chỉ đổi được ở app dạng cửa sổ (chạy `python app/gui.py` không kèm --web)."}
+        old = aiscreen.config(store.get_settings())
+        prov = str(provider or old["provider"]).strip().lower()
+        if prov not in aiscreen.DEFAULT_MODEL:
+            return {"ok": False, "error": "Nhà cung cấp AI chỉ có: anthropic, openai"}
+        url = str(base_url if base_url is not None else old["base_url"]).strip().rstrip("/")
+        if url and not re.match(r"^https?://[^\s/]+", url):
+            return {"ok": False, "error": "Địa chỉ máy chủ AI phải bắt đầu bằng http:// hoặc https://"}
+        mdl = str(model if model is not None else old["model"]).strip()
+        if mdl and not re.match(r"^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,99}$", mdl):
+            return {"ok": False, "error": "Tên model không hợp lệ"}
+        patch = {"ai_provider": prov, "ai_model": mdl, "ai_base_url": url}
+        new_key = str(key or "").strip()
+        if new_key:
+            patch["ai_key"] = new_key
+        elif old["key"] and (prov != old["provider"] or _origin(url) != _origin(old["base_url"])):
+            return {"ok": False, "error": "Đổi nhà cung cấp / máy chủ AI thì phải NHẬP LẠI API key (key cũ không tự gửi sang nơi mới)."}
+        if enabled is not None:
+            patch["ai_screen"] = bool(enabled)
+        store.save_settings(patch)
+        return dict(self.ai_screen_get(), ok=True)
+
+    def ai_screen_test(self):
+        """Hỏi AI một lần với một ảnh thử (vẽ sẵn một hộp «Special offer» có nút X) — để biết key / model / máy chủ dùng được.
+        Mỗi lần hỏi đều tốn tiền → chỉ app dạng cửa sổ (bản web có thể đang do AI điều khiển)."""
+        if WEBDEV is not None:
+            return {"ok": False, "error": "Thử AI chỉ làm được ở app dạng cửa sổ (mỗi lần hỏi đều tốn tiền)."}
+        c = aiscreen.config(store.get_settings())
+        if not aiscreen.usable(c):
+            return {"ok": False, "error": "chưa có API key (hoặc đang tắt)"}
+        import numpy as np
+        img = np.full((750, 1334, 3), (60, 40, 30), np.uint8)
+        cv2.rectangle(img, (367, 150), (967, 600), (240, 240, 240), -1)
+        cv2.putText(img, "Special offer!", (450, 300), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (20, 20, 160), 3)
+        cv2.putText(img, "Buy now", (560, 520), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (20, 120, 20), 3)
+        cv2.putText(img, "X", (925, 195), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 3)
+        t0 = time.time()
+        try:
+            d = aiscreen.ask(c, img, None, "Tap chữ «Shop»", "màn hình khác ảnh mẫu (thử kết nối)")
+        except aiscreen.AIError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+        return {"ok": True, "kind": d["kind"], "reason": d["reason"], "close": d["close_label"], "x": d["x"], "y": d["y"],
+                "secs": round(time.time() - t0, 1), "model": c["model"]}
 
     # ---- thông báo Telegram cho admin ----
     def telegram_get(self):

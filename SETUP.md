@@ -742,7 +742,7 @@ Yêu cầu của chủ dự án:
 - AI chọn được nhà cung cấp (OpenAI / Anthropic) và tên model trong cài đặt của tool.
 - Lúc làm đơn của khách vẫn gửi ảnh lên AI (chủ dự án quyết định).
 
-Làm theo 3 phần. Phần 1 (Telegram) và phần 2 (ảnh mẫu + tạm dừng tại bước) đã xong; phần 3 (AI) ghi tiếp bên dưới khi xong.
+Làm theo 3 phần, cả 3 đã xong: Telegram, ảnh mẫu + tạm dừng tại bước, AI xử lý màn hình lạ.
 
 ### Thông báo Telegram (`app/notify.py`)
 - Cài đặt: trang «Nhóm & Kịch bản» → nút **Telegram**. Nhập mã bot (tạo ở @BotFather) và chat id (người, nhóm `-100…` hay `@kênh`).
@@ -808,7 +808,7 @@ Làm theo 3 phần. Phần 1 (Telegram) và phần 2 (ảnh mẫu + tạm dừng
   - «Dừng ngay» giữa đơn → như mọi lần dừng ngay (máy giữ để đối soát).
   - Giai đoạn MUA: màn hình khác ở bước đầu (chưa bấm gì) → «không nạp được» (lỗi tool); đã chạm một bước rồi mới gặp → không làm bước
     đó, đọc kết quả như mọi lần mua dở — không chắc thì đối soát, không bao giờ báo «chưa mua».
-  - Phần 3 sẽ chen thêm bước «hỏi AI» trước khi tạm dừng.
+  - Có cấu hình AI thì trước khi tạm dừng, tool hỏi AI (xem mục dưới); AI xử lý được thì không tạm dừng.
 - Bước «bỏ qua nếu lỗi» mà màn hình khác: bỏ qua bước đó (không làm, không tạm dừng máy), chạy tiếp.
 - Chạy thử trong trình sửa, chạy flow cũ, AI / dòng lệnh điều khiển máy (`farm run`, MCP): không kiểm màn hình (không có ai bấm Tiếp tục).
 - So theo chữ: một dòng trên màn hình nằm trong dòng mẫu (bộ đọc chữ tách dòng) chỉ được tính khi là chữ thật và dài ≥ 60% dòng mẫu — con
@@ -818,3 +818,53 @@ Làm theo 3 phần. Phần 1 (Telegram) và phần 2 (ảnh mẫu + tạm dừng
 - Chạy thật trên máy 01 (2026-11-27), kịch bản tạm 10 bước vào Shop có ảnh mẫu: ảnh mẫu đúng → chạy hết, không dừng sai; cố tình gắn ảnh
   mẫu của màn Shop vào bước «bấm Shop» → máy tạm dừng đúng bước đó, bấm Tiếp tục → làm tiếp và chạy hết (dữ liệu nhóm khôi phục nguyên bản sau khi thử).
 - Kiểm thử: `./.venv/bin/python app/tests/test_screencheck.py`.
+
+### AI xử lý màn hình lạ (`app/aiscreen.py`)
+- Cài đặt: trang «Nhóm & Kịch bản» → nút **AI màn hình lạ**. Gồm:
+  - bật / tắt;
+  - nhà cung cấp: Anthropic (Claude), hoặc OpenAI / máy chủ tương thích OpenAI;
+  - model (để trống = mặc định `claude-opus-5-5` / `gpt-5`);
+  - API key;
+  - địa chỉ máy chủ riêng (tuỳ chọn).
+
+  Lưu xong tool hỏi thử AI một ảnh quảng cáo vẽ sẵn và báo kết quả. Lưu trong `app/data/settings.json` (không vào git). Giao diện không
+  bao giờ nhận lại key (chỉ 4 ký tự cuối khi key dài ≥ 24 ký tự). Bản web không đổi được cấu hình này, không «thử» được, và đổi nhà cung cấp /
+  máy chủ thì phải nhập lại key.
+- Cần gói `anthropic` (Claude) hoặc `openai`. Windows: đã có trong `requirements-windows.txt`. Mac: `./.venv/bin/pip install "anthropic>=0.125,<2" "openai>=1.50,<3"` (đã thử 0.125.0 — bản này có tham số `fallbacks` mà tool dùng; bản quá cũ thiếu tham số này thì AI luôn lỗi và máy tạm dừng chờ admin).
+  Thiếu gói thì AI báo lỗi rõ và máy tạm dừng chờ admin như khi không có AI.
+- **Cách chạy:** màn hình khác ảnh mẫu của bước (sau 8 giây chờ) → gửi AI ảnh màn hình hiện tại (cạnh dài 1280 px) + ảnh mẫu + mô tả bước +
+  lý do khác. AI trả JSON: loại (quảng cáo / hộp thông báo / đang tải / giống ảnh mẫu / khác), nút đóng (chữ trên nút + toạ độ), độ chắc,
+  lời giải thích.
+  - Quảng cáo / hộp thông báo, chắc ≥ 60%: toạ độ AI đưa (đổi về toạ độ ảnh gốc) là MỐC. Chữ của nút (bộ đọc chữ) chỉ được dùng để
+    chỉnh cho trúng khi là nguyên một dòng chữ đúng bằng nhãn AI nói và nằm sát mốc (≤ 6% cạnh dài). Không bao giờ nhảy sang một chữ
+    giống ở chỗ khác: nhãn «X» không được khớp chữ «x» trong «Extras». Không có toạ độ thì chỉ bấm khi nhãn là đúng MỘT dòng chữ trên
+    màn hình. Toạ độ thiếu một nửa hay ngoài màn hình thì bỏ.
+  - **Chặn ở code** (không chỉ dặn AI): nhãn AI chọn, hay dòng chữ ngay tại chỗ bấm, có từ kiểu mua / thanh toán / xác nhận / đăng nhập /
+    cài / get / mở cửa hàng / tải về / nhận… thì KHÔNG bấm, giao admin.
+  - Bấm bằng phép đưa con trỏ có đo như mọi cú bấm, có kiểm: vùng quanh nút đã đổi trong lúc đưa con trỏ tới thì không bấm. Nghỉ 2 giây
+    rồi so lại với ảnh mẫu.
+  - **Giai đoạn MUA: không hỏi AI, không bấm gì** — màn hình lạ lúc đang mua → tạm dừng chờ admin. Mọi lệnh ra board trong lúc kiểm màn
+    hình trước bước mua đều được tính là «đã chạm» (đơn thành «không chắc», không bao giờ thành «chắc chắn chưa mua»).
+  - Đang tải: chờ 4 giây rồi so lại.
+  - Khớp ảnh mẫu → làm tiếp bước, không tạm dừng, không báo admin. Tối đa 3 lần hỏi / bấm cho một màn hình lạ.
+  - AI nói «khác», «giống ảnh mẫu», chưa chắc, không chỉ được nút, bấm không được, hay lỗi AI (key sai, mất mạng) → **tạm dừng máy chờ
+    admin** như phần 2; tin Telegram kèm lời của AI (trừ máy nhận đơn — xem «Dữ liệu gửi đi»).
+  - AI KHÔNG BAO GIỜ được «cho qua»: chỉ màn hình khớp ảnh mẫu (theo phép so của tool) mới được làm tiếp bước. AI được dặn chỉ chọn nút
+    đóng / bỏ qua, không bao giờ chọn nút mua, thanh toán, đăng nhập, nhận ưu đãi hay mở cửa hàng / liên kết.
+  - «Dừng ngay» trong lúc AI đang trả lời → dừng ngay (không chờ AI trả lời xong, không bấm). Bấm Dừng lúc đó → không bấm thêm gì, bước không
+    làm. Đã bấm Dừng từ trước → không hỏi AI. Mỗi lần gọi AI tối đa 45 giây, SDK thử lại tối đa 1 lần. Yêu cầu đang gửi dở lúc bị dừng vẫn
+    chạy nốt ở nền (vẫn tính tiền) nhưng câu trả lời bị bỏ.
+  - AI nói nút có CHỮ mà chữ đó chỉ thấy ở chỗ khác, hay bộ đọc chữ lỗi (không kiểm được chữ ngay tại chỗ bấm) → không bấm, giao admin.
+- Claude: dùng JSON theo khuôn (structured outputs). Với các model Claude 5.x có hỗ trợ, tool gửi kèm `fallbacks: "default"` (beta
+  `server-side-fallback-2026-07-01`): bộ lọc an toàn từ chối nhầm thì máy chủ tự chạy lại trên model dự phòng. Model / máy chủ không hỗ trợ
+  JSON theo khuôn → tự hỏi lại kiểu thường (vẫn đọc JSON trong câu trả lời). OpenAI: `response_format=json_object`; máy chủ tương thích không hỗ
+  trợ → hỏi lại kiểu thường.
+- **Dữ liệu gửi đi:** ảnh màn hình được gửi cho nhà cung cấp AI ở MỌI lần chạy thật, kể cả lúc làm đơn của khách (chủ dự án quyết định
+  2026-11-27). Telegram thì vẫn không kèm ảnh khi máy đang nhận đơn, và cũng không chép lời của AI (lời đó có thể nhắc chữ trên màn hình
+  của khách) — chỉ câu cố định «AI không xử lý được (chi tiết trong nhật ký của máy)»; lời đầy đủ nằm ở nhật ký trên máy.
+- **Chi phí:** chỉ hỏi khi gặp màn hình lạ, mỗi lần một ảnh ~1280 px + ảnh mẫu 640 px + lời hỏi (~2 nghìn token vào). Ước tính với
+  Claude Opus 5.5 khoảng 0,01–0,03 USD / lần hỏi (chưa đo thật). Nút «thử» trong cài đặt cũng tốn một lần hỏi, chỉ có ở app dạng cửa sổ.
+- **Chưa thử với AI thật:** chưa có API key, và việc tốn tiền phải hỏi trước. Đã kiểm: yêu cầu THẬT mà SDK Anthropic / OpenAI gửi đi (chặn ở
+  tầng HTTP trên máy: đủ 2 ảnh JPEG, JSON theo khuôn, fallbacks, địa chỉ máy chủ riêng, hỏi lại khi máy chủ không hỗ trợ). Còn lại là
+  cách xử lý với AI giả, và chạy thật trên máy 01 khi chưa có key (tạm dừng như phần 2). Có key thì nên thử với một màn quảng cáo thật trước.
+- Kiểm thử: `./.venv/bin/python app/tests/test_aiscreen.py`.

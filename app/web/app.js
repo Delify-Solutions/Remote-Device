@@ -2511,6 +2511,47 @@ async function telegramSettings() {
   loadTelegram();
 }
 
+// AI xem MÀN HÌNH LẠ: màn hình khác ảnh mẫu của bước → hỏi AI có phải quảng cáo / hộp thông báo không, bấm nút đóng / bỏ qua; không được
+// thì máy tạm dừng chờ admin. API key không bao giờ được gửi ngược về giao diện.
+async function aiScreenSettings() {
+  let c = {};
+  try { c = await API().ai_screen_get(); } catch (e) {}
+  const d = c.defaults || { anthropic: "claude-opus-5-5", openai: "gpt-5" };
+  const r = await askForm("AI xử lý màn hình lạ",
+    "Khi màn hình khác ảnh mẫu của bước, tool gửi ảnh màn hình (kể cả lúc làm đơn của khách) cho AI hỏi có phải quảng cáo / hộp thông báo không và nút nào đóng được; tool bấm nút đó rồi so lại. Không xử lý được thì máy tạm dừng + báo Telegram. Tốn tiền theo lần hỏi (chỉ hỏi khi gặp màn hình lạ).", [
+    { key: "enabled", type: "select", label: "Dùng AI", value: c.enabled === false ? "0" : "1",
+      options: [{ value: "1", label: "Có — hỏi AI trước khi tạm dừng máy" }, { value: "0", label: "Không — màn hình lạ là tạm dừng chờ admin luôn" }] },
+    { key: "provider", type: "select", label: "Nhà cung cấp", value: c.provider || "anthropic",
+      options: [{ value: "anthropic", label: "Anthropic (Claude)" }, { value: "openai", label: "OpenAI — hoặc máy chủ tương thích OpenAI" }] },
+    { key: "model", label: `Model (để trống = mặc định: ${d.anthropic} / ${d.openai})`, value: c.model || "", placeholder: d.anthropic },
+    { key: "key", label: "API key", type: "password", value: "", placeholder: c.has_key ? `để trống = giữ key đang lưu (${c.key_hint})` : "sk-…" },
+    { key: "base_url", label: "Địa chỉ máy chủ riêng (tuỳ chọn — để trống = máy chủ chính thức). Anthropic: không ghi /v1; OpenAI / tương thích: thường kết thúc bằng /v1", value: c.base_url || "", placeholder: "để trống" },
+  ]);
+  if (!r) return;
+  try {
+    // ô model đang là model MẶC ĐỊNH (của nhà cung cấp cũ hay mới) → lưu trống = luôn theo mặc định (không ghim cứng một model)
+    const model = [d[c.provider], d[r.provider]].includes(r.model.trim()) ? "" : r.model.trim();
+    const res = await API().ai_screen_save(r.provider, model, r.key, r.base_url, r.enabled === "1");
+    if (!res || !res.ok) { toast("Chưa lưu: " + ((res && res.error) || "?"), "bad"); return; }
+    if (!res.usable) { toast(res.enabled ? "Đã lưu — còn thiếu API key nên chưa dùng AI" : "Đã lưu — đang TẮT AI", "warn"); loadAiScreen(); return; }
+    toast("Đã lưu — đang thử hỏi AI một ảnh mẫu…", "");
+    const t = await API().ai_screen_test();
+    if (t && t.ok) toast(`AI trả lời sau ${t.secs}s (${t.model}): ${t.kind === "ad" ? "quảng cáo" : t.kind}${t.close ? ` — nút «${t.close}»` : ""}`, "ok");
+    else toast("Đã lưu nhưng hỏi AI KHÔNG được: " + ((t && t.error) || "?"), "bad");
+  } catch (e) { toast("Lỗi: " + e, "bad"); }
+  loadAiScreen();
+}
+
+async function loadAiScreen() {
+  const dot = $("#ai-dot");
+  if (!dot) return;
+  try {
+    const c = await API().ai_screen_get();
+    dot.className = "gw-dot " + (c.usable ? "ok" : "");
+    dot.title = c.usable ? `Đang bật · ${c.provider} · ${c.model}` : (c.enabled === false ? "Đang tắt" : "Chưa có API key");
+  } catch (e) {}
+}
+
 async function loadTelegram() {
   const dot = $("#tg-dot");
   if (!dot) return;
@@ -3070,6 +3111,8 @@ function init() {
   };
   $("#btn-gw-settings").onclick = gatewaySettings;
   $("#btn-tg-settings").onclick = telegramSettings;
+  $("#btn-ai-screen").onclick = aiScreenSettings;
+  loadAiScreen();
   loadTelegram();
   setInterval(loadTelegram, 30000);                  // chấm trạng thái: lần gửi gần nhất lỗi thì đỏ
   $("#btn-gw-import").onclick = (e) => importGwSteps(e.currentTarget);
