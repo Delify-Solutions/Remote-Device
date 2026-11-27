@@ -403,8 +403,17 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
     lần vài giây — với danh sách eFootball (15 ô) tìm thấy trong khoảng 1 phút.
   - **Thử khô** việc tìm gói: dùng «Kiểm có chữ» với cùng chữ đi kèm + hướng lướt — chỉ lướt, KHÔNG bấm vào ô gói. Đã thử trên máy thật với
     dữ liệu gói của gateway: 15,000 — CHF 93.00, Starter 100 — CHF 1.80, sale 500 — CHF 2.30, thường 1,000 — CHF 7.50 đều tìm đúng ô.
-  - **Chưa thử: bấm vào ô gói trở đi** (bấm ô gói là bắt đầu mua thật — hỏi mật khẩu Apple / nút Buy / «Purchase Successful»), nên giai đoạn
-    «Mua một gói» mới có bước tìm + bấm ô; các bước sau đó, luật «nạp thành công» / «thất bại» của pool chưa soạn.
+  - **Chạy thử cả luồng (2026-11-27, máy 01, tài khoản test 1, gói 100 — CHF 0.80):** đăng nhập 17/17 (không hỏi mã — máy đã đăng nhập tài
+    khoản này trong 180 ngày), vào Shop 8/8, bấm đúng ô 100 / CHF 0.80 → **bảng mua của App Store chỉ có «Thanh toán bằng Touch ID»** (không có
+    nút Mua, không có ô mật khẩu). Board chuột / bàn phím KHÔNG đặt vân tay được → **tool chưa xác nhận mua được**. Đã đóng bảng (X): không
+    trừ tiền, game không báo gì, chỉ quay về danh sách gói (đơn chạy thật sẽ hết `purchase_wait` → «không chắc» → máy dừng chờ đối soát).
+    Chữ trên bảng: «App Store», «100Coins(PaidCoins97 + Free3)», «In-App-Kauf», «CHF 0.80», «Einmalige Gebühr», «Account: <Apple ID của
+    máy>», «Thanh toán bằng Touch ID». Việc cần quyết: cách xác nhận mua không cần vân tay (vd tắt Touch ID cho iTunes & App Store trong
+    Cài đặt → Touch ID & Mật mã, để bảng mua hỏi mật khẩu Apple ID — tool gõ được, nhưng phải lưu mật khẩu Apple ID của từng máy).
+    Các bước sau bấm ô và luật «nạp thành công» / «thất bại» của pool vì thế vẫn chưa soạn.
+  - **Máy 01 bị coi là đang cầm DỌC:** bảng mua của App Store (và trang đăng nhập web) hiện DỌC trong khi game NGANG; đóng bảng mua xong
+    game chuyển sang bố cục dọc (khung 750×1334, nội dung thu nhỏ). Máy 002 không bị. Nên kiểm «Khoá hướng dọc» trong Trung tâm điều khiển
+    của máy 01 và tư thế đặt máy. Ảnh vẫn được quay thẳng đúng (xem «Ảnh chụp bị xoay»).
 - **«Gõ chữ» từng ký tự** (`"gap": giây`, 0 = gõ liền một mạch như trước). Đo trên trang đăng nhập KONAMI (iPhone 8):
   - ô mã «mỗi số một ô» tự nhảy sang ô kế bằng mã của trang — gõ liền 6 số chỉ vào được 2 số; gõ từng số cách nhau 0,4–0,6 giây thì đủ cả 6;
   - gõ liền một mạch email 24 ký tự vào ô KONAMI ID có lần **rơi mất 6 ký tự ở giữa** (trang báo «The email address you entered is invalid»);
