@@ -127,10 +127,25 @@ def _run_step(nav, step, log=print):
         return False, f"lỗi {t}: {e}"
 
 
-def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None, pause_gate=None):
+def capture_ref(nav, step):
+    """Ảnh mẫu cho `step` lúc chạy thử: chỉ bước thao tác CHƯA có ảnh mẫu (bước đã có thì giữ nguyên — muốn thay thì bấm «Chụp lại»).
+    Chụp hỏng → None (không làm hỏng lượt chạy thử)."""
+    import screencheck
+    if not isinstance(step, dict) or step.get("type") not in screencheck.CHECK_TYPES or screencheck.valid(step.get("screen")):
+        return None
+    try:
+        return apimode.capture_screen(nav)
+    except Exception:
+        return None
+
+
+def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None, pause_gate=None, capture=False, check=True):
     """Chạy cả flow. Trả list kết quả [{i, type, ok, msg}].
     stop_check: hàm trả True để DỪNG giữa chừng (dùng khi dừng 1 máy).
-    pause_gate: hàm được gọi TRƯỚC mỗi bước; đang «tạm dừng» thì nó chặn ở đó (người xử lý tay) cho tới khi tiếp tục hoặc bị dừng."""
+    pause_gate: hàm được gọi TRƯỚC mỗi bước; đang «tạm dừng» thì nó chặn ở đó (người xử lý tay) cho tới khi tiếp tục hoặc bị dừng.
+    capture: CHẠY THỬ trong trình sửa — không kiểm màn hình; bước thao tác CHƯA có ảnh mẫu thì chụp màn hình ngay trước bước, bước làm được
+    thì kết quả mang theo ảnh mẫu (`screen`) để giao diện gắn vào bước.
+    check=False: không kiểm màn hình (chạy flow cũ trong trình dựng — không có ai bấm «Tiếp tục»)."""
     results = []
     apimode.watch_phase(nav, None, len(steps))
     for i, step in enumerate(steps):
@@ -139,9 +154,26 @@ def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None, pause_ga
         if stop_check and stop_check():
             log("  ⟂ đã dừng theo yêu cầu")
             break
+        ref = None
+        if capture or not check:                        # chạy thử / chạy flow cũ trong trình dựng: không kiểm màn hình
+            ref = capture_ref(nav, step) if capture else None
+            seen = True
+        else:
+            try:
+                seen, why = apimode.screen_gate(nav, step, stop_check)
+            except apimode.Aborted:
+                log("  ⟂ đã dừng theo yêu cầu")
+                break
+        if not seen:                                    # màn hình không phải màn hình của bước này → KHÔNG làm bước
+            log(f"[{i+1}/{len(steps)}] {step.get('type')}: {why}")
+            results.append({"i": i, "type": step.get("type"), "ok": False, "msg": why})
+            if step.get("optional"):
+                continue
+            log(f"  ⟂ dừng vì bước {i+1}: màn hình khác ảnh mẫu")
+            break
         ok, msg = run_step(nav, step, log)
         log(f"[{i+1}/{len(steps)}] {step.get('type')}: {msg}")
-        results.append({"i": i, "type": step.get("type"), "ok": ok, "msg": msg})
+        results.append(dict({"i": i, "type": step.get("type"), "ok": ok, "msg": msg}, **({"screen": ref} if ok and ref else {})))
         if not ok and stop_on_fail and not step.get("optional"):     # bước «bỏ qua nếu lỗi» thì đi tiếp
             log(f"  ⟂ dừng vì bước {i+1} thất bại")
             break

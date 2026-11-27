@@ -1093,6 +1093,59 @@ def check_typable(steps: list, vars: dict):
             typable(str(st.get("text") or ""), vars)
 
 
+SCREEN_WAIT = 8.0        # màn hình khác ảnh mẫu của bước: chờ tối đa chừng này giây (game đang chuyển màn / hiệu ứng) rồi mới coi là «lạ»
+
+
+def capture_screen(nav):
+    """ẢNH MẪU của màn hình đang hiện (cho bước sắp làm): đưa con trỏ ra góc (không che chữ), chụp + đọc chữ HAI lần cách nhau một nhịp,
+    chỉ giữ chữ thấy ở cả hai lần (xem screencheck.capture)."""
+    import screencheck
+    park(nav)
+    time.sleep(0.3)
+    img = nav.e.screenshot()
+    lines = nav.e.text_lines(img)
+    time.sleep(0.5)
+    return screencheck.capture(img, lines, nav.e.text_lines(nav.e.screenshot()))
+
+
+def screen_gate(nav, step: dict, abort=None):
+    """KIỂM MÀN HÌNH trước khi làm bước (chỉ bước thao tác có ảnh mẫu — xem screencheck.wants_check). Trả (ok, lý do).
+    • Khớp ảnh mẫu (ngay, hoặc trong SCREEN_WAIT giây) → (True, "").
+    • Vẫn khác: bước «bỏ qua nếu lỗi» → (False, lý do) để bên gọi bỏ qua bước (không tạm dừng máy vì một bước được phép bỏ qua).
+      Máy có `nav.screen_helper` (bộ chạy gắn vào khi chạy thật: hỏi AI xử lý quảng cáo, không được thì TẠM DỪNG MÁY chờ admin bấm
+      Tiếp tục) thì giao cho nó — nó trả (ok, lý do). Không có (chạy thử, AI / dòng lệnh điều khiển) → (False, lý do): không làm bước.
+    • Chụp / đọc chữ lỗi giữa chừng: tính là một lần nhìn hỏng, nhìn lại tới hết thời gian chờ (không làm hỏng cả lượt chạy).
+    Bị dừng ngay (`abort`) giữa lúc chờ → ném Aborted như mọi bước khác."""
+    import screencheck
+    if not screencheck.wants_check(step):
+        return True, ""
+    ref = step["screen"]
+    end = time.time() + SCREEN_WAIT
+    img, sc, err, parked = None, None, None, False
+    while True:
+        try:
+            shot = nav.e.screenshot()
+            cur = screencheck.score(ref, shot, nav.e.text_lines(shot))
+            img, sc, err = shot, cur, None
+            if cur["ok"]:
+                return True, ""
+        except Aborted:
+            raise
+        except Exception as e:
+            err = e
+        if time.time() >= end:
+            break
+        if not parked:                              # con trỏ nằm đè lên chữ làm tụt điểm: cất ra góc rồi nhìn lại
+            park(nav)
+            parked = True
+        _sleep(1.0, abort)
+    why = screencheck.describe(sc) if sc is not None else "không đọc được màn hình để so với ảnh mẫu (%s)" % (err or "?")
+    helper = getattr(nav, "screen_helper", None)
+    if helper is None or step.get("optional"):
+        return False, why
+    return helper(step, why, img)
+
+
 def run_steps(nav, steps: list, vars: dict, abort=None, on_step=None):
     """Chạy tuần tự, dừng ở bước lỗi đầu tiên.
     Trả (ok, lý do, chỉ_số_bước_lỗi|None, touched) — touched: đã có thao tác nào (có thể) tới máy chưa."""
@@ -1100,6 +1153,11 @@ def run_steps(nav, steps: list, vars: dict, abort=None, on_step=None):
     for i, st in enumerate(steps):
         if on_step:
             on_step(i, st)
+        seen, why = screen_gate(nav, st, abort)
+        if not seen:                                    # màn hình không phải màn hình của bước này → KHÔNG làm bước (bấm nhầm còn tệ hơn)
+            if st.get("optional"):
+                continue
+            return False, "%s — %s" % (said(st, vars), why), i, touched
         ok, why, acted = exec_step(nav, st, vars, abort)
         touched = touched or acted or (ok and st.get("type") in INPUT_TYPES)
         if not ok and not st.get("optional"):
@@ -1539,6 +1597,14 @@ class JobFlow:
         failed = False
         touched = False
         for i, st in enumerate(plist):
+            # Kiểm màn hình trước bước mua (bước có ảnh mẫu): khác ảnh mẫu → không làm bước này. Chưa chạm gì → «lỗi tool»;
+            # đã chạm (risky) → đi tiếp xuống phần đọc kết quả như mọi lần mua dở (không chắc thì đối soát, không báo «chưa mua»).
+            seen, gwhy = screen_gate(self.nav, st, self.abort)
+            if not seen:
+                if st.get("optional"):
+                    continue
+                failed, fail_why = True, "%s — %s" % (said(st, pv), gwhy)
+                break
             sent0 = getattr(self.nav, "_hid_sent", 0)
             try:
                 ok, why, acted = exec_step(self.nav, st, pv, self.abort)

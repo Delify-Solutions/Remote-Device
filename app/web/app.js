@@ -70,7 +70,7 @@ function askForm(title, msg, fields) {
     fields.forEach((f, i) => {
       const wrap = document.createElement("div");
       if (f.type === "image") {                           // chỉ để XEM (ảnh mẫu của bước); `src` đã qua imageSrc()
-        wrap.innerHTML = f.src ? `<img class="modal-thumb" src="${f.src}" alt="Hình cần bấm">` : `<div class="text-danger small">Ảnh của bước này không đọc được.</div>`;
+        wrap.innerHTML = f.src ? `<img class="modal-thumb" src="${f.src}" alt="${esc(f.alt || "Hình cần bấm")}">` : `<div class="text-danger small">Ảnh của bước này không đọc được.</div>`;
         box.appendChild(wrap);
         return;
       }
@@ -1554,6 +1554,50 @@ function sectionHead(l) {              // đầu mỗi giai đoạn của đơn:
   return { li, slot };
 }
 
+// Bước THAO TÁC được kiểm màn hình trước khi làm (khớp screencheck.CHECK_TYPES ở backend)
+const SCREEN_TYPES = ["tap", "tap_text", "tap_image", "hold", "hold_text", "type", "key", "combo", "swipe"];
+const screenOn = (s) => !!(s.screen && s.screen_check !== false);
+
+// Lượt chạy thử trả về ẢNH MẪU (màn hình ngay trước bước) cho các bước thao tác: bước nào chưa có ảnh mẫu thì gắn vào
+// (chỉ bước RIÊNG của kịch bản — không đụng bước của gateway). Có bước mới được gắn → kịch bản có thay đổi chưa lưu.
+function adoptScreens(steps, results) {
+  let n = 0;
+  (results || []).forEach(x => {
+    const st = steps && steps[x.i];
+    if (st && x.ok && x.screen && !st.screen && SCREEN_TYPES.includes(st.type)) { st.screen = x.screen; n++; }
+  });
+  if (n) { log(`   📷 đã lưu ảnh mẫu cho ${n} bước — bấm «Lưu» để giữ`, "ok"); updateDirty(); }
+  return n;
+}
+
+// Ảnh mẫu của một bước: xem, chụp lại từ máy đang chọn, xoá, bật / tắt «kiểm màn hình trước khi làm».
+async function screenPrompt(s) {
+  const has = !!s.screen;
+  const r = await askForm("Ảnh mẫu của bước",
+    has ? `Trước khi làm bước này, tool so màn hình với ảnh mẫu (theo chữ trên màn hình; ít chữ thì theo hình). Khác thì chờ ${8} giây, vẫn khác thì xử lý màn hình lạ (AI) hoặc tạm dừng máy chờ admin.`
+        : "Bước này chưa có ảnh mẫu nên chưa được kiểm màn hình. Ảnh mẫu tự có khi «Chạy thử» bước thành công, hoặc chụp ngay màn hình của máy đang chọn.", [
+    ...(has ? [{ type: "image", alt: "Ảnh mẫu của bước", src: /^[A-Za-z0-9+/=]+$/.test(String(s.screen.img || "")) ? "data:image/jpeg;base64," + s.screen.img : "" }] : []),
+    { key: "act", type: "select", label: "Ảnh mẫu", value: "keep", options: [
+      { value: "keep", label: has ? "Giữ ảnh mẫu này" : "Chưa có — để vậy" },
+      { value: "shot", label: "Chụp lại từ màn hình máy đang chọn" + (SEL ? ` (${SEL})` : " — chưa chọn máy") },
+      ...(has ? [{ value: "del", label: "Xoá ảnh mẫu (bước này không kiểm màn hình nữa)" }] : [])] },
+    ...(has ? [{ key: "check", type: "select", label: "Kiểm màn hình trước khi làm bước", value: s.screen_check === false ? "0" : "1",
+                 options: [{ value: "1", label: "Có" }, { value: "0", label: "Không (giữ ảnh mẫu nhưng không kiểm)" }] }] : []),
+  ]);
+  if (!r) return;
+  if (r.act === "shot") {
+    if (!SEL) { toast("Chọn máy ở khung màn hình trước", "warn"); return; }
+    try {
+      const res = await API().screen_capture(SEL);
+      if (!res || !res.ok) { toast("Không chụp được: " + ((res && res.error) || "?"), "bad"); return; }
+      s.screen = res.screen;
+      toast(`Đã chụp ảnh mẫu (${res.screen.texts.length} dòng chữ)`, "ok");
+    } catch (e) { toast("Lỗi: " + e, "bad"); return; }
+  } else if (r.act === "del") { delete s.screen; delete s.screen_check; }
+  if (s.screen && r.check === "0") s.screen_check = false; else delete s.screen_check;
+  renderSteps(); updateDirty();
+}
+
 function stepItem(l, s, i, no) {
   const list = l.steps;
   const [kind, icon] = stepKind(s.type);
@@ -1569,6 +1613,7 @@ function stepItem(l, s, i, no) {
     </div>
     <div class="flow-ops">
       <button data-op="test" title="Chạy thử bước này" aria-label="Chạy thử bước ${no}"><i class="ti tabler-player-play"></i></button>
+      ${SCREEN_TYPES.includes(s.type) ? `<button data-op="screen" class="${screenOn(s) ? "on" : ""}" title="${s.screen ? (screenOn(s) ? "Có ảnh mẫu — kiểm màn hình trước khi làm" : "Có ảnh mẫu nhưng đang TẮT kiểm màn hình") : "Chưa có ảnh mẫu (chạy thử bước thành công để tự có)"}" aria-label="Bước ${no}: ảnh mẫu"><i class="ti ${s.screen ? "tabler-photo-check" : "tabler-photo"}"></i></button>` : ""}
       <button data-op="opt" class="${s.optional ? "on" : ""}" aria-pressed="${s.optional ? "true" : "false"}" title="Bỏ qua nếu lỗi: bước này trượt (vd không thấy chữ) thì vẫn chạy tiếp bước sau" aria-label="Bước ${no}: bỏ qua nếu lỗi"><i class="ti tabler-arrow-forward-up"></i></button>
       <button data-op="up" title="Đưa lên" aria-label="Đưa bước ${no} lên" ${i === 0 ? "disabled" : ""}><i class="ti tabler-chevron-up"></i></button>
       <button data-op="down" title="Đưa xuống" aria-label="Đưa bước ${no} xuống" ${i === list.length - 1 ? "disabled" : ""}><i class="ti tabler-chevron-down"></i></button>
@@ -1576,6 +1621,8 @@ function stepItem(l, s, i, no) {
     </div>
     <button class="flow-ins" data-op="ins" title="Chèn một bước vào sau bước ${no}" aria-label="Chèn một bước vào sau bước ${no}">+</button>`;
   $('[data-op=opt]', li).onclick = () => { if (s.optional) delete s.optional; else s.optional = true; renderSteps(); };
+  const scr = $('[data-op=screen]', li);
+  if (scr) scr.onclick = () => screenPrompt(s);
   $('[data-op=up]', li).onclick = () => { const k = list.indexOf(s); if (k > 0) { [list[k - 1], list[k]] = [list[k], list[k - 1]]; renderSteps(); } };
   $('[data-op=down]', li).onclick = () => { const k = list.indexOf(s); if (k >= 0 && k < list.length - 1) { [list[k + 1], list[k]] = [list[k], list[k + 1]]; renderSteps(); } };
   $('[data-op=del]', li).onclick = () => { const k = list.indexOf(s); if (k >= 0) { list.splice(k, 1); renderSteps(); } };
@@ -1599,11 +1646,12 @@ function stepItem(l, s, i, no) {
     try {
       if (ordersCfg()) {                              // cùng bộ chạy với lúc nạp thật (thế {{biến}})
         const r = await runApiSteps([s]);
-        if (r) { r.forEach(x => log(`   ${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad")); if (r[0]) out = { ok: !!r[0].ok, msg: r[0].msg }; }
+        if (r) { r.forEach(x => log(`   ${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad")); if (r[0]) out = { ok: !!r[0].ok, msg: r[0].msg }; adoptScreens([s], r); }
       } else {
         const r = await API().run_step(SEL, s);
         log(`   ${r.ok ? "✓" : "✗"} ${r.msg}`, r.ok ? "ok" : "bad");
         out = { ok: !!r.ok, msg: r.msg };
+        adoptScreens([s], [{ i: 0, ok: r.ok, screen: r.screen }]);
       }
     } catch (e) { log("   ✗ " + e, "bad"); out = { ok: false, msg: String(e) }; }
     busy(b, false);
@@ -1636,6 +1684,7 @@ async function testPhase(l, btn) {
     if (results) {
       let okN = 0;
       results.forEach(x => { if (x.ok) okN++; log(`   [${x.i + 1}] ${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad"); if (steps[x.i]) STEP_RES.set(steps[x.i], { ok: !!x.ok, msg: x.msg }); });
+      if (steps === l.steps) adoptScreens(steps, results);           // bước của gateway (giai đoạn chưa có bước riêng) thì không gắn
       toast(`${SEL}: ${okN}/${steps.length} bước OK`, okN === steps.length ? "ok" : "warn");
       setTimeout(() => shot(null), 600);
     }
@@ -2839,6 +2888,7 @@ async function testFlow(btn) {
       let okN = 0;
       results.forEach(x => { if (x.ok) okN++; log(`   [${x.i + 1}] ${api ? "" : x.type + ": "}${x.ok ? "✓" : "✗"} ${x.msg}`, x.ok ? "ok" : "bad");
         if (steps[x.i]) STEP_RES.set(steps[x.i], { ok: !!x.ok, msg: x.msg }); });
+      if (steps === FLOW.steps) adoptScreens(steps, results);
       renderSteps();
       toast(`${SEL}: ${okN}/${steps.length} bước OK`, okN === steps.length ? "ok" : "warn");
       setTimeout(() => shot(null), 600);

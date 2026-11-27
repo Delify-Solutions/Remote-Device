@@ -182,6 +182,8 @@
                             last_error: "", sent: 0 }),
     telegram_save: (token, chat, events) => { if (token) TG.token = token; if (chat != null) TG.chat = chat; if (events) TG.events = events;
                                              return P({ ok: true, has_token: !!TG.token, chat: TG.chat, events: TG.events }); },
+    screen_capture: (n) => P({ ok: true, screen: { v: 1, w: 1334, h: 750, texts: ["home", "shop", "extras"],
+                                                  img: "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=" } }),
     telegram_test: () => P(TG.token && TG.chat ? { ok: true, error: "" } : { ok: false, error: "chưa nhập mã bot và chat id" }),
     gateway_sync: () => P({ configured: !!GWCFG.key, ok: GWCFG.key ? true : null, at: Date.now() / 1000, error: "", devices: 2, idle: 1, scripts: 1, sent: 1 }),
     gateway_pools: () => P(GWCFG.url && GWCFG.key ? { ok: true, pools: GWPOOLS } : { ok: false, error: "Chưa cấu hình", pools: [] }),

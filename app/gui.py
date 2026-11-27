@@ -955,8 +955,9 @@ class Api:
             try:
                 nav = MGR.session(name)
                 tr.run_begin("chạy thử một bước")
+                ref = engine.capture_ref(nav, step)          # ảnh mẫu (màn hình ngay trước bước) cho bước chưa có
                 ok, msg = engine.run_step(nav, step)
-                return {"ok": ok, "msg": msg}
+                return dict({"ok": ok, "msg": msg}, **({"screen": ref} if ok and ref else {}))
             except Exception as e:
                 return {"ok": False, "msg": str(e)}
             finally:
@@ -982,7 +983,7 @@ class Api:
                 flow = store.get_flow(flow_id)
                 if not flow:
                     return {"ok": False, "error": "flow không tồn tại"}
-                results = engine.run_flow(nav, flow.get("steps", []))
+                results = engine.run_flow(nav, flow.get("steps", []), check=False)
                 return {"ok": True, "results": results}
             except Exception as e:
                 return {"ok": False, "error": str(e), "tb": traceback.format_exc()}
@@ -1000,7 +1001,7 @@ class Api:
                     if why:
                         raise RuntimeError(why)
                     nav = MGR.session(nm)
-                    out[nm] = engine.run_flow(nav, flow.get("steps", []))
+                    out[nm] = engine.run_flow(nav, flow.get("steps", []), check=False)
                 except Exception as e:
                     out[nm] = [{"ok": False, "msg": str(e)}]
         for nm in names:
@@ -1258,7 +1259,7 @@ class Api:
             try:
                 nav = MGR.session(name)
                 tr.run_begin("chạy thử kịch bản")
-                return {"ok": True, "results": engine.run_flow(nav, steps)}
+                return {"ok": True, "results": engine.run_flow(nav, steps, capture=True)}
             except Exception as e:
                 return {"ok": False, "error": str(e)}
             finally:
@@ -1287,14 +1288,15 @@ class Api:
             results = []
             apimode.watch_phase(nav, None, len(steps or []))
             for i, st in enumerate(steps or []):
+                ref = engine.capture_ref(nav, st)            # ảnh mẫu (màn hình ngay trước bước) cho bước thao tác chưa có
                 try:
                     ok, msg, _ = apimode.exec_step(nav, st, vars)
                 except (apimode.ConfigError, apimode.InputError) as e:
                     ok, msg = False, str(e)
                 except Exception as e:
                     ok, msg = False, "lỗi: %s" % e
-                results.append({"i": i, "type": st.get("type"), "ok": ok,
-                                "msg": apimode.describe(st, vars) + ((" — " + msg) if msg else "")})     # (bước có điều kiện: «đã bấm» hay «không thấy — bỏ qua»)
+                results.append(dict({"i": i, "type": st.get("type"), "ok": ok,
+                                     "msg": apimode.describe(st, vars) + ((" — " + msg) if msg else "")}, **({"screen": ref} if ok and ref else {})))     # (bước có điều kiện: «đã bấm» hay «không thấy — bỏ qua»)
                 if not ok:
                     break
                 time.sleep(apimode.STEP_GAP)
@@ -1344,6 +1346,21 @@ class Api:
             return {"ok": True, "pools": _gateway().pools()}
         except GatewayError as e:
             return {"ok": False, "error": e.vi(), "pools": []}
+
+    # ---- ảnh mẫu của bước (kiểm màn hình trước khi làm) ----
+    def screen_capture(self, name):
+        """Chụp ẢNH MẪU từ màn hình đang hiện của máy `name` (nút «Chụp lại ảnh mẫu» trong trình sửa bước)."""
+        with _Using(name) as why:
+            if why:
+                return {"ok": False, "error": why}
+            try:
+                nav = MGR.session(name)
+                priv = _web_privacy(name) if WEBDEV is not None else None
+                if priv:
+                    return {"ok": False, "error": priv}
+                return {"ok": True, "screen": apimode.capture_screen(nav)}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
 
     # ---- thông báo Telegram cho admin ----
     def telegram_get(self):

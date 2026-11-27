@@ -742,7 +742,7 @@ Yêu cầu của chủ dự án:
 - AI chọn được nhà cung cấp (OpenAI / Anthropic) và tên model trong cài đặt của tool.
 - Lúc làm đơn của khách vẫn gửi ảnh lên AI (chủ dự án quyết định).
 
-Làm theo 3 phần. Phần 1 (Telegram) đã xong; phần 2 (ảnh mẫu + tạm dừng tại bước) và phần 3 (AI) ghi tiếp bên dưới khi xong.
+Làm theo 3 phần. Phần 1 (Telegram) và phần 2 (ảnh mẫu + tạm dừng tại bước) đã xong; phần 3 (AI) ghi tiếp bên dưới khi xong.
 
 ### Thông báo Telegram (`app/notify.py`)
 - Cài đặt: trang «Nhóm & Kịch bản» → nút **Telegram**. Nhập mã bot (tạo ở @BotFather) và chat id (người, nhóm `-100…` hay `@kênh`).
@@ -773,3 +773,48 @@ Làm theo 3 phần. Phần 1 (Telegram) đã xong; phần 2 (ảnh mẫu + tạm
 - Gửi không được (mạng / hàng chờ đầy) thì lần sau cùng tin đó vẫn được gửi (không bị coi là trùng).
 - Kiểm thử đặt `IPF_NO_TELEGRAM=1`: không bao giờ gửi tin thật (app có thể đã cấu hình Telegram thật).
 - Kiểm thử: `./.venv/bin/python app/tests/test_notify.py`, gồm gửi đi, lọc loại, gộp tin trùng, ảnh, che mã bot, nối vào bộ chạy, luồng xem board.
+
+### Ảnh mẫu của bước + kiểm màn hình trước khi làm (`app/screencheck.py`, `apimode.screen_gate`)
+- **Bước nào được kiểm:** bước THAO TÁC (bấm toạ độ / chữ / vùng ảnh, bấm giữ, gõ, phím, tổ hợp phím, vuốt) có ảnh mẫu và không bị tắt
+  kiểm. Bước tự chờ / tự xử lý thứ lúc có lúc không («nếu thấy … thì bấm», «chờ chữ», «kiểm có chữ»), mở app, về Home, chờ thì không kiểm.
+- **Ảnh mẫu** (trường `screen` của bước, lưu trong kịch bản): ảnh thu nhỏ (cạnh dài 480 px, ~20–30 KB) + các dòng chữ của màn hình NGAY
+  TRƯỚC bước.
+  - Tự có khi «Chạy thử» bước / giai đoạn / kịch bản thành công, cho bước chưa có ảnh mẫu (bước đã có thì giữ nguyên). Chỉ gắn vào bước
+    riêng của kịch bản, không gắn vào bước lấy từ gateway. Gắn xong thì kịch bản có thay đổi chưa lưu: bấm «Lưu».
+  - Nút ảnh mẫu trên từng bước: xem ảnh, chụp lại từ màn hình máy đang chọn, xoá, bật / tắt «kiểm màn hình trước khi làm».
+  - Lúc chụp: đưa con trỏ ra góc, đọc chữ HAI lần cách nhau 0,5 giây và chỉ giữ chữ thấy ở cả hai lần (chữ rác của logo cách điệu bị bỏ).
+    Chữ được chuẩn hoá (bỏ dấu, chữ thường, chữ số → «9»). Bỏ dòng quá ngắn (< 3 ký tự), toàn số, có «@», «User ID», «Name:» / «Tên:»,
+    số dài ≥ 5 chữ số hay số viết cách ≥ 8 ký tự (email, mã / tên người chơi, OTP, số điện thoại). Ảnh thu nhỏ thì vẫn là ảnh thật của màn hình (có thể thấy ID người chơi) — chỉ nằm trong
+    `app/data/groups.json`, không vào git.
+- **So khớp:** màn hình có ≥ 3 dòng chữ dùng được thì so theo chữ: khớp khi ≥ 60% dòng chữ của ảnh mẫu còn thấy trên màn hình bây giờ.
+  Ít chữ hơn thì so theo hình (độ tương quan ảnh xám thu nhỏ ≥ 0,7). Ảnh mẫu dọc mà màn hình ngang (hay ngược lại) thì là khác.
+  - Đo thật trên máy 01 (2026-11-27), 4 lượt chạy thử các bước vào Shop: cùng một bước khớp 36/36 (điểm chữ 0,94–1,00), bước khác nhau
+    khớp 0/72 (cao nhất 0,27). Màn chính tab Home và trang Shop là khác nhau.
+  - Trên 68 ảnh eFootball đã lưu: hai hộp «Login Bonus» / «Campaign» (ít chữ, so theo hình) được nhận là khác nhau; các màn chính nhiều
+    tab với nhau thì khớp (cùng thanh menu) — kiểm màn hình bắt được màn LẠ (quảng cáo, hộp thoại che, sai màn), không thay được bước
+    tìm chữ của chính bước đó.
+- **Khi chạy thật** (kịch bản và nhận đơn — mọi giai đoạn của đơn khách, kể cả giai đoạn MUA và bước đăng xuất sau đơn): màn hình khác
+  ảnh mẫu thì cất con trỏ ra góc, nhìn lại tới tối đa 8 giây (game đang chuyển màn). Chụp / đọc chữ lỗi giữa chừng thì tính là một lần
+  nhìn hỏng, nhìn lại. Vẫn khác (hay đọc lỗi mãi) thì máy **TẠM DỪNG ngay tại bước đó**:
+  - trạng thái «TẠM DỪNG · màn hình lạ ở bước «…» — xử lý tay rồi bấm Tiếp tục», nhật ký ghi lý do (vd «chỉ thấy 27% chữ của ảnh mẫu,
+    cần 60%»);
+  - bắn Telegram «Máy dừng chờ admin» kèm ảnh màn hình. Máy NHẬN ĐƠN thì không bao giờ kèm ảnh (ngoài lúc làm đơn, game vẫn có thể
+    còn đăng nhập tài khoản khách: bước đăng xuất, «Chạy lại» máy đang giữ);
+  - admin xử lý tay trên máy rồi bấm **Tiếp tục** → tool làm tiếp ĐÚNG bước đó (admin đã xác nhận, không kiểm lại), trạng thái cũ hiện lại.
+    Máy nhận đơn mà người vận hành đã bấm «Tạm dừng» (không nhận đơn mới) từ trước thì sau Tiếp tục vẫn giữ yêu cầu đó;
+  - bấm Dừng → bước không làm, máy vẫn ở trạng thái «đang dừng để xử lý tay» (như nút Dừng máy). Kịch bản: dừng ở bước đó. Đơn của khách:
+    bước lỗi → đơn tính «không nạp được» (lỗi tool), hoặc «đối soát» nếu đã chạm vào luồng mua. Đã bấm Dừng TỪ TRƯỚC thì màn hình lạ
+    về sau không tạm dừng, không báo «chờ admin» nữa;
+  - «Dừng ngay» giữa đơn → như mọi lần dừng ngay (máy giữ để đối soát).
+  - Giai đoạn MUA: màn hình khác ở bước đầu (chưa bấm gì) → «không nạp được» (lỗi tool); đã chạm một bước rồi mới gặp → không làm bước
+    đó, đọc kết quả như mọi lần mua dở — không chắc thì đối soát, không bao giờ báo «chưa mua».
+  - Phần 3 sẽ chen thêm bước «hỏi AI» trước khi tạm dừng.
+- Bước «bỏ qua nếu lỗi» mà màn hình khác: bỏ qua bước đó (không làm, không tạm dừng máy), chạy tiếp.
+- Chạy thử trong trình sửa, chạy flow cũ, AI / dòng lệnh điều khiển máy (`farm run`, MCP): không kiểm màn hình (không có ai bấm Tiếp tục).
+- So theo chữ: một dòng trên màn hình nằm trong dòng mẫu (bộ đọc chữ tách dòng) chỉ được tính khi là chữ thật và dài ≥ 60% dòng mẫu — con
+  số lẻ trên màn quảng cáo («120») không «khớp» mọi dòng mẫu có số.
+- Ảnh mẫu của các bước ngay sau bước gõ tài khoản (lúc chạy thử) có thể chứa chữ vừa gõ — lúc làm đơn khác, dòng đó vắng nên điểm hơi
+  thấp hơn (một dòng trên tổng số dòng); chưa đo trên giai đoạn đăng nhập thật.
+- Chạy thật trên máy 01 (2026-11-27), kịch bản tạm 10 bước vào Shop có ảnh mẫu: ảnh mẫu đúng → chạy hết, không dừng sai; cố tình gắn ảnh
+  mẫu của màn Shop vào bước «bấm Shop» → máy tạm dừng đúng bước đó, bấm Tiếp tục → làm tiếp và chạy hết (dữ liệu nhóm khôi phục nguyên bản sau khi thử).
+- Kiểm thử: `./.venv/bin/python app/tests/test_screencheck.py`.

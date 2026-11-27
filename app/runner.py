@@ -69,6 +69,60 @@ class Runner:
         # (loại, tên máy, các dòng nội dung, ảnh JPEG | None) -> None: bắn thông báo cho admin (notify.Telegram.notify). None = không bắn.
         self.alert = None
 
+    SCREEN_ALERT_JPEG = 70
+
+    def _screen_helper(self, name, w):
+        """Bộ xử lý MÀN HÌNH LẠ của một lần chạy (apimode.screen_gate gọi khi màn hình vẫn khác ảnh mẫu của bước sau khi đã chờ):
+        TẠM DỪNG MÁY ngay tại bước đó, báo admin (Telegram, kèm ảnh màn hình trừ lúc đang làm đơn của khách), chờ admin xử lý tay rồi bấm
+        «Tiếp tục» → làm tiếp bước (admin đã xác nhận). Bấm Dừng → bước không làm; «Dừng ngay» giữa đơn → Aborted như mọi lần dừng ngay."""
+        def helper(step, why, img):
+            return self._admin_pause(name, w, step, why, img)
+        return helper
+
+    def _admin_pause(self, name, w, step, why, img=None):
+        what = apimode.observed_what(step, {})
+        stop, abort = w["stop"], w.get("abort")
+        if abort is not None and abort.is_set():
+            raise apimode.Aborted()
+        if stop.is_set():                                # đã bấm Dừng: không tạm dừng / không báo «chờ admin» nữa — bước không làm, dừng
+            return False, "đã dừng theo yêu cầu — %s" % why
+        # Người vận hành đã bấm «Tạm dừng» TỪ TRƯỚC (máy nhận đơn: làm nốt đơn này, không nhận đơn mới): nhớ lại để «Tiếp tục» của lần
+        # tạm dừng vì màn hình lạ này không xoá mất yêu cầu đó.
+        asked_before = w["pause"].is_set() and w.get("mode") == "api"
+        before = w.get("status")
+        with self.lock:
+            self.parked.add(name)
+            w["pause"].set()
+        w["paused"] = True
+        w["status"] = "TẠM DỪNG · màn hình lạ ở bước «%s» — xử lý tay rồi bấm Tiếp tục" % what
+        self._log(name, "Màn hình lạ ở bước «%s»: %s — tạm dừng, chờ admin xử lý rồi bấm Tiếp tục" % (what, why), "warn")
+        photo = None
+        # Máy NHẬN ĐƠN: không bao giờ gửi ảnh — ngoài lúc đang làm đơn, game có thể còn đăng nhập tài khoản của khách (bước đăng xuất sau
+        # đơn, «Chạy lại» máy đang giữ…). Bộ chạy cũng coi cả lần chạy nhận đơn là «máy của khách» (customers()).
+        if img is not None and w.get("mode") != "api" and not w.get("job_id"):
+            try:
+                import cv2
+                good, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, self.SCREEN_ALERT_JPEG])
+                photo = buf.tobytes() if good else None
+            except Exception:
+                photo = None
+        self._alert(name, "paused", "%s — máy đang TẠM DỪNG tại bước này; xử lý tay trên máy rồi bấm «Tiếp tục» trong app" % why, w,
+                    photo=photo, step=what)
+        while w["pause"].is_set() and not stop.is_set() and not (abort is not None and abort.is_set()):
+            stop.wait(0.25)
+        w["paused"] = False
+        if abort is not None and abort.is_set():
+            raise apimode.Aborted()
+        if stop.is_set():
+            return False, "đã dừng theo yêu cầu (máy đang chờ admin xử lý màn hình lạ)"
+        if asked_before:
+            with self.lock:                                  # giữ yêu cầu «không nhận đơn mới» người vận hành đã bấm từ trước
+                self.parked.add(name)
+                w["pause"].set()
+        w["status"] = before or "đang chạy"
+        self._log(name, "Admin bấm Tiếp tục — làm tiếp bước «%s»" % what)
+        return True, ""
+
     def _alert(self, name, event, text, w=None, photo=None, step=None):
         """Báo cho admin (Telegram) — không bao giờ làm hỏng máy đang chạy. Nội dung là lời tool tự tạo (đã che biến bí mật)."""
         if self.alert is None:
@@ -185,7 +239,13 @@ class Runner:
         return self.canon_udid(udid), port or None
 
     def _seen_nav(self, w, nav):
-        """Ghi lại iPhone + cổng board của PHIÊN ĐANG DÙNG THẬT (không phải theo bảng gán — bảng có thể đã bị đổi sau khi phiên được mở)."""
+        """Ghi lại iPhone + cổng board của PHIÊN ĐANG DÙNG THẬT (không phải theo bảng gán — bảng có thể đã bị đổi sau khi phiên được mở).
+        Đồng thời gắn bộ xử lý MÀN HÌNH LẠ của lần chạy này vào máy (xem _screen_helper); _guard gỡ ra khi lần chạy kết thúc."""
+        try:
+            nav.screen_helper = self._screen_helper(w.get("name") or "", w)
+            w["nav"] = nav
+        except Exception:
+            pass
         udid = self.canon_udid(getattr(getattr(nav, "e", None), "udid", None))
         port = getattr(getattr(nav, "h", None), "port", None)
         if udid:
@@ -266,7 +326,7 @@ class Runner:
                 elif not group.get("steps"):
                     return False                      # không có kịch bản nào để chạy (nhóm thật luôn truyền `script`; `steps` trần chỉ còn ở dữ liệu thử)
             mode = group.get("mode", "loop")
-            w = {"stop": threading.Event(), "abort": threading.Event(), "pause": threading.Event(), "paused": False,
+            w = {"stop": threading.Event(), "abort": threading.Event(), "pause": threading.Event(), "paused": False, "name": name,
                  "udid": udid, "port": port,
                  # «Chạy lại» máy đang giữ: lý do giữ được MANG THEO cho tới khi lần chạy mới kiểm xong «game đã đăng xuất» (clean). Lần chạy mới
                  # mà dừng sớm (không mở được máy, cấu hình sai, bị bấm Dừng…) thì máy VẪN đang giữ — chưa ai kiểm tra gì cả.
@@ -356,6 +416,12 @@ class Runner:
             self._log(name, "Worker dừng vì lỗi không mong đợi: %s" % e, "bad")
             self._alert(name, "review" if w.get("hold") else "failed", "lỗi không mong đợi — %s" % e, w)
         finally:
+            nav = w.pop("nav", None)
+            if nav is not None and getattr(nav, "screen_helper", None) is not None:
+                try:
+                    nav.screen_helper = None             # chạy thử / AI điều khiển máy sau đó: không có ai bấm «Tiếp tục» → không tạm dừng
+                except Exception:
+                    pass
             if tr is not None:
                 tr.run_end(w.get("status") or "")
             w["job_id"] = w["job_ref"] = None
