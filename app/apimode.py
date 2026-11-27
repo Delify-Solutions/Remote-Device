@@ -312,7 +312,9 @@ def _tap(nav, x: int, y: int, verify=None):
     `verify(ảnh)`: kiểm trên ảnh chụp gần nhất (lúc con trỏ chưa che đích) rằng thứ cần bấm VẪN ở đó —
     đưa con trỏ tới nơi mất hơn chục giây, màn hình có thể đã đổi (hộp thoại bật lên, danh sách trôi)."""
     if not nav.tap_at(int(x), int(y), click=False, verify=verify):
-        return False, "con trỏ không tới được vị trí cần bấm, hoặc màn hình đã đổi trước khi kịp bấm", False
+        why = getattr(nav, "miss", None)
+        return False, "con trỏ không tới được vị trí cần bấm, hoặc màn hình đã đổi trước khi kịp bấm" + (
+            " — %s" % why if isinstance(why, str) and why else ""), False
     return click(nav)
 
 

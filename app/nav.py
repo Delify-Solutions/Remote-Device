@@ -13,7 +13,7 @@ Nên ta TÌM 1 lần vector move (ax,ay) click trúng mỗi nút, lưu lại, ph
     n.tap_move(ax, ay)       # di (ax,ay) từ góc rồi click
 """
 from __future__ import annotations
-import contextlib, math, os, random, sys, time
+import contextlib, math, os, random, re, shutil, sys, time
 
 import cv2
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -23,6 +23,14 @@ from eyes import Eyes, norm_text
 
 def _dist(a, b) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
+def _seg_dist(p, a, b) -> float:
+    """Khoảng cách từ điểm p tới ĐOẠN THẲNG a–b."""
+    vx, vy = b[0] - a[0], b[1] - a[1]
+    L2 = vx * vx + vy * vy
+    t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L2))
+    return _dist(p, (a[0] + t * vx, a[1] + t * vy))
 
 
 class Frame:
@@ -199,7 +207,26 @@ class Nav:
             return False
         return (vx * move[0] + vy * move[1]) / (d * L) >= 0.9
 
-    def _match(self, sources, now, before, move):
+    NEAR_STATIC = 30      # vệt cách một vật ĐÃ BIẾT là cựa quậy tại chỗ (statics) chừng này = coi là chính vật đó (cỡ một icon)
+
+    def _fresh(self, now, before, statics=()):
+        """Các vệt MỚI của ảnh `now` (chỗ đó ở ảnh trước còn trống). Có từ hai vệt mới mà gạt các vệt nằm ở chỗ một vật ĐÃ BIẾT
+        là nhấp nháy tại chỗ (`statics` — trong _tap_at là danh sách `jitter`: vệt cứ hiện lại ở cùng một chỗ, xa con trỏ) thì còn
+        ĐÚNG MỘT → chỉ lấy vệt đó. Đo thật (máy 01, hộp «Sign Players» của eFootball): mũi tên cam cạnh «Step 2» nhích qua nhích lại liên tục, cứ ảnh này có ảnh kia không — mỗi
+        lần nó hiện ra là thêm một «vệt mới» bên cạnh con trỏ, và vì phải có đúng một vệt mới nên con trỏ không bao giờ được xác
+        nhận ở đúng các nhịp đó (phép thử «đi – về» tại nút OK hỏng ba lần liền, hết 34 lần nhìn → không bấm).
+        Chỉ gạt khi nhờ đó còn đúng một vệt: con trỏ đi ngang qua đúng chỗ vật đó (không còn vệt nào khác) vẫn ghép được như cũ.
+        Trả (các vệt mới dùng được, các vệt đã gạt)."""
+        fresh = [c for c in now if not any(_dist(c, q) <= self.SAME for q in before)]
+        if len(fresh) > 1 and statics:
+            moving = [c for c in fresh if not any(_dist(c, q) <= self.NEAR_STATIC for q in statics)]
+            if len(moving) == 1:
+                return moving, [c for c in fresh if c not in moving]
+        return fresh, []
+
+    GUARD = 76            # vệt đã gạt (vật nhấp nháy) nằm trong chừng này quanh đường con trỏ đi → KHÔNG gạt (= 2 × cỡ con trỏ 38px)
+
+    def _match(self, sources, now, before, move, statics=(), guard=None):
         """Trong ảnh mới, vệt nào là CON TRỎ? Chỉ nhận bằng chứng CHUYỂN ĐỘNG — con trỏ là thứ duy nhất trên màn
         hình đi theo lệnh di chuột. Vệt `b` (trong `now`) là con trỏ khi có vị trí cũ `a` (trong `sources`) mà:
           • b nằm ở chỗ «a đi theo quãng vừa ra lệnh di» — đúng hướng, quãng đường hợp lý (xem _went);
@@ -207,29 +234,38 @@ class Nav:
           • chỗ của a ở ảnh MỚI đã trống — thứ ở a đã rời đi; thứ đứng yên thì vẫn còn nguyên đó;
           • b là vệt mới DUY NHẤT trên cả màn hình. Có thêm một vệt mới nào khác (dù ở xa) thì chưa biết cái nào
             mới là con trỏ: lệnh di có thể bị rớt làm con trỏ dừng ở chỗ không ngờ, đúng lúc một icon hiện ra
-            ngay chỗ «đáng lẽ» nó phải tới.
+            ngay chỗ «đáng lẽ» nó phải tới. Ngoại lệ duy nhất: vệt khác nằm ở chỗ một vật ĐÃ BIẾT là cựa quậy tại chỗ
+            (`statics`, xem _fresh) VÀ ở xa (> `guard`, mặc định GUARD) cả ĐOẠN ĐƯỜNG từ chỗ cũ tới chỗ mới của con trỏ. Vệt bị
+            gạt mà nằm gần đó thì rất có thể CHÍNH nó là con trỏ (lệnh di bị rớt một phần → con trỏ thật dừng ở đâu đó TRÊN đường đi,
+            sát vật nhấp nháy) còn vệt «còn lại» là một vật khác — gạt nó đi là bấm nhầm (verify: bấm lệch 60px, rồi 99px khi chỉ
+            xét hai đầu đoạn đường mà lệnh di dài bị rớt giữa chừng).
         `before` = mọi vệt cỡ con trỏ của ảnh trước. Trả cặp (a, b) khi có ĐÚNG MỘT cách ghép; không có, hoặc chưa
         phân định được → None.
 
         Vì sao phải chặt như vậy: icon tải muộn, số đếm, huy hiệu, nút tròn… đều «giống con trỏ» trên một ảnh tĩnh.
         Nhận nhầm một thứ như thế nằm đúng đích = bấm trong khi con trỏ thật đang ở chỗ khác."""
-        fresh = [c for c in now if not any(_dist(c, q) <= self.SAME for q in before)]
+        fresh, dropped = self._fresh(now, before, statics)
         if len(fresh) != 1:
             return None                                     # không có vệt mới, hoặc có từ hai vệt mới → chưa phân định
         b = fresh[0]
         came_from = [a for a in sources
                      if not any(_dist(c, a) <= self.SAME for c in now)                       # chỗ cũ đã trống
                      and self._went(a, b, move, self.gain_sure)]                             # và b là «a đi theo lệnh di»
-        return (came_from[0], b) if len(came_from) == 1 else None
+        if len(came_from) != 1:
+            return None
+        g = self.GUARD if guard is None else guard
+        if any(_seg_dist(c, came_from[0], b) <= g for c in dropped):
+            return None                                     # vệt bị gạt ở sát đường con trỏ đi → có thể chính nó là con trỏ
+        return came_from[0], b
 
     RELOOK = 2            # số lần tối đa «chỉ nhìn lại» (không ra lệnh mới) khi con trỏ chưa hiện rõ sau một nhịp di
 
-    def _gliding(self, sources, now, before, move) -> bool:
+    def _gliding(self, sources, now, before, move, statics=()) -> bool:
         """Con trỏ có vẻ đang LƯỚT DỞ tới chỗ cuối: có đúng một vệt mới, chỗ cũ của nó đã trống, nó đi ĐÚNG HƯỚNG lệnh di
         nhưng mới được một đoạn NGẮN hơn dự kiến. iOS làm con trỏ lướt mượt ~0,4 s sau lệnh di — ảnh chụp trúng lúc đó
         thấy con trỏ ở giữa đường (hoặc mờ, không thấy). Khi đó phải CHỜ và nhìn lại, KHÔNG ra lệnh di thử mới: lệnh thừa
         kéo con trỏ ra khỏi chỗ nó vừa tới rồi lại lướt dở lần nữa (vòng lặp đo thật: bấm chậm 10–25 s hoặc hỏng)."""
-        fresh = [c for c in now if not any(_dist(c, q) <= self.SAME for q in before)]
+        fresh = self._fresh(now, before, statics)[0]
         if len(fresh) != 1:
             return False
         b, L = fresh[0], math.hypot(move[0], move[1])
@@ -278,12 +314,52 @@ class Nav:
         """Xem _tap_at. Trong lúc đưa con trỏ, cách quay ảnh THẲNG của máy được giữ nguyên (Eyes.steady)."""
         # Ảnh NỀN đầu tiên được chụp NGOÀI steady (được xét lại cách quay nếu tới hạn): bước bấm theo toạ độ không có lần nhìn nào trước đó,
         # cách quay nhớ từ màn hình trước có thể đã cũ. Từ sau ảnh đó mới giữ nguyên (xem anchor).
+        self.miss, self.trace, self._seen = None, [], {}
         with contextlib.ExitStack() as hold:
             self._hold = hold
             try:
-                return self._tap_at(px, py, tol, iters, click, verbose, verify)
+                ok = self._tap_at(px, py, tol, iters, click, verbose, verify)
             finally:
                 self._hold = None
+        if not ok:
+            self.miss = self.miss or "không rõ lý do"
+            self._keep_miss(px, py)
+        return ok
+
+    MISS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "debug", "tap")   # app/data/ không vào git
+    MISS_KEEP = 20
+
+    MISS_NAME = re.compile(r"^\d{8}-\d{6}-\d{3}-")      # tên thư mục của một lần lưu (chỉ dọn đúng loại này)
+
+    def _keep_miss(self, px, py):
+        """Lưu lần đưa con trỏ HỎNG (nhật ký từng nhịp + ảnh nền + ảnh chụp cuối, trong hệ trục chuột) vào MISS_DIR, giữ MISS_KEEP lần
+        gần nhất — lỗi kiểu này thường lúc có lúc không, không có bằng chứng của chính lần hỏng thì không tìm được nguyên nhân.
+        Ảnh chụp màn hình có thể có tên / ID người chơi: chỉ lưu trên máy này (app/data/), không vào git."""
+        if os.environ.get("IPF_NO_MISS_DUMP"):
+            return
+        try:
+            stamp = time.strftime("%Y%m%d-%H%M%S") + "-%03d" % (int(time.time() * 1000) % 1000)
+            d = os.path.join(self.MISS_DIR, "%s-%s" % (stamp, re.sub(r"[^0-9A-Za-z]", "", str(getattr(self.e, "udid", "") or ""))[:8] or "may"))
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "trace.txt"), "w", encoding="utf-8") as f:
+                f.write("đích (ảnh chụp) = (%d, %d)\nlý do: %s\n\n" % (px, py, self.miss))
+                f.write("\n".join(self.trace) + "\n")
+            for name, img in (getattr(self, "_seen", None) or {}).items():
+                if img is not None and hasattr(img, "shape"):
+                    good, buf = cv2.imencode(".png", img)          # imwrite trên Windows không ghi được vào đường dẫn có dấu
+                    if good:
+                        with open(os.path.join(d, name + ".png"), "wb") as f:
+                            f.write(buf.tobytes())
+        except Exception:
+            pass                        # chỉ là ghi chẩn đoán: không bao giờ làm hỏng lần bấm
+        try:
+            # Chỉ dọn thư mục do chính hàm này tạo (đúng mẫu tên); file lạ (.DS_Store, Thumbs.db…) không làm việc dọn dừng lại.
+            old = sorted(n for n in os.listdir(self.MISS_DIR)
+                         if self.MISS_NAME.match(n) and os.path.isdir(os.path.join(self.MISS_DIR, n)))
+            for n in old[:-self.MISS_KEEP] if self.MISS_KEEP > 0 else old:
+                shutil.rmtree(os.path.join(self.MISS_DIR, n), ignore_errors=True)
+        except Exception:
+            pass
 
     def _tap_at(self, px: int, py: int, tol: int = 12, iters: int = 34,
                 click=True, verbose=False, verify=None):
@@ -308,10 +384,26 @@ class Nav:
         (xem Frame): máy đang xoay ngang thì ảnh được quay về hệ đó trước khi đo."""
         tol = max(int(tol), 12)            # nhịp di nhỏ hơn 10 đơn vị không dùng làm bằng chứng chuyển động được
         fr = None                          # hướng ảnh chụp ↔ hệ trục chuột, xác định ở lần ghim góc đầu tiên
+        t0 = time.time()
+        trace = self.trace = []            # nhật ký lần bấm này (xem tap_at: lần hỏng được lưu lại kèm ảnh)
+        shots = self._seen = {}            # ảnh nền + ảnh chụp gần nhất (trong hệ trục chuột), để lưu khi hỏng
+
+        def note(msg):
+            trace.append("%5.1fs %s" % (time.time() - t0, msg.strip()))
+            if verbose:
+                print(msg)
+
+        def miss(reason):
+            """Không bấm: ghi lý do (bên gọi đưa vào thông báo lỗi) rồi trả False."""
+            self.miss = reason
+            note("-> KHÔNG click: " + reason)
+            return False
 
         def grab():
             """Chụp màn hình, trả ảnh đã quay về hệ trục của chuột."""
-            return fr.dev(self.e.screenshot())
+            img = fr.dev(self.e.screenshot())
+            shots["img"] = img
+            return img
 
         def anchor():
             """Ghim con trỏ về góc trên-trái (của hệ trục chuột), chụp ảnh NỀN (con trỏ không che gì), rồi nhích ra cho con trỏ hiện."""
@@ -320,8 +412,9 @@ class Nav:
             time.sleep(self.PRE_SETTLE)
             try:
                 shot = self.e.screenshot()
-            except Exception:
+            except Exception as e:
                 shot = None
+                self.miss = "không chụp được ảnh nền (%s)" % (str(e)[:80] or type(e).__name__)
             hold, steady = getattr(self, "_hold", None), getattr(self.e, "steady", None)
             if hold is not None and steady is not None and fr is None:
                 hold.enter_context(steady())          # từ đây tới hết lần bấm: giữ nguyên cách quay ảnh của máy
@@ -331,23 +424,23 @@ class Nav:
             if fr is None:
                 fr = self._frame(shot, verbose)
                 if fr is None:
+                    self.miss = "không xác định được hướng màn hình (máy đang xoay ngang: không thấy con trỏ rời góc)"
                     return None
             elif shot.shape[:2] != (fr.h, fr.w):
-                if verbose: print("  (cỡ / chiều ảnh chụp đổi giữa chừng — màn hình đã khác) -> KHÔNG click")
+                self.miss = "cỡ / chiều ảnh chụp đổi giữa chừng (màn hình đã khác)"
                 return None
-            return fr.dev(shot)
+            shots["ref"] = fr.dev(shot)
+            return shots["ref"]
 
         ref = anchor()
         anchors = 1
         if ref is None:
-            if verbose: print("  (không chụp được ảnh nền / không rõ hướng màn hình) -> KHÔNG click")
-            return False
+            return miss(self.miss or "không chụp được ảnh nền")
         self._fr = fr
         px, py = fr.pt(px, py)             # từ đây (px, py) là điểm đích TRONG HỆ TRỤC CỦA CHUỘT
         H, W = ref.shape[:2]
         if not (0 <= px < W and 0 <= py < H):
-            if verbose: print("  (điểm cần bấm nằm ngoài màn hình) -> KHÔNG click")
-            return False
+            return miss("điểm cần bấm nằm ngoài màn hình")
         D = self.e.pointer_size(ref)
         corner = [(0, 0, int(D * 0.7), int(D * 0.7))]       # phần tư con trỏ ghim ở góc trong ảnh nền
         clear = ref if _dist((px, py), (0, 0)) > 1.5 * D else None    # ảnh đích chưa bị con trỏ che
@@ -358,17 +451,25 @@ class Nav:
         relooks = 0                        # số lần liền đã «chỉ nhìn lại» (xem _gliding)
         statics = []                       # vệt ĐÃ BIẾT là đứng yên / cựa quậy tại chỗ, không phải con trỏ (icon đồng hồ có kim chạy…)
         lost = 0                           # số lần liền hoàn toàn không thấy vệt nào dù đã nhìn lại (mất dấu hẳn)
+        trail = []                         # các chỗ con trỏ ĐÃ được xác nhận trong lần bấm này
+        sight = []                         # (nhịp, chỗ) các vệt thấy ở xa con trỏ — để nhận ra vật nhấp nháy tại chỗ
+        jitter = []                        # vật NHẤP NHÁY tại chỗ đã nhận ra (xem bên dưới) — RIÊNG danh sách này được gạt khi ghép con
+                                           # trỏ (_match). Không dùng `statics`: vật «đứng yên qua một lệnh di» có thể chính là con trỏ khi
+                                           # lệnh di bị rớt (verify: chỗ con trỏ đứng ngay ở đích lọt vào statics)
 
-        def reanchor():
-            """Ghim lại góc + chụp lại ảnh nền, bỏ mọi hiểu biết cũ về vị trí con trỏ. False = không chụp được ảnh nền."""
+        def reanchor(fresh_screen=False):
+            """Ghim lại góc + chụp lại ảnh nền, bỏ mọi hiểu biết cũ về vị trí con trỏ. False = không chụp được ảnh nền.
+            `fresh_screen`: chụp lại vì màn hình đã đổi nhiều → quên luôn các vật nhấp nháy đã nhận ra."""
             nonlocal ref, clear, anchors, sources, before, move, expect, streak, pos, misses, away_ok, away_pending, relooks, lost
             anchors += 1
             ref = anchor()
             if ref is None:
-                return False
+                return miss(self.miss or "không chụp lại được ảnh nền")
             clear = ref if _dist((px, py), (0, 0)) > 1.5 * D else None
             sources, before, move, expect, streak, pos = None, [], (50, 50), (54, 54), 0, None
             misses, away_ok, away_pending, relooks, lost = 0, False, False, 0, 0
+            if fresh_screen:                   # màn hình đã ĐỔI hẳn: vật nhấp nháy của màn cũ không còn ý nghĩa
+                del jitter[:], sight[:]
             return True
         away_pending = False               # vừa ra lệnh «nhích đi» TẠI ĐÍCH, đang chờ xem con trỏ có đi theo không
         away_ok = False                    # …và con trỏ đã đi theo (bước 1 của phép thử «đi – về»); bước 2 là nhịp quay lại đích
@@ -437,37 +538,54 @@ class Nav:
             time.sleep(self.TRACK_SETTLE)
             img = grab()
             if img.shape != ref.shape:     # cỡ / chiều ảnh đổi giữa chừng: toạ độ đích không còn đúng → không bấm
-                if verbose: print("  (cỡ / chiều ảnh chụp đổi giữa chừng) -> KHÔNG click")
-                return False
+                return miss("cỡ / chiều ảnh chụp đổi giữa chừng (màn hình đã khác)")
             now = [c[:2] for c in self.e.pointer_blobs(ref, img, corner)]
+            # Vật NHẤP NHÁY tại chỗ: đo thật, mũi tên cam của hộp «Sign Players» cứ một ảnh có, một ảnh không, KHÔNG BAO GIỜ hiện ở hai
+            # ảnh liền nhau nên không bao giờ lọt vào `still` bên dưới. Vệt hiện lại ở CÙNG một chỗ (≤ 2·SAME) ở một ảnh khác, mà chỗ đó
+            # xa mọi chỗ con trỏ đã được xác nhận, xa chỗ con trỏ đang được chờ tới và xa đích (> 2·D) → nhớ là vật cựa quậy tại chỗ.
+            # Chỉ tính lần thấy mà CÙNG ẢNH còn vệt khác ở xa nó (lúc vật nhấp nháy hiện thì con trỏ cũng đang hiện ở chỗ khác): con trỏ
+            # là vệt duy nhất trên ảnh thì không bao giờ bị nhận nhầm — kể cả khi nó đáp xa chỗ dự đoán nhiều lần (tỉ lệ đã học sai).
+            for c in now:
+                if (any(_dist(c, q) <= 2 * D for q in trail) or _dist(c, expect) <= 2 * D or _dist(c, (px, py)) <= 2 * D
+                        or any(_dist(c, q) <= self.NEAR_STATIC for q in jitter) or not any(_dist(c, q) > 2 * D for q in now)):
+                    continue
+                if any(j != i and _dist(c, q) <= 2 * self.SAME for j, q in sight):
+                    jitter.append(c)
+                    del jitter[:-16]           # màn game nền động có thể có nhiều vật nhấp nháy (đo thật: 5–6 trên màn chính eFootball)
+                    statics.append(c)
+                    del statics[:-16]
+                    note("     vệt hiện lại ở cùng chỗ %s, xa con trỏ → vật nhấp nháy tại chỗ" % (c,))
+                sight.append((i, c))
+            del sight[:-64]
             # `vis` = các vệt KHÔNG nằm gần vật đã biết là đứng yên / cựa quậy tại chỗ (cỡ một icon, ~30px). Chỉ dùng `vis` để chọn
             # «chỗ con trỏ có thể đang đứng» và để xét «mất dấu» — đừng di chuột theo vệt kim đồng hồ (đo thật: con trỏ bị đẩy sát
             # mép và mất dấu hẳn). Phép GHÉP chuyển động vẫn dùng đủ `now`: con trỏ đi ngang qua một vật tĩnh vẫn phải ghép được.
-            vis = [c for c in now if not any(_dist(c, q) <= 30 for q in statics)]
+            vis = [c for c in now if not any(_dist(c, q) <= self.NEAR_STATIC for q in statics)]
             moved = max(abs(move[0]), abs(move[1])) >= 8
             # Ảnh nền hết dùng được khi: (a) màn hình ĐỔI NHIỀU so với nó (chuyển trang chưa xong lúc chụp nền, nội
             # dung tải muộn, hộp thoại vừa bật…); (b) có vệt ĐỨNG YÊN qua một lệnh di = một thứ mới thêm vào màn hình.
             still = [c for c in vis if moved and any(_dist(c, q) <= self.SAME for q in before)]
-            stale = self.e.changed_fraction(ref, img) > self.STALE_REF
+            changed = self.e.changed_fraction(ref, img)
+            stale = changed > self.STALE_REF
             if still:
                 statics.extend(still)
-                del statics[:-8]
+                del statics[:-16]
             if (stale or still) and anchors < self.REANCHOR_MAX:
-                if verbose:
-                    print("     %s → chụp lại ảnh nền (lần %d)" % ("màn hình đã đổi so với ảnh nền" if stale else "có vật mới đứng yên %s" % still, anchors + 1))
-                if not reanchor():
+                note("     %s → chụp lại ảnh nền (lần %d)" % ("màn hình đã đổi %d%% so với ảnh nền" % (changed * 100) if stale else "có vật mới đứng yên %s" % still, anchors + 1))
+                if not reanchor(fresh_screen=stale):
                     return False
                 continue
+            if stale or still:
+                note("     %s nhưng đã hết lượt chụp lại ảnh nền (%d)" % ("màn hình đã đổi %d%% so với ảnh nền" % (changed * 100) if stale else "có vật mới đứng yên %s" % still, anchors))
 
-            pair = self._match(sources, now, before, move) if (sources is not None and moved) else None
+            pair = self._match(sources, now, before, move, jitter, 2 * D) if (sources is not None and moved) else None
             p = pair[1] if pair else None
-            if verbose:
-                print(f"  [{i}] vệt={now} | con trỏ={'%s (đã xác nhận %d nhịp)' % (p, streak + 1) if p else 'CHƯA phân định'}")
+            note(f"  [{i}] vệt={now} | con trỏ={'%s (đã xác nhận %d nhịp)' % (p, streak + 1) if p else 'CHƯA phân định'}")
             if (p is None and moved and relooks < self.RELOOK
-                    and (not vis or (sources is not None and self._gliding(sources, now, before, move)))):
+                    and (not vis or (sources is not None and self._gliding(sources, now, before, move, jitter)))):
                 # Không thấy vệt nào, hoặc con trỏ mới đi được nửa đường (đang lướt): CHỜ rồi nhìn lại, không ra lệnh mới.
                 relooks += 1
-                if verbose: print("     (con trỏ chưa hiện rõ / đang lướt dở → nhìn lại, KHÔNG ra lệnh mới)")
+                note("     (con trỏ chưa hiện rõ / đang lướt dở → nhìn lại, KHÔNG ra lệnh mới)")
                 time.sleep(0.3)
                 continue
             relooks = 0
@@ -475,7 +593,7 @@ class Nav:
             if lost >= 2 and anchors < self.REANCHOR_MAX + 1:
                 # Hoàn toàn không thấy vệt nào dù đã nhìn lại: con trỏ có thể đã bị đẩy sát mép / ra khỏi tầm nhìn. Ghim lại góc và
                 # chụp lại ảnh nền (được MỘT lần thêm ngoài hạn mức của vật đứng yên) thay vì di chuột mò trong bóng tối.
-                if verbose: print("     (mất dấu con trỏ hẳn → ghim lại góc, chụp lại ảnh nền (lần %d))" % (anchors + 1))
+                note("     (mất dấu con trỏ hẳn → ghim lại góc, chụp lại ảnh nền (lần %d))" % (anchors + 1))
                 if not reanchor():
                     return False
                 continue
@@ -489,7 +607,7 @@ class Nav:
                     if misses >= self.FORGET and self.gain is not None:
                         # Có vệt cũ, có vệt mới, có lệnh di mà mấy nhịp liền không cặp nào «đi theo lệnh»: nhiều khả năng
                         # tỉ lệ đã học không còn đúng (người dùng đổi tốc độ con trỏ, hoặc lần học rơi vào nhịp bị rớt lệnh).
-                        if verbose: print("     (tỉ lệ đã học %.2f không còn khớp → quên, đo lại)" % self.gain)
+                        note("     (tỉ lệ đã học %.2f không còn khớp → quên, đo lại)" % self.gain)
                         self.gain, self.gain_sure, misses = None, None, 0
                 guess = min(vis, key=lambda c: _dist(c, expect)) if vis else None
                 sources, before = list(now), list(now)
@@ -511,10 +629,10 @@ class Nav:
                 time.sleep(self.TRACK_SETTLE)
                 still_img = grab()
                 if still_img.shape != ref.shape:
-                    return False
+                    return miss("cỡ / chiều ảnh chụp đổi giữa chừng (màn hình đã khác)")
                 now2 = [c[:2] for c in self.e.pointer_blobs(ref, still_img, corner)]
                 if not any(_dist(c, p) <= self.STILL for c in now2):
-                    if verbose: print("     (vệt đã dời đi dù không có lệnh nào → không phải con trỏ, đo lại)")
+                    note("     (vệt đã dời đi dù không có lệnh nào → không phải con trỏ, đo lại)")
                     streak, pos, away_ok, away_pending = 0, None, False, False
                     self.gain, self.gain_sure = gain0
                     sources, before = list(now2), list(now2)
@@ -534,6 +652,8 @@ class Nav:
                         self.gain = 0.5 * self.gain + 0.5 * seen
                         self.gain_sure = self.gain if agree else None
             pos = p
+            trail.append(p)
+            del trail[:-32]
             ex, ey = px - p[0], py - p[1]
             if abs(ex) <= tol and abs(ey) <= tol:
                 if not away_ok:
@@ -543,13 +663,12 @@ class Nav:
                     sources, before = [p], list(now)
                     away_ok, away_pending = False, True
                     move = nudge(p)
-                    if verbose: print("     (tới đích → phép thử đi–về: nhích %s)" % (move,))
+                    note("     (tới đích → phép thử đi–về: nhích %s)" % (move,))
                     expect = (p[0] + move[0] * self.gain, p[1] + move[1] * self.gain) if self.gain else (p[0] + move[0], p[1] + move[1])
                     continue
                 if verify is not None and not verify(fr.raw(clear if clear is not None else img)):      # bên gọi kiểm trên ảnh như ảnh chụp
-                    if verbose: print("  (tới nơi nhưng thứ cần bấm không còn ở đó) -> KHÔNG click")
-                    return False
-                if verbose: print("     (đã qua phép thử đi–về (đi → đứng yên → về) → %s)" % ("bấm" if click else "tới nơi, không bấm"))
+                    return miss("con trỏ đã tới nơi nhưng thứ cần bấm không còn ở đó (màn hình đã đổi)")
+                note("     (đã qua phép thử đi–về (đi → đứng yên → về) → %s)" % ("bấm" if click else "tới nơi, không bấm"))
                 if click: self.h.click()
                 return True
             if _dist(p, (px, py)) > 1.5 * D:
@@ -558,8 +677,7 @@ class Nav:
             move = plan(p, 4)              # lúc còn xa thì di vài nhịp liền rồi mới chụp; càng gần càng đo từng nhịp
             g = self.gain or 1.0
             expect = (p[0] + move[0] * g, p[1] + move[1] * g)
-        if verbose: print(f"  (hết vòng, con trỏ cuối={pos}) -> KHÔNG click")
-        return False
+        return miss("sau %d lần nhìn vẫn chưa đưa được con trỏ tới nơi (con trỏ cuối=%s, đã chụp ảnh nền %d lần)" % (iters, pos, anchors))
 
     # Kéo một mạch dài thì con trỏ đi được ÍT pixel hơn số đơn vị gửi xuống, và hụt THẤT THƯỜNG (board gửi dày
     # nên rớt gói; đo trên iPhone 8: 560 đơn vị ≈ 340–450px). Vì vậy vuốt là thao tác ƯỚC LƯỢNG, không chính xác

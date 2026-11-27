@@ -371,8 +371,8 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
       hoạt hình thì mỗi lần chụp ngoài lúc đưa con trỏ có thể tốn một lượt đọc chữ, cách nhau ít nhất 2 giây.
     - Cần Apple Vision: chạy với `IPF_OCR=tesseract` (không dùng Vision) thì KHÔNG quay thẳng được. Vùng ảnh / toạ độ đã ghi trên ảnh NGHIÊNG
       trước đây (nếu có) phải ghi lại trên ảnh thẳng.
-    - Lần chạy thật đầu tiên, bước «nếu thấy chữ» (Sign Players → bấm tại (667,571)) báo «con trỏ không tới được…» một lần; chạy lại thì được.
-      Chưa rõ nguyên nhân (không lặp lại).
+    - Bước «nếu thấy chữ» (Sign Players → bấm tại (667,571)) từng báo «con trỏ không tới được…» 4/10 lần do mũi tên cam nhấp nháy trên
+      hộp thoại. Đã sửa ngày 2026-11-27, chạy thật 15/15 rồi 12/12 lần đều bấm được (xem «vật nhấp nháy tại chỗ» ở mục «Cách hoạt động»).
     - Hộp thoại hệ thống không nhận cú bấm trên máy 01 cũng xảy ra trong trạng thái này (xem «assistivetouchd»).
   - Vision có lúc đọc chữ Latin thành chữ Kirin trông giống hệt («OK» → «ОK»): khi so khớp đã đổi về Latin.
 - **Gói nạp — cấu hình và cách tool tìm đúng gói.** Mỗi gói khai ở gateway (trang quản trị → Pool → mục 5 «Gói nạp»): **Mã gói** (thứ shop gửi
@@ -526,6 +526,34 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   lên nhãn chữ làm con trỏ biến mất khỏi ảnh). Ảnh chụp trúng lúc con trỏ còn đang lướt (~0,4 s sau lệnh di) thì chờ nhìn lại, không ra
   lệnh thừa. Tool tự đo «tốc độ con trỏ» của từng máy (pixel cho mỗi đơn vị lệnh — hai iPhone 8 đang có: ~0,9–1,1 và ~1,15–1,4) và chỉ
   dùng số đo để siết phép kiểm khi hai lần đo liên tiếp khớp nhau; đổi tốc độ con trỏ trong Cài đặt của iPhone thì tool tự đo lại.
+- «Vệt duy nhất» có MỘT ngoại lệ: **vật nhấp nháy tại chỗ** mà tool đã nhận ra trong lần bấm đó. Ảnh có hai vệt mới, gạt vệt nằm ở chỗ
+  vật nhấp nháy (cách ≤ 30px) mà còn đúng một vệt, thì tool lấy vệt còn lại. Có hai điều kiện:
+  - Một vật được nhận là «nhấp nháy tại chỗ» khi nó **hiện lại ở cùng một chỗ** (lệch ≤ 12px) ở một ảnh khác. Chỗ đó phải cách xa
+    (> 2 lần cỡ con trỏ, ~76px) mọi chỗ con trỏ đã được xác nhận, chỗ con trỏ đang được chờ tới và điểm cần bấm. Mỗi lần thấy chỉ được
+    tính khi cùng ảnh còn có vệt khác ở xa nó, nên con trỏ là vệt duy nhất trên ảnh thì không bao giờ bị nhận nhầm.
+  - Vệt bị gạt phải ở xa (> ~76px) cả đoạn đường con trỏ vừa đi (từ chỗ cũ tới chỗ mới). Nếu nó ở gần thì có thể chính nó là con trỏ
+    thật (lệnh di bị rớt một phần nên con trỏ dừng giữa đường, sát vật nhấp nháy), nên tool không gạt mà coi như chưa phân định.
+
+  Vật «đứng yên qua một lệnh di» (icon tải muộn…) KHÔNG được gạt kiểu này, vì khi lệnh di bị rớt thì chính con trỏ cũng đứng yên như
+  vậy. Màn hình đổi hẳn (phải chụp lại ảnh nền) thì tool quên các vật nhấp nháy đã nhận ra.
+
+  Lý do: hộp «Sign Players» của eFootball có mũi tên cam nhích qua lại, cứ một ảnh có một ảnh không, không bao giờ hiện ở hai ảnh liền
+  nhau. Màn nền còn có thẻ cầu thủ chuyển động. Trước khi sửa, máy 01 hỏng 4/10 lần: con trỏ đã tới nút OK nhưng không qua được phép thử
+  «đi – về», hết 34 lần nhìn thì bỏ. Sau khi sửa, chạy thật 15/15 lần, rồi 12/12 lần với bản cuối, đều bấm được.
+
+  Trên máy giả lập, mỗi kịch bản 80 lượt, so code cũ với code mới:
+  - vật nhấp nháy ở xa đích: bấm đúng 0 → 80;
+  - kèm lệnh di rớt hoặc rớt một phần: 12 → 74;
+  - 8 vật nhấp nháy quanh đích, thêm một vật loé ngẫu nhiên ngay ở đích: 2 → 33.
+
+  Không có lần bấm sai nào do việc gạt vật nhấp nháy. Các lần bấm lệch còn lại trong mô phỏng thuộc kẽ hở có từ trước (xem «Còn mở»).
+  Hai phiên bản trung gian từng gây bấm lệch: chưa xét khoảng cách (lệch 60px), rồi chỉ xét hai đầu đoạn đường (lệch 99px khi lệnh di
+  dài bị rớt giữa chừng). `test_nav` có bài kiểm cho cả hai. **Giới hạn:** vật nhấp nháy nằm sát điểm cần bấm (dưới ~76px) thì không được gạt, và tool có thể
+  không bấm. Đây là chủ ý: sát đích mà gạt nhầm một vệt là nguy hiểm nhất.
+- Lần đưa con trỏ HỎNG (không bấm) có **lý do cụ thể** trong thông báo lỗi của bước (vd «sau 34 lần nhìn vẫn chưa đưa được con trỏ tới
+  nơi…», «con trỏ đã tới nơi nhưng thứ cần bấm không còn ở đó»). Kèm theo đó, nhật ký từng nhịp, ảnh nền và ảnh chụp cuối được lưu ở
+  `app/data/debug/tap/<giờ>-<máy>/`, giữ 20 lần gần nhất. Thư mục này không vào git vì ảnh có thể có tên / ID người chơi; đặt
+  `IPF_NO_MISS_DUMP=1` để tắt.
 - Khoá của cầu nối HTTP không in ra màn hình trừ khi yêu cầu rõ (`./farm mcp-config --show-token`).
 - Chỉ có một máy sẵn sàng thì bỏ được tên máy: `./farm find Safari`, `./farm tap 288 468`, `./farm type hello`.
 - Máy chủ MCP viết tay (`app/mcpserver.py`, không cần SDK, chạy trên Python 3.9), hỗ trợ cả giao thức đời cũ (bắt tay
@@ -645,7 +673,9 @@ dòng 700 ký tự bị chặn đúng; reset mềm ≈ 1,7 s, reset cứng qua R
   Giả lập: dừng-đi, giữ-rồi-nhảy, lướt-rồi-đỗ, bay thẳng/chéo vào đích rồi đỗ, bắt chước lệnh di rồi trôi → 0 cú bấm lệch trong hàng nghìn lượt.
   Còn lại là **xác suất thấp, không bằng 0**, kể cả khi con trỏ thật hiện được: vật nhảy ngẫu nhiên quanh đích ±120px (~0,5–1%/cú bấm trong
   mô hình giả lập cực đoan đó), và vật «biết» đúng các chỗ trống mà tool dùng để nhích thử (~1/số chỗ trống). Đòi hỏi một vật cỡ con trỏ nhấp nháy
-  đúng quanh đích — hiếm khi gặp thật. Bước mua tiền luôn có thêm kiểm chữ trên màn hình trước và sau khi bấm.
+  đúng quanh đích — hiếm khi gặp thật. Đo thêm ngày 2026-11-27: vật cỡ con trỏ loé ngẫu nhiên NGAY ở đích (30% số ảnh), cộng một
+  vật nhấp nháy cách đích 88px và lệnh di rớt một phần → bấm lệch ~1%/cú bấm (trước và sau bản sửa «Sign Players» như nhau: 4/300; không lần nào do việc gạt vật nhấp nháy).
+  Kẽ hở nằm ở nhịp «về» của phép thử đi – về: ảnh đó con trỏ phải ở đúng đích, nên một vật loé đúng lúc ở đích lọt qua. Bước mua tiền luôn có thêm kiểm chữ trên màn hình trước và sau khi bấm.
 - Icon **Đồng hồ** có kim chạy trên màn hình chính tạo ra «vật mới» liên tục nên mỗi cú bấm ở đó có thể phải chụp lại ảnh nền vài lần
   (chậm 15–30s). Bên trong app / game thì không gặp.
 - Kết quả «thất bại» / «không mua được» chỉ được kết luận khi chữ báo lỗi đã hiện ỔN ĐỊNH ít nhất 30 s mà vẫn không thấy «thành công»
@@ -655,10 +685,6 @@ dòng 700 ký tự bị chặn đúng; reset mềm ≈ 1,7 s, reset cứng qua R
 - Nút rộng của **hộp thoại hệ thống** (vd «Xác minh ID Apple → Để sau»): cú bấm đầu tiên từng bị iOS bỏ qua 1 lần, bấm lần hai mới ăn.
   Chưa tái hiện lại được nên chưa sửa; tạm dùng 2 bước «bấm chữ» (đánh dấu «bỏ qua nếu lỗi») liên tiếp.
 - Màn hình nền động hẳn (video) thì không định vị được con trỏ → không bấm (an toàn nhưng bước sẽ hỏng).
-- Hộp «Sign Players» (bước «bấm tại (667,571)») trên máy 01: lần ĐẦU hộp hiện ra, tool có lúc báo «con trỏ không tới được…» dù con trỏ đã
-  nằm trên nút; chạy lại thì được. Gặp với cả Apple Vision lẫn RapidOCR (không do bộ đọc). Đo bằng ảnh chụp liên tục: chữ «Sign Players»
-  đọc được NGAY khung đầu khi hộp còn đang hiện dần — màn hình còn đổi 75% rồi 43% trong ~0,4–0,8 giây sau đó mới đứng yên. Nghi tool
-  hành động lúc hộp chưa hiện xong; CHƯA chứng minh (lần đo đó bấm được) — việc cần làm tiếp: ghi chi tiết lần bấm hỏng rồi mới sửa.
 
 ## 9. Chạy trên Windows (2026-11-27)
 

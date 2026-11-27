@@ -15,7 +15,7 @@ Lỗi từng gặp trên máy thật (và test này giữ cho không tái diễn
   * iPhone bật bộ gõ Telex: «afaf» gõ ra «âf» — vẫn còn chữ f nên cách kiểm cũ («có chữ f là tiếng Anh») lọt lưới.
 """
 from __future__ import annotations
-import math, os, random, sys, time
+import math, os, random, sys, tempfile, time
 
 REAL_SLEEP = time.sleep                     # (các quãng nghỉ của code bị tắt bên dưới; cổng giả cần nghỉ thật vài ms)
 
@@ -78,7 +78,7 @@ def draw_pointer(img, x, y):
 
 class World:
     """iPhone giả: vị trí con trỏ + gia tốc không đều + có thể «tàng hình»."""
-    def __init__(self, visible=True, clock=True, popup=None, popup_from=2, first_scale=None, label_until=None, button=None):
+    def __init__(self, visible=True, clock=True, popup=None, popup_from=2, first_scale=None, label_until=None, button=None, blinker=None, blink=1):
         self.base = make_screen()
         self.x = self.y = 300.0
         self.visible = visible
@@ -96,6 +96,12 @@ class World:
         self.clicks = []
         self.moves = 0
         self.seen_by_verify = []
+        self.blinker = blinker          # (x, y): vật cỡ con trỏ NHẤP NHÁY tại chỗ, hiện `blink` ảnh rồi ẩn `blink` ảnh — như mũi tên cam cạnh
+        self.blink = blink              # «Step 2» của hộp «Sign Players» (đo thật: một ảnh có, một ảnh không — blink=1)
+        self.decoy = None               # (x, y, xác suất): vật cỡ con trỏ LOÉ lên ngẫu nhiên tại (x, y) — vd ngay ở đích (kiểm «không bấm sai»)
+        self.partial = 0.0              # xác suất một lệnh di chỉ tới được 15–40% (board rớt gói)
+        self.blinkers = []              # thêm nhiều vật nhấp nháy (một ảnh có, một ảnh không, nhích 0–3px)
+        self.rnd = random.Random(1)
 
     def render(self):
         self.shots += 1
@@ -106,6 +112,13 @@ class World:
             cv2.putText(img, "12:%02d" % (self.shots % 60), (330, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
         if self.popup and self.shots >= self.popup_from:
             cv2.circle(img, self.popup, R, (120, 120, 120), -1)
+        if self.blinker and (self.shots // self.blink) % 2 == 0:
+            cv2.circle(img, (self.blinker[0] + self.shots % 2 * 2, self.blinker[1]), R, (40, 140, 240), -1)
+        if self.shots % 2 == 0:
+            for bx, by in self.blinkers:
+                cv2.circle(img, (bx + self.shots % 4, by), R, (40, 140, 240), -1)
+        if self.decoy and self.rnd.random() < self.decoy[2]:
+            cv2.circle(img, (self.decoy[0], self.decoy[1]), R, (60, 200, 60), -1)
         b = self.button
         if b:
             cv2.putText(img, "De sau", (b[0] + 70, b[3] - 40), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (255, 122, 0), 3)      # chữ trên nút
@@ -131,6 +144,9 @@ class FakeHands:
 
     def move(self, dx, dy):
         self.w.moves += 1
+        if self.w.partial and self.w.rnd.random() < self.w.partial:      # lệnh di bị rớt một phần
+            s = self.w.rnd.uniform(0.15, 0.4)
+            dx, dy = int(dx * s), int(dy * s)
         if self.w.moves == 1 and self.w.first_scale:
             self.w.x = min(W - 1.0, self.w.x + dx * self.w.first_scale)
             self.w.y = min(H - 1.0, self.w.y + dy * self.w.first_scale)
@@ -234,6 +250,7 @@ def rig(**kw):
 
 
 def main():
+    Nav.MISS_DIR = tempfile.mkdtemp(prefix="ipf-tap-miss-")     # lần bấm hỏng trong test không ghi vào app/data/ thật
     Nav.rng = random.Random(20261125)           # hướng nhích thử chọn ngẫu nhiên: cố định hạt giống để test lặp lại được (bài quét tự đổi nhiều ca)
     DEFAULT_RELOOK = Nav.RELOOK                 # giá trị mặc định của app (các bài decoy tắt tạm, bài «lướt dở» dùng lại đúng giá trị này)
     print("\n== 1. So ảnh nền: thấy con trỏ ở MỌI nền ==")
@@ -424,8 +441,66 @@ def main():
     ok(got is True and len(seen) == 1 and all(abs(b[0] - 186) > 28 or abs(b[1] - 831) > 28 for b in seen[0]),
        "hàm kiểm được gọi ĐÚNG MỘT lần, trên ảnh mà con trỏ chưa che thứ cần bấm", seen)
     n, w = rig()
+    before = set(os.listdir(Nav.MISS_DIR)) if os.path.isdir(Nav.MISS_DIR) else set()
     ok(n.tap_at(186, 831, verify=lambda img: False) is False and w.clicks == [] and abs(w.x - 186) <= 14 and abs(w.y - 831) <= 14,
        "tới nơi nhưng hàm kiểm báo thứ cần bấm không còn → KHÔNG bấm", (round(w.x), round(w.y), w.clicks))
+    kept = sorted(set(os.listdir(Nav.MISS_DIR)) - before) if os.path.isdir(Nav.MISS_DIR) else []
+    files = sorted(os.listdir(os.path.join(Nav.MISS_DIR, kept[0]))) if len(kept) == 1 else []
+    log = open(os.path.join(Nav.MISS_DIR, kept[0], "trace.txt"), encoding="utf-8").read() if "trace.txt" in files else ""
+    ok("không còn ở đó" in (n.miss or "") and files == ["img.png", "ref.png", "trace.txt"] and "(186, 831)" in log and "phép thử đi–về" in log,
+       "lần KHÔNG bấm: có lý do (nav.miss) + lưu nhật ký từng nhịp, ảnh nền, ảnh chụp cuối để tìm nguyên nhân", (n.miss, kept, files))
+    msg = apimode._tap(n, 186, 831, verify=lambda img: False)
+    ok(msg[0] is False and msg[1].endswith("— " + n.miss), "thông báo lỗi của bước nêu lý do cụ thể", msg)
+    ok(n.tap_at(186, 831) is True and n.miss is None, "lần bấm sau được → không còn lý do cũ", n.miss)
+    real_keep = Nav.MISS_KEEP
+    try:
+        Nav.MISS_KEEP = 2
+        for _ in range(3):
+            n, w = rig()
+            n.tap_at(186, 831, verify=lambda img: False)
+        ok(len(os.listdir(Nav.MISS_DIR)) == 2, "chỉ giữ MISS_KEEP lần hỏng gần nhất", os.listdir(Nav.MISS_DIR))
+        open(os.path.join(Nav.MISS_DIR, ".DS_Store"), "w").close()          # file lạ (Finder / Windows) trong thư mục lưu
+        for _ in range(2):
+            n, w = rig()
+            n.tap_at(186, 831, verify=lambda img: False)
+        left = sorted(os.listdir(Nav.MISS_DIR))
+        ok(len(left) == 3 and ".DS_Store" in left, "có file lạ trong thư mục lưu → vẫn dọn đúng (chỉ xoá thư mục do tool tạo, không đụng file lạ)", left)
+    finally:
+        Nav.MISS_KEEP = real_keep
+    for blink, how in ((1, "một ảnh có, một ảnh không — không bao giờ hiện hai ảnh liền"), (2, "hiện hai ảnh liền rồi ẩn hai ảnh")):
+        hits = 0
+        for seed in range(6):
+            Nav.rng, Nav.gain, Nav.gain_sure = random.Random(seed), None, None
+            n, w = rig(clock=False, blinker=(600, 1000), blink=blink)
+            got = n.tap_at(186, 831)
+            hits += bool(got and len(w.clicks) == 1 and abs(w.clicks[0][0] - 186) <= 14 and abs(w.clicks[0][1] - 831) <= 14)
+        ok(hits == 6, "màn có vật NHẤP NHÁY tại chỗ ở xa đích (%s; hộp «Sign Players» máy 01 hỏng 4/10 lần thật) → vẫn tới đúng nút và bấm" % how, hits)
+    # KHÔNG BAO GIỜ BẤM SAI vì gạt vật nhấp nháy (verify): con trỏ thật đi sát vật nhấp nháy + lệnh di rớt một phần + một vật cỡ con trỏ
+    # loé lên ngay ở đích. Gạt nhầm chính con trỏ thì vệt «còn lại» là vật ở đích → bấm lệch ~60px (đã xảy ra trước khi có GUARD).
+    T = (186, 831)
+    ring = [(T[0] + dx, T[1] + dy) for dx, dy in ((61, 61), (61, -61), (-61, 61), (-61, -61), (88, 0), (-88, 0), (0, 88), (0, -88))]
+    for name, setup in (("8 vật nhấp nháy quanh đích + vật loé ở đích + lệnh di rớt một phần",
+                         lambda w: (w.blinkers.extend(ring), setattr(w, "decoy", (T[0] + 3, T[1], 0.3)), setattr(w, "partial", 0.15))),
+                        ("vật nhấp nháy ở xa + lệnh di rớt một phần", lambda w: (setattr(w, "blinker", (600, 1000)), setattr(w, "partial", 0.25)))):
+        wrong, good = [], 0
+        for seed in range(30):
+            Nav.rng, Nav.gain, Nav.gain_sure = random.Random(seed), None, None
+            n, w = rig(clock=False)
+            w.rnd = random.Random(seed * 13 + 5)
+            setup(w)
+            n.tap_at(*T)
+            for c in w.clicks:
+                if abs(c[0] - T[0]) <= 14 and abs(c[1] - T[1]) <= 14:
+                    good += 1
+                else:
+                    wrong.append((seed, c))
+        ok(not wrong and good >= 5, "%s → không lần nào bấm sai chỗ (%d/30 bấm đúng, còn lại không bấm)" % (name, good), wrong)
+    ok(n._match([(400, 660)], [(462, 660), (470, 700)], [(400, 660)], (62, 0), [(470, 700)]) is None
+       and n._match([(400, 660)], [(462, 660), (614, 575)], [(400, 660)], (62, 0), [(614, 575)]) == ((400, 660), (462, 660)),
+       "vệt bị gạt (vật nhấp nháy) nằm SÁT chỗ mới / chỗ cũ của con trỏ → không gạt (có thể chính nó là con trỏ); ở xa → gạt được")
+    ok(n._match([(186, 624)], [(186, 732), (190, 832)], [(186, 624)], (0, 190), [(186, 744)], 76) is None,
+       "vệt bị gạt nằm GIỮA đường con trỏ đi (xa cả hai đầu: lệnh di dài bị rớt giữa chừng, con trỏ thật dừng sát vật nhấp nháy) → không gạt")
+    Nav.rng, Nav.gain, Nav.gain_sure = random.Random(20261125), None, None
     n, w = rig()
     ok(n.tap_text("Wi-Fi") is True and len(w.clicks) == 1, "tap_text: chữ vẫn còn đó tới lúc bấm → bấm", w.clicks)
     n, w = rig(label_until=2)
@@ -502,6 +577,19 @@ def main():
     n.gain = n.gain_sure = None
     ok(n._match([(400, 660), (200, 300)], [(462, 660), (200, 300)], [(400, 660), (200, 300)], m) == ((400, 660), (462, 660)), "nhiều ứng viên cũ: chỉ cái thật sự dời đi mới được ghép")
     ok(n._match([], [(462, 660)], [], m) is None and n._match([(400, 660)], [], [(400, 660)], m) is None, "không có vị trí cũ / không có vệt mới → không nhận")
+    st = [(612, 575)]                                   # vật ĐÃ BIẾT là cựa quậy tại chỗ (mũi tên cam nhích qua lại của hộp «Sign Players»)
+    ok(n._match([(400, 660)], [(462, 660), (614, 575)], [(400, 660)], m, st) == ((400, 660), (462, 660)),
+       "vệt mới thứ hai nằm đúng chỗ một vật ĐÃ BIẾT là cựa quậy tại chỗ → không cản, vẫn nhận con trỏ")
+    ok(n._match([(400, 660)], [(462, 660), (120, 1100)], [(400, 660)], m, st) is None,
+       "vệt mới thứ hai ở chỗ KHÔNG phải vật đã biết → vẫn chưa phân định (như cũ)")
+    ok(n._match([(560, 575)], [(622, 575)], [(560, 575)], m, st) == ((560, 575), (622, 575)),
+       "con trỏ đi ngang qua đúng chỗ vật đã biết, không có vệt mới nào khác → vẫn ghép được")
+    ok(n._match([(400, 660)], [(462, 660), (614, 575), (130, 1100)], [(400, 660)], m, st + [(120, 1100)]) == ((400, 660), (462, 660))
+       and n._match([(560, 575)], [(622, 575), (130, 1100)], [(560, 575)], m, [(612, 575), (120, 1100)]) is None,
+       "gạt vật đã biết chỉ khi nhờ đó còn ĐÚNG MỘT vệt mới; mọi vệt mới đều ở chỗ vật đã biết → chưa phân định")
+    ok(n._gliding([(400, 660)], [(430, 660), (614, 575)], [(400, 660)], (62, 0), st) is True
+       and n._gliding([(400, 660)], [(430, 660), (614, 575)], [(400, 660)], (62, 0)) is False,
+       "«đang lướt dở» cũng không bị vật cựa quậy đã biết cản")
     went = Nav._went
     ok(went((100, 100), (160, 100), (60, 0)) and went((100, 100), (184, 100), (60, 0)) and went((100, 100), (145, 104), (60, 0)),
        "«đi theo lệnh di»: đúng hướng, quãng đi 0,6–1,7 lần lệnh (máy thật mỗi máy một tỉ lệ: 1,0 … 1,4 px/đơn vị)")
@@ -1198,7 +1286,7 @@ def main():
     ok(h._owed is True, "burst thiếu câu trả lời → cũng ghi nhớ là còn «nợ»")
 
     # --- đường chụp nhanh: hỏng thì quay về cách cũ và NGHỈ dùng nó một lúc; dữ liệu rác không được coi là ảnh ---
-    import eyes as eyesmod, tempfile
+    import eyes as eyesmod
     real_grab, real_avail = eyesmod.fastshot.grab, eyesmod.fastshot.AVAILABLE
     ev = Eyes("UDID-GIA")
     tries, slow = [], []
@@ -1324,4 +1412,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    finally:
+        import shutil
+        shutil.rmtree(Nav.MISS_DIR, ignore_errors=True) if "ipf-tap-miss-" in Nav.MISS_DIR else None
