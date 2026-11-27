@@ -53,14 +53,103 @@ def why_unavailable() -> str:
     return _state["error"]
 
 
+# Chữ cái Kirin / Hy Lạp TRÔNG Y HỆT chữ Latin. Vision đôi khi trả về chúng (đo thật: nút «OK» đọc ra «ОK» với «О» Kirin, «Epic» ra «Еріс»)
+# → so khớp «OK» hỏng dù màn hình ghi đúng. Đổi về chữ Latin trước khi so (sau khi đã chuyển chữ thường).
+CONFUSABLE = str.maketrans("аеорсухіјѕԁԛԝоаеорсухкмтвнѵ" "αοοιντκρεχ", "aeopcyxijsdqwoaeopcyxkmtbhv" "aooivtkpex")
+
+
 def _norm(s) -> str:
-    """Cùng cách chuẩn hoá với eyes.norm_text: chữ thường, bỏ dấu tiếng Việt (đ→d), gộp khoảng trắng."""
-    s = unicodedata.normalize("NFD", str(s or "").lower())
+    """Cùng cách chuẩn hoá với eyes.norm_text: chữ thường, chữ Kirin / Hy Lạp giống Latin → Latin, bỏ dấu tiếng Việt (đ→d), gộp khoảng trắng."""
+    s = unicodedata.normalize("NFD", str(s or "").lower().translate(CONFUSABLE))
     s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
     return " ".join(s.replace("đ", "d").split())
 
 
+def _sideways(rows) -> bool:
+    """Phần lớn các dòng chữ (đủ dài) có hộp CAO hơn RỘNG → chữ đang nằm dọc: ảnh chụp bị xoay so với giao diện."""
+    longs = [r for r in rows if len(r["text"].replace(" ", "")) >= 3]
+    tall = [r for r in longs if (r["box"][3] - r["box"][1]) > 1.3 * (r["box"][2] - r["box"][0])]
+    return len(tall) >= 2 and len(tall) >= 0.6 * len(longs)
+
+
+def _unrotate_box(box, rot, W, H):
+    """Hộp trên ảnh đã xoay (rot = "cw" | "ccw") → hộp trên ảnh GỐC cỡ W×H."""
+    x0, y0, x1, y1 = box
+    if rot == "cw":                                   # gốc (x, y) → xoay thuận (H-1-y, x)  ⇒  (u, v) → (v, H-1-u)
+        pts = [(v, H - 1 - u) for u, v in ((x0, y0), (x1, y1))]
+    else:                                             # gốc (x, y) → xoay ngược (y, W-1-x)  ⇒  (u, v) → (W-1-v, u)
+        pts = [(W - 1 - v, u) for u, v in ((x0, y0), (x1, y1))]
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    return (max(0, min(xs)), max(0, min(ys)), min(W, max(xs) + 1), min(H, max(ys) + 1))
+
+
+_CACHE: list = []                                    # [(khoá, các dòng)] — mới nhất ở cuối
+_CACHE_MAX = 6
+_cache_lock = threading.Lock()
+
+
 def _observe(img, correct=False):
+    """Như _observe_once, có nhớ kết quả theo NỘI DUNG ảnh: một lần nhìn thường gọi đọc chữ nhiều lần trên cùng một ảnh (read_text rồi
+    find_text cho từng chữ cần bấm) — ảnh chụp bị xoay thì mỗi lần là 3 lượt Vision. Các dòng trả ra là CHUNG giữa các lần gọi: chỉ đọc, không sửa."""
+    try:
+        import zlib
+        key = (zlib.crc32(img.tobytes()), img.shape, bool(correct))
+    except Exception:
+        return _observe_once(img, correct)
+    with _cache_lock:
+        for k, rows in _CACHE:
+            if k == key:
+                return rows
+    rows = _observe_once(img, correct)
+    if not rows:                     # không đọc được chữ nào (có thể Vision trục trặc nhất thời) → không nhớ, lần sau đọc lại
+        return rows
+    with _cache_lock:
+        _CACHE.append((key, rows))
+        del _CACHE[:-_CACHE_MAX]
+    return rows
+
+
+def _observe_once(img, correct=False):
+    """Các dòng chữ của ảnh, theo thứ tự đọc. Ảnh chụp có lúc bị XOAY so với giao diện (đo trên iPhone 8: trang đăng nhập web mở từ game
+    đang ngang trả về khung dọc 750×1334 với nội dung nằm nghiêng — chữ nằm dọc, Vision đọc sót / sai, «Tiếp tục» không tìm thấy) → khi phần
+    lớn chữ nằm dọc thì đọc trên bản đã xoay thẳng (thử cả hai chiều, lấy chiều đọc được nhiều chữ nằm ngang hơn) rồi đổi hộp về ảnh GỐC —
+    toạ độ trả ra vẫn là toạ độ của ảnh chụp như bên gọi thấy (con trỏ bấm theo đúng ảnh đó)."""
+    rows = _observe_raw(img, correct)
+    if not rows or not _sideways(rows):
+        return rows
+    import cv2
+    H, W = img.shape[:2]
+
+    def score(rs):
+        return sum(len(r["text"]) for r in rs if (r["box"][2] - r["box"][0]) >= (r["box"][3] - r["box"][1]))
+
+    def forward(rs):
+        # Vision đọc được cả chữ LỘN NGƯỢC (xoay sai chiều = 180°) nên đếm chữ không phân biệt được hai chiều; chiều ĐÚNG là chiều mà ký tự
+        # đầu của dòng nằm BÊN TRÁI ký tự cuối (thứ tự đọc của bản lộn ngược bị đảo ngược hết).
+        n = 0
+        for r in rs:
+            raw = r.get("raw") or ""
+            if len(raw.replace(" ", "")) < 4:
+                continue
+            a, b = _range_box(r, 0, 1), _range_box(r, len(raw) - 1, len(raw))
+            if a and b:
+                n += 1 if (a[0] + a[2]) < (b[0] + b[2]) else -1
+        return n
+    best, best_rot, best_key = None, None, None
+    for rot, code in (("cw", cv2.ROTATE_90_CLOCKWISE), ("ccw", cv2.ROTATE_90_COUNTERCLOCKWISE)):
+        rs = _observe_raw(cv2.rotate(img, code), correct)
+        key = (forward(rs), score(rs))
+        if best is None or key > best_key:
+            best, best_rot, best_key = rs, rot, key
+    if not best or best_key[0] < 0 or score(best) <= score(rows):        # chiều = 0: không đo được chiều (dòng quá ngắn) → theo số chữ
+        return rows
+    for r in best:
+        r["rot"], r["W"], r["H"] = best_rot, W, H
+        r["box"] = _unrotate_box(r["box"], best_rot, W, H)
+    return best                     # GIỮ thứ tự đọc của bản xoay thẳng (xếp lại theo toạ độ ảnh gốc là đọc theo cột → xáo dòng)
+
+
+def _observe_raw(img, correct=False):
     """Chạy Vision trên ảnh BGR (numpy). Trả các dòng {text, raw, conf, box (x0, y0, x1, y1) pixel, cand…} theo thứ tự đọc.
     `correct=False`: KHÔNG cho Vision «sửa chính tả theo ngôn ngữ» — ta cần đúng những gì đang hiện trên màn (kiểm bàn phím gõ chuỗi vô
     nghĩa, đọc mã, đọc số tiền…), và việc so khớp phía trên vốn đã không phân biệt dấu / hoa thường."""
@@ -187,6 +276,7 @@ def _range_box(r, start: int, end: int):
             obs = res[0] if isinstance(res, tuple) else res
             if obs is None:
                 return None
-            return _to_px(obs.boundingBox(), r["w"], r["h"])
+            box = _to_px(obs.boundingBox(), r["w"], r["h"])
+            return _unrotate_box(box, r["rot"], r["W"], r["H"]) if r.get("rot") else box
     except Exception:
         return None

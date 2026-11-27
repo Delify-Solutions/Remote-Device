@@ -304,7 +304,8 @@ def unit_tests():
 
 def wiring_tests():
     print("== 5. Nối vào app ==")
-    import gui, store
+    import gui, store, history
+    gui.HISTORY = gui.RUNNER.history = history.History(None)      # không ghi lịch sử vào dữ liệu THẬT
     saved = (store.get_devices_strict, store.get_groups_strict, dict(gui.MGR.board_map), dict(gui.MGR.ble_map), gui.RUNNER.status, gui.ios.list_connected,
              gui.WEBDEV, gui.RUNNER.allow_api, set(gui.RUNNER.parked), gui.RUNNER.hold_reason, dict(gui._IOS_SEEN), gui.PRESENCE,
              gui.RUNNER.journal, gui.RUNNER.conflict, store.DATA_DIR, gui._PRESENCE_LOCK, gui._start_presence, gui.webview, gui.control.AppServer,

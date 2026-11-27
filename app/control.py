@@ -483,6 +483,17 @@ class Control:
 
         def run(nav):
             out = []
+            obs = getattr(nav, "observer", None)          # lịch sử của máy (history.Tracker): cả chuỗi bước là MỘT lượt chạy, bước đánh số 1…N
+            if obs is not None:
+                obs.run_begin("AI / dòng lệnh: %d bước" % len(plan))
+            apimode.watch_phase(nav, None, len(plan))
+            try:
+                return run_plan(nav, out)
+            finally:
+                if obs is not None:
+                    obs.run_end("chạy xong" if out and all(r["ok"] or plan[r["step"] - 1].get("optional") for r in out) and len(out) == len(plan) else "dừng ở bước lỗi")
+
+        def run_plan(nav, out):
             for i, st in enumerate(plan):
                 if abort():
                     out.append({"step": i + 1, "ok": False, "what": what(st), "why": "đã dừng theo yêu cầu huỷ"})

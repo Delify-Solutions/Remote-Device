@@ -62,13 +62,24 @@ class Runner:
         # Tiếp tục. Là trạng thái của MÁY — có cả khi máy đang nghỉ, và vẫn còn sau khi việc đang chạy kết thúc.
         self.parked = set()
         self.logs = deque(maxlen=400)
+        self.history = None                     # history.History: «máy nào đang chạy bước nào» + lịch sử theo máy / theo đơn (None = không ghi)
         self._hb = None
         self._hb_wake = threading.Event()
 
     # ====================== nhật ký ======================
+    def _tracker(self, name):
+        """Bộ theo dõi của máy `name` (history.Tracker), hoặc None nếu không ghi lịch sử."""
+        try:
+            return self.history.tracker(name) if self.history is not None else None
+        except Exception:
+            return None
+
     def _log(self, name, text, kind=""):
         entry = {"t": time.strftime("%H:%M:%S"), "name": name, "text": str(text), "kind": kind}
         self.logs.append(entry)
+        tr = self._tracker(name)
+        if tr is not None:
+            tr.note(text, kind)
         if self.on_log:
             try:
                 self.on_log(entry)
@@ -317,6 +328,9 @@ class Runner:
 
     def _guard(self, target, name, group, w):
         """Bọc worker: lỗi bất ngờ không được làm thread chết im lặng."""
+        tr = self._tracker(name)
+        if tr is not None:
+            tr.run_begin("nhận đơn" if w.get("mode") == "api" else "kịch bản", w.get("group_name"), w.get("script_name"), w.get("mode"))
         try:
             target(name, group, w)
         except Exception as e:
@@ -325,6 +339,8 @@ class Runner:
                 w["hold"] = "lỗi không mong đợi — %s" % e
             self._log(name, "Worker dừng vì lỗi không mong đợi: %s" % e, "bad")
         finally:
+            if tr is not None:
+                tr.run_end(w.get("status") or "")
             w["job_id"] = w["job_ref"] = None
             if w.get("carry_hold") and not w.get("hold"):
                 # «Chạy lại» máy đang giữ nhưng lần chạy này kết thúc TRƯỚC khi kiểm xong game đã đăng xuất → máy vẫn đang giữ như cũ
@@ -620,6 +636,7 @@ class Runner:
         say("Game %s → chạy các bước kết thúc đơn (đăng xuất) rồi kiểm lại"
             % ("còn đang đăng nhập một tài khoản" if state == "in" else "đang ở màn hình lạ"))
         try:
+            apimode.watch_phase(nav, apimode.PHASE_LABEL["finish"], len(steps.get("finish") or []))
             apimode.run_steps(nav, steps.get("finish") or [], {}, abort)
         except apimode.Aborted:
             raise
@@ -639,6 +656,7 @@ class Runner:
         if status:
             status("Đang kết thúc đơn (đăng xuất)")
         try:
+            apimode.watch_phase(nav, apimode.PHASE_LABEL["finish"], len(fin))
             ok, why, idx, _ = apimode.run_steps(nav, fin, {})
         except Exception as e:
             ok, why = False, str(e)
@@ -654,6 +672,19 @@ class Runner:
         return True
 
     def _handle_job(self, name, w, gw, nav, job, resumed, pool, steps, opts, abort, say, status):
+        """Làm MỘT đơn (xem _do_job) — bọc thêm việc ghi lịch sử của đơn: bắt đầu, kết quả cuối."""
+        tr = self._tracker(name)
+        if tr is not None:
+            tr.order_begin(job, resumed)
+        out = None
+        try:
+            out = self._do_job(name, w, gw, nav, job, resumed, pool, steps, opts, abort, say, status)
+            return out
+        finally:
+            if tr is not None:
+                tr.order_end(out.result if out is not None else "error", (out.message if out is not None else "bộ chạy dừng giữa chừng vì lỗi"))
+
+    def _do_job(self, name, w, gw, nav, job, resumed, pool, steps, opts, abort, say, status):
         jid = job["id"]
         ref = job.get("ref") or jid
         w["job_id"], w["job_ref"] = jid, ref

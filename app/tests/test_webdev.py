@@ -315,7 +315,8 @@ def main():
         print("\n== 6. gui._push đi qua web khi bật chế độ web ==")
         if "webview" not in sys.modules:
             sys.modules["webview"] = types.SimpleNamespace(create_window=lambda *a, **k: None, start=lambda *a, **k: None)
-        import gui
+        import gui, history
+        gui.HISTORY = gui.RUNNER.history = history.History(None)      # không ghi lịch sử vào dữ liệu THẬT của người vận hành
         got = []
         old_web, old_win = gui.WEBDEV, gui.WINDOW
         try:

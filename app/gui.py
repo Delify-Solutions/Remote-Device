@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import cv2
 import webview
 
-import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth, presence
+import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth, presence, history
 from nav import Nav
 from hands import Hands
 from eyes import Eyes
@@ -95,10 +95,13 @@ class Manager:
             if not udid:
                 raise RuntimeError(f"Board '{name}' chưa gán iPhone (UDID)")
             nav = Nav(port, udid)
+            nav.observer = HISTORY.tracker(name)        # mọi bước chạy trên máy này (kịch bản, đơn, chạy thử, AI) đều được ghi lại
             self.sessions[name] = nav
             return nav
 
 
+# «máy nào đang chạy bước nào» + lịch sử theo máy / theo đơn (app/data/history/ — không có trong git, không chứa thông tin đăng nhập của khách)
+HISTORY = history.History(lambda: os.path.join(store.DATA_DIR, "history"))
 MGR = Manager()
 
 # Cửa sổ pywebview (đặt trong main) để đẩy cập nhật streaming về giao diện.
@@ -173,7 +176,7 @@ WEB_SAFE_WITH_CUSTOMERS = frozenset((
     "screenshot", "ble_status", "run_step", "test_flow", "test_api_steps",            # tự kiểm theo máy thật (_web_privacy / _web_hold)
     "get_flows", "groups_list", "group_save", "group_add_device", "group_remove_device",
     "group_run", "group_stop", "machine_run", "machine_pause", "machine_resume", "machine_stop", "machine_ack", "stop_all",
-    "run_status", "run_log", "gateway_get", "gateway_test", "gateway_pools", "gateway_pool", "gateway_sync", "ai_info",
+    "run_status", "run_log", "history_live", "history_machine", "history_orders", "history_order", "gateway_get", "gateway_test", "gateway_pools", "gateway_pool", "gateway_sync", "ai_info",
 ))
 
 
@@ -211,6 +214,7 @@ def _gateway():
 # chạy kịch bản nhóm / nhận đơn từ gateway; mỗi máy một worker, dừng độc lập
 RUNNER = Runner(MGR.session, gateway_factory=_gateway, journal=apimode.Journal(store.DATA_DIR),
                 on_log=lambda entry: _push("window.__runLog && window.__runLog(%s)" % json.dumps(entry)))
+RUNNER.history = HISTORY
 def _ident_now(name):
     """iPhone + cổng board mà tên `name` sẽ DÙNG THẬT nếu chạy ngay bây giờ: phiên đã mở sẵn (nếu có), không thì theo bảng gán."""
     nav = MGR.sessions.get(name)
@@ -843,12 +847,16 @@ class Api:
         with _Using(name) as why:
             if why:
                 return {"ok": False, "msg": why}
+            tr = HISTORY.tracker(name)
             try:
                 nav = MGR.session(name)
+                tr.run_begin("chạy thử một bước")
                 ok, msg = engine.run_step(nav, step)
                 return {"ok": ok, "msg": msg}
             except Exception as e:
                 return {"ok": False, "msg": str(e)}
+            finally:
+                tr.run_end()
 
     # ---- flow ----
     def get_flows(self):
@@ -1110,6 +1118,29 @@ class Api:
     def run_status(self):
         return RUNNER.status()
 
+    # ---- theo dõi: máy nào đang chạy bước nào + lịch sử theo máy / theo đơn ----
+    def history_live(self):
+        """{tên máy: việc đang làm}: lượt chạy (nhóm · kịch bản), đơn, giai đoạn, bước thứ mấy / tổng số, bước vừa xong."""
+        return {"ok": True, "now": round(time.time(), 2), "live": HISTORY.live()}
+
+    def history_machine(self, name, limit=300, before=None):
+        try:
+            return {"ok": True, "name": name, "events": HISTORY.machine(str(name), int(limit or 300), float(before) if before else None)}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "events": []}
+
+    def history_orders(self, limit=200, machine=None):
+        try:
+            return {"ok": True, "orders": HISTORY.orders(int(limit or 200), str(machine) if machine else None)}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "orders": []}
+
+    def history_order(self, order_id):
+        try:
+            return dict(HISTORY.order(order_id), ok=True)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     def run_log(self):
         """Nhật ký gần đây của các máy đang nhận đơn (để hiện lại khi mở tab)."""
         return RUNNER.log_tail()
@@ -1119,11 +1150,15 @@ class Api:
         with _Using(name) as why:
             if why:
                 return {"ok": False, "error": why}
+            tr = HISTORY.tracker(name)
             try:
                 nav = MGR.session(name)
+                tr.run_begin("chạy thử kịch bản")
                 return {"ok": True, "results": engine.run_flow(nav, steps)}
             except Exception as e:
                 return {"ok": False, "error": str(e)}
+            finally:
+                tr.run_end()
 
     def test_api_steps(self, name, steps, vars=None):
         """Chạy thử các bước của chế độ API trên 1 máy bằng ĐÚNG bộ chạy dùng khi nạp thật
@@ -1136,7 +1171,17 @@ class Api:
             except Exception as e:
                 return {"ok": False, "error": str(e)}
             vars = {str(k): str(v) for k, v in (vars or {}).items()}
+            tr = HISTORY.tracker(name)
+            tr.run_begin("chạy thử một giai đoạn" if len(steps or []) > 1 else "chạy thử một bước")
+            try:
+                return self._test_api_steps(nav, steps, vars)
+            finally:
+                tr.run_end()
+
+    @staticmethod
+    def _test_api_steps(nav, steps, vars):
             results = []
+            apimode.watch_phase(nav, None, len(steps or []))
             for i, st in enumerate(steps or []):
                 try:
                     ok, msg, _ = apimode.exec_step(nav, st, vars)

@@ -817,7 +817,8 @@ def run_all(tmp, real_ocr):
     import types
     if "webview" not in sys.modules:                       # không cần cửa sổ thật để thử phần logic
         sys.modules["webview"] = types.SimpleNamespace(create_window=lambda *a, **k: None, start=lambda *a, **k: None)
-    import gui
+    import gui, history
+    gui.HISTORY = gui.RUNNER.history = history.History(None)      # không ghi lịch sử vào dữ liệu THẬT
     api2 = gui.Api()
     saved = (gui.MGR.board_map, gui.MGR.sessions, gui.esp.list_boards, gui.esp.probe, gui.esp.chip_info, gui.store.get_devices, gui._push, gui.store.get_group, gui.Api._runnable)
     closed, probed = [], []

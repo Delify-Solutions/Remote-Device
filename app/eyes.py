@@ -27,8 +27,9 @@ except ImportError:
 
 def norm_text(s) -> str:
     """Chuẩn hoá để so khớp chữ OCR: chữ thường, BỎ DẤU tiếng Việt (đ→d), gộp khoảng trắng.
-    OCR hay đọc sai dấu ("Đăng nhập" → "Dang nhap"/"Đăng nhâp") nên so khớp không dấu bền hơn."""
-    s = unicodedata.normalize("NFD", str(s or "").lower())
+    OCR hay đọc sai dấu ("Đăng nhập" → "Dang nhap"/"Đăng nhâp") nên so khớp không dấu bền hơn. Chữ Kirin / Hy Lạp trông y hệt chữ Latin
+    (Vision có lúc đọc «OK» thành «ОK» với «О» Kirin) được đổi về Latin."""
+    s = unicodedata.normalize("NFD", str(s or "").lower().translate(ocr.CONFUSABLE))
     s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
     return " ".join(s.replace("đ", "d").split())
 
@@ -478,6 +479,41 @@ class Eyes:
         """Tắt hẳn rồi mở MỚI app `name` trên máy này qua USB (xem iosapp.relaunch). Trả bundle id; không làm được → ném lỗi kèm lý do."""
         import iosapp
         return iosapp.relaunch(self.udid, name)
+
+    def text_lines(self, img=None) -> list:
+        """Các DÒNG chữ trên ảnh: [{text, x, y, w, h}] — (x, y) là tâm dòng, pixel ảnh gốc. Apple Vision trước; không có / không đọc ra
+        dòng nào thì tesseract (gộp theo dòng). Vision hỏng giữa chừng mà không có tesseract → báo lỗi (như read_text)."""
+        if img is None:
+            img = self.screenshot()
+        broken = None
+        try:
+            seen = [{k: r[k] for k in ("text", "x", "y", "w", "h")} for r in ocr.lines(img)]
+        except Exception as e:
+            seen, broken = [], e
+        if seen:
+            return seen
+        if pytesseract is None:
+            if broken is not None:
+                raise RuntimeError("Bộ đọc chữ của macOS (Vision) báo lỗi (%s) và máy không cài tesseract — không đọc được màn hình" % broken)
+            return []
+        scale = 2
+        gray = cv2.cvtColor(cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC), cv2.COLOR_BGR2GRAY)
+        try:
+            d = pytesseract.image_to_data(gray, lang=self.OCR_LANG, output_type=pytesseract.Output.DICT)
+        except Exception:
+            d = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
+        rows = {}
+        for i, t in enumerate(d["text"]):
+            if (t or "").strip():
+                rows.setdefault((d["block_num"][i], d["par_num"][i], d["line_num"][i]), []).append(i)
+        out = []
+        for idxs in rows.values():
+            idxs.sort(key=lambda i: d["left"][i])
+            x0 = min(d["left"][i] for i in idxs); y0 = min(d["top"][i] for i in idxs)
+            x1 = max(d["left"][i] + d["width"][i] for i in idxs); y1 = max(d["top"][i] + d["height"][i] for i in idxs)
+            out.append({"text": " ".join(d["text"][i].strip() for i in idxs), "x": (x0 + x1) // (2 * scale), "y": (y0 + y1) // (2 * scale),
+                        "w": (x1 - x0) // scale, "h": (y1 - y0) // scale})
+        return out
 
     def find_image(self, tmpl, img=None, min_score: float = 0.9, near=None):
         """Tìm ảnh mẫu `tmpl` (BGR) trên màn hình — xem locate_image(). Trả ((cx, cy) | None, điểm giống cao nhất)."""

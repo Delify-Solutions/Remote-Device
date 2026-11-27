@@ -201,7 +201,12 @@ def _describe(step: dict, vars: dict) -> str:
         return f"Tap ({step.get('x')},{step.get('y')})"
     if t in ("tap_text", "wait_text", "assert_text"):
         name = {"tap_text": "Tap chữ", "wait_text": "Chờ chữ", "assert_text": "Kiểm chữ"}[t]
-        return f"{name} «{show(str(step.get('text') or ''), vars)}»"
+        out = f"{name} «{show(str(step.get('text') or ''), vars)}»"
+        if t != "wait_text" and str(step.get("near") or "").strip():
+            out += " có «%s» %s" % (show(str(step.get("near")), vars), NEAR_DIRS.get(str(step.get("near_dir") or "below"), "ngay dưới"))
+        if t != "wait_text" and str(step.get("scroll") or "") in SWIPE_DIRS:
+            out += " (chưa thấy thì lướt %s)" % SWIPE_DIRS[str(step.get("scroll"))]
+        return out
     if t == "tap_image":
         try:
             size = "%d×%d" % (int(step.get("w")), int(step.get("h")))
@@ -210,9 +215,17 @@ def _describe(step: dict, vars: dict) -> str:
         return ("Bấm vào vùng ảnh " + size).strip()
     if t == "tap_if":
         cases = step.get("cases") if isinstance(step.get("cases"), list) and step.get("cases") else [step]
-        return "; ".join(("Nếu thấy chữ «%s» thì nhấn phím %s" % (show(str(c.get("text") or ""), vars), str(c.get("key")).strip().lower())) if c.get("key") else
-                         "Nếu thấy chữ «%s» thì bấm «%s»" % (show(str(c.get("text") or ""), vars), show(str(c.get("tap") or "") or str(c.get("text") or ""), vars))
-                         for c in cases if isinstance(c, dict))
+        def one(c):
+            seen = show(str(c.get("text") or ""), vars)
+            if c.get("key"):
+                return "Nếu thấy chữ «%s» thì nhấn phím %s" % (seen, str(c.get("key")).strip().lower())
+            if isinstance(c.get("at"), (list, tuple)) and len(c["at"]) == 2:
+                return "Nếu thấy chữ «%s» thì bấm tại (%s, %s)" % (seen, c["at"][0], c["at"][1])
+            return "Nếu thấy chữ «%s» thì bấm «%s»" % (seen, show(str(c.get("tap") or "") or str(c.get("text") or ""), vars))
+        out = "; ".join(one(c) for c in cases if isinstance(c, dict))
+        if str(step.get("until") or "").strip():
+            out += " (xong khi thấy «%s»)" % show(str(step.get("until")), vars)
+        return out
     if t == "type":
         return f"Gõ «{show(str(step.get('text') or ''), vars)}»"
     if t == "key":
@@ -395,6 +408,206 @@ def _find_wait(nav, alts: list, wait: float, abort=None):
         _sleep(1.0, abort)
 
 
+# Không có «ngay trên»: trong một ô gói, giá nằm DƯỚI số coin, nên «ngay trên» với chữ cần tìm là số coin sẽ vớ giá của ô HÀNG TRÊN (cách
+# ~139 px, gần hơn giá của chính ô đó). Bố cục có chữ đi kèm nằm trên thì ghi ngược lại: tìm chữ phía trên, chữ đi kèm là chữ ngay dưới nó.
+NEAR_DIRS = {"below": "ngay dưới", "right": "bên phải", "left": "bên trái"}
+SCROLLS_MAX = 20         # số lần lướt tối đa của bước «bấm vào chữ … chưa thấy thì lướt» (mỗi chiều)
+
+
+def card_opts(tmpl: dict, vars: dict):
+    """Tuỳ chọn «trong cùng ô» của bước bấm / kiểm chữ: {near_alts, near_label, dir, scroll, scrolls} hoặc None nếu bước không dùng.
+    `near`: chữ PHẢI nằm cùng ô với chữ cần tìm (vd giá của gói); `near_dir`: chữ đó nằm ở đâu so với chữ cần tìm (mặc định ngay dưới);
+    `scroll`: chưa thấy thì lướt danh sách theo hướng này (left / right / up / down); `scrolls`: lướt tối đa bao nhiêu lần (mặc định 8)."""
+    near_raw = str(tmpl.get("near") or "")
+    scroll = str(tmpl.get("scroll") or "").strip().lower()
+    if not near_raw.strip() and not scroll:
+        return None
+    if scroll and scroll not in SWIPE_DIRS:
+        raise ConfigError("hướng lướt «%s» không hỗ trợ (chỉ: left, right, up, down)" % scroll)
+    d = str(tmpl.get("near_dir") or "below").strip().lower()
+    if d not in NEAR_DIRS:
+        raise ConfigError("vị trí của chữ đi kèm «%s» không hỗ trợ (chỉ: %s)" % (d, ", ".join(NEAR_DIRS)))
+    try:
+        n = int(tmpl.get("scrolls") if tmpl.get("scrolls") not in (None, "") else 8)
+    except (TypeError, ValueError):
+        raise ConfigError("bước «Bấm vào chữ»: số lần lướt phải là số")
+    near_alts = alternatives(subst(near_raw, vars)) if near_raw.strip() else []
+    if near_raw.strip() and not near_alts:
+        raise ConfigError("bước «Bấm vào chữ»: chữ đi kèm trong ô đang để trống")
+    return {"near_alts": near_alts, "near_label": show(near_raw, vars), "dir": d, "scroll": scroll or None,
+            "scrolls": max(0, min(n, SCROLLS_MAX)), "label": None}
+
+
+def _flat(s) -> str:
+    return norm_text(s).replace(" ", "")
+
+
+def _line_hits(lines: list, alts: list, size=None) -> list:
+    """Các dòng mà CẢ DÒNG đúng bằng một trong `alts` (bỏ dấu câu / ký hiệu, không phân biệt hoa thường / dấu) — KHÔNG lấy dòng chỉ «có chứa»:
+    «500» không khớp «1,500», «100» không khớp «Paid: 100», giá «26.000đ» không khớp «126.000đ». Bỏ dòng CHẠM MÉP màn hình (ô bị cắt dở:
+    «1,500» bị cắt còn «500» sẽ thành khớp nhầm). Đọc chữ ra khác đi (vd «1.000» thay vì «1,000») thì khai thêm cách viết bằng «|»."""
+    import ocr as _ocr
+    want = [_flat(a) for a in alts if _flat(a)]
+    W = size[0] if size else None
+    out = []
+    for ln in lines:
+        if not any(_ocr.whole_line(_flat(ln.get("text")), w) for w in want):
+            continue
+        if W:
+            half = float(ln.get("w") or 0) / 2.0
+            if float(ln["x"]) - half <= 3 or float(ln["x"]) + half >= W - 3:
+                continue
+        if _number_piece(ln, lines):
+            continue
+        out.append(ln)
+    return out
+
+
+_NUMERIC = re.compile(r"^[0-9][0-9.,' ]*$|^[.,'][0-9][0-9.,' ]*$|^[0-9.,' ]*[0-9][.,']$")
+
+
+def _number_piece(ln: dict, lines: list) -> bool:
+    """Dòng toàn số này chỉ là MẢNH của một số lớn hơn: bộ đọc chữ có lúc tách «1,500» thành «1,» + «500» — mảnh «500» khớp nguyên dòng với
+    gói 500 là bấm nhầm ô. Mảnh = có một dòng toàn số / dấu phân cách khác CÙNG HÀNG, nằm SÁT (khe hở không quá một chiều cao chữ)."""
+    t = str(ln.get("text") or "").strip()
+    if not _NUMERIC.match(t):
+        return False
+    x, y, w, h = float(ln["x"]), float(ln["y"]), float(ln.get("w") or 0), float(ln.get("h") or 0)
+    for o in lines:
+        if o is ln or not _NUMERIC.match(str(o.get("text") or "").strip()):
+            continue
+        ox, oy, ow, oh = float(o["x"]), float(o["y"]), float(o.get("w") or 0), float(o.get("h") or 0)
+        hh = max(h, oh, 1.0)
+        if abs(oy - y) <= 0.5 * hh and abs(ox - x) - (w + ow) / 2.0 <= hh:
+            return True
+    return False
+
+
+def pick_card(lines: list, alts: list, near_alts: list, size, direction: str = "below"):
+    """Trong các dòng chữ `lines` ([{text, x, y, w, h}]) của ảnh cỡ `size` = (W, H): dòng khớp `alts` mà CÙNG Ô có một dòng khớp `near_alts`
+    nằm theo hướng `direction`. Trả (x, y) của dòng khớp `alts` (chỗ sẽ bấm), hoặc None.
+    «Cùng ô» = lệch theo trục còn lại không quá 15% màn hình và cách theo trục hướng không quá 35% (dưới) hay 25% (trái / phải) màn
+    hình (đo trên danh sách gói eFootball, iPhone 8 ngang: số coin và giá trong một ô thẳng cột, cách nhau ~146 px; ô bên cạnh cách ~590 px,
+    hàng dưới ~285 px). Ngoài ra GIỮA hai chữ không được có dòng nào cùng loại với chữ cần tìm (một số coin khác = đã sang ô khác) — giá của
+    ô hàng dưới / ô bên cạnh không ghép nhầm được vào số coin của ô này.
+    Từ HAI ô trở lên cùng đủ điều kiện → None (nhập nhằng: không đoán — bấm nhầm ô là mua nhầm gói)."""
+    W, H = size
+    A = _line_hits(lines, alts, size)
+    if not near_alts:
+        return (int(A[0]["x"]), int(A[0]["y"])) if len(A) == 1 else None
+    B = _line_hits(lines, near_alts, size)
+
+    def fits(a, b):
+        dx, dy = float(b["x"]) - float(a["x"]), float(b["y"]) - float(a["y"])
+        if direction == "below":
+            return abs(dx) <= 0.15 * W and 0 < dy <= 0.35 * H, dy
+        along = dx if direction == "right" else -dx
+        return abs(dy) <= 0.6 * max(float(a.get("h") or 0), float(b.get("h") or 0), 0.03 * H) and 0 < along <= 0.25 * W, along
+    def kind(t):                                        # «loại» của một dòng: số thuần («1,500», «300») hay khung chữ («Starter Set: …»)
+        f = re.sub(r"[^0-9a-z]", "", _flat(t))          # cả CỤM số thành một ký hiệu: «500 Coins» và «1,500 Coins» cùng loại «9coins»
+        return "#" if f.isdigit() else re.sub(r"[0-9]+", "9", f)
+
+    def between(a, b):                                  # các dòng nằm GIỮA a và b theo hướng đã chọn (cùng cột / cùng hàng)
+        out = []
+        for ln in lines:
+            if ln is a or ln is b:
+                continue
+            if direction == "below":
+                if abs(float(ln["x"]) - float(a["x"])) <= 0.15 * W and float(a["y"]) < float(ln["y"]) < float(b["y"]):
+                    out.append(ln)
+            elif abs(float(ln["y"]) - float(a["y"])) <= 0.6 * max(float(a.get("h") or 0), 0.03 * H) and \
+                    min(float(a["x"]), float(b["x"])) < float(ln["x"]) < max(float(a["x"]), float(b["x"])):
+                out.append(ln)
+        return out
+    pairs = [(a, b) for a in A for b in B if a is not b and fits(a, b)[0]]
+    good = []
+    for a, b in pairs:
+        if any(kind(ln.get("text")) == kind(a.get("text")) for ln in between(a, b)):
+            continue                                    # giữa hai chữ có một dòng CÙNG LOẠI với chữ cần tìm (số coin của ô khác) → đã sang ô khác
+        good.append(a)
+    if len({id(a) for a in good}) != 1:
+        return None
+    return int(good[0]["x"]), int(good[0]["y"])
+
+
+def _card_look(nav, alts, card):
+    img = nav.e.screenshot()
+    lines = nav.e.text_lines(img)
+    h, w = img.shape[:2] if hasattr(img, "shape") else (0, 0)
+    if not w and lines:                                  # (máy giả không có ảnh thật) → ước cỡ màn hình theo chữ
+        w = max(int(ln["x"]) + int(ln.get("w") or 0) for ln in lines) or 1
+        h = max(int(ln["y"]) + int(ln.get("h") or 0) for ln in lines) or 1
+    return pick_card(lines, alts, card["near_alts"], (w or 1, h or 1), card["dir"]), "\n".join(str(ln.get("text")) for ln in lines)
+
+
+def _card_swipe(nav, direction: str):
+    """Lướt danh sách một nhịp theo hướng ngón tay (left = kéo sang trái để xem phần bên phải). Kéo ~55% màn hình, giữa vùng nội dung."""
+    img = nav.e.screenshot()
+    H, W = img.shape[:2]
+    r = None
+    for k in (0.45, 0.62):                               # con trỏ không tới được điểm bắt đầu (chưa chạm gì) → thử lại ở độ cao khác một lần
+        pts = {"left": (0.78 * W, k * H, 0.23 * W, k * H), "right": (0.22 * W, k * H, 0.77 * W, k * H),
+               "up": (k * W, 0.75 * H, k * W, 0.3 * H), "down": (k * W, 0.3 * H, k * W, 0.75 * H)}[direction]
+        r = gesture(nav, "lướt %s" % SWIPE_DIRS[direction], lambda: nav.swipe(*[int(v) for v in pts]))
+        if r[0] or r[2]:
+            return r
+    return r
+
+
+def _find_card(nav, alts, card, wait: float, abort=None):
+    """Tìm ô (xem pick_card); chưa thấy thì nhìn lại tới hết `wait` giây, rồi (nếu có `scroll`) lướt danh sách theo hướng đó, hết danh
+    sách (lướt mà chữ trên màn hình không đổi) hoặc đủ số lần thì lướt NGƯỢC lại (máy có thể đang đứng giữa danh sách). Trả ((x, y) | None,
+    lý do, acted) — acted = đã có thao tác lướt (đã chạm vào máy)."""
+    label = "«%s»" % card["label"] if card.get("label") is not None else " / ".join("«%s»" % a for a in alts)
+    what = label + ((" có «%s» %s" % (card["near_label"], NEAR_DIRS[card["dir"]])) if card["near_alts"] else "")
+    park(nav)
+    _sleep(LOOK_SETTLE, abort)
+    end = time.time() + wait
+    while True:
+        pos, seen = _card_look(nav, alts, card)
+        if pos:
+            return pos, "", False
+        if time.time() >= end:
+            break
+        _sleep(1.0, abort)
+    if not card["scroll"]:
+        return None, ("chờ %gs không thấy ô %s" % (wait, what)) if wait else "không thấy ô %s trên màn hình" % what, False
+    back = {"left": "right", "right": "left", "up": "down", "down": "up"}[card["scroll"]]
+    # Một cú lướt HOÀN TẤT chỉ trượt danh sách, không bấm vào gì → không tính là «đã chạm» (không thấy gói sau khi lướt = «chưa mua», không
+    # phải «không chắc»: gói sale hết hạn không được làm máy dừng chờ đối soát). Chỉ cú lướt hỏng GIỮA CHỪNG (không rõ đã nhả nút chưa —
+    # có thể thành một cú bấm) mới là «đã chạm».
+    acted, swipes = False, 0
+    for direction, limit in ((card["scroll"], card["scrolls"]), (back, 2 * card["scrolls"])):
+        for _ in range(limit):
+            ok, why, a = _card_swipe(nav, direction)
+            if not ok:
+                return None, why, a
+            swipes += 1
+            park(nav)
+            _sleep(LOOK_SETTLE, abort)
+            pos, now = _card_look(nav, alts, card)
+            if pos:
+                _sleep(LOOK_SETTLE, abort)              # danh sách có thể còn trôi → chờ đứng yên rồi lấy lại vị trí
+                pos2, _ = _card_look(nav, alts, card)
+                if pos2:
+                    return pos2, "", acted
+                continue
+            if now == seen:
+                break                                   # lướt mà màn hình không đổi = hết danh sách theo hướng này
+            seen = now
+    return None, "lướt hết danh sách (%d lần) không thấy ô %s" % (swipes, what), acted
+
+
+def _card_still_there(nav, alts, card, pos, tol: int = 45):
+    """Hàm kiểm của bước bấm vào ô: ô đó (chữ + chữ đi kèm) còn ở quanh vị trí cũ trên ảnh `img` không."""
+    def check(img) -> bool:
+        lines = nav.e.text_lines(img)
+        h, w = img.shape[:2] if hasattr(img, "shape") else (1, 1)
+        p = pick_card(lines, alts, card["near_alts"], (w, h), card["dir"])
+        return bool(p) and abs(p[0] - pos[0]) <= tol and abs(p[1] - pos[1]) <= tol
+    return check
+
+
 TYPE_GAP_MAX = 2.0       # quãng nghỉ dài nhất giữa hai ký tự của bước «gõ chữ» (trường `gap`)
 IMAGE_MIN = 0.9          # độ giống tối thiểu mặc định của bước «bấm vào vùng ảnh» (xem eyes.locate_image)
 
@@ -455,8 +668,69 @@ def _not_seen(label: str, wait: float) -> str:
     return ("chờ %gs không thấy chữ «%s» trên màn hình" % (wait, label)) if wait else "không thấy chữ «%s» trên màn hình" % label
 
 
+def observed_what(step: dict, vars: dict) -> str:
+    """Lời mô tả bước để GHI LỊCH SỬ. Bước gõ chữ ghi TRỰC TIẾP (không qua {{biến}}) có thể là mật khẩu gõ tay → chỉ ghi số ký tự."""
+    if _literal_typed(step):
+        return "Gõ %d ký tự" % len(str(step.get("text") or "")) + (" (bỏ qua nếu lỗi)" if step.get("optional") else "")
+    return describe(step, vars)
+
+
+def _literal_typed(step: dict) -> str:
+    """Chữ gõ TRỰC TIẾP của bước «gõ chữ» (không qua {{biến}}) — có thể là mật khẩu gõ tay; "" nếu không phải."""
+    raw = str(step.get("text") or "") if step.get("type") == "type" else ""
+    return raw if raw and not PLACEHOLDER.search(raw) else ""
+
+
+def observed_why(step: dict, why) -> str:
+    """Lời kết quả của bước để GHI LỊCH SỬ / lời báo của đơn: bỏ chữ gõ trực tiếp («…» trong lời mô tả bước có nhắc lại nó) ra khỏi lời."""
+    why = str(why or "")
+    raw = _literal_typed(step)
+    return why.replace("«%s»" % raw, "«(%d ký tự)»" % len(raw)) if raw else why
+
+
+def said(step: dict, vars: dict) -> str:
+    """Tên bước trong lời báo HỎNG của một giai đoạn / đơn (đi vào nhật ký, lời báo của đơn, lịch sử): như describe nhưng bước gõ chữ
+    trực tiếp chỉ nói số ký tự."""
+    return observed_what(step, vars) if _literal_typed(step) else _describe(step, vars)
+
+
+def watch_phase(nav, label, total=None):
+    """Báo cho bộ theo dõi của máy (nav.observer — xem history.Tracker): sắp chạy một DANH SÁCH bước (giai đoạn `label`, `total` bước)."""
+    obs = getattr(nav, "observer", None)
+    if obs is not None:
+        try:
+            obs.phase(label, total)
+        except Exception:
+            pass
+
+
 def exec_step(nav, tmpl: dict, vars: dict, abort=None):
-    """Chạy 1 bước (mẫu chưa thế biến). Trả (ok, lý do, acted). Lý do không chứa giá trị bí mật."""
+    """Chạy 1 bước (mẫu chưa thế biến). Trả (ok, lý do, acted). Lý do không chứa giá trị bí mật.
+    Máy có bộ theo dõi (nav.observer) thì báo cho nó lúc BẮT ĐẦU và lúc XONG bước — «máy nào đang chạy bước nào» + lịch sử. Chữ báo đi là
+    lời mô tả ĐÃ CHE (describe: giữ nguyên tên {{username}}, {{password}}, {{otp}}). Theo dõi trục trặc không bao giờ làm hỏng bước."""
+    obs = getattr(nav, "observer", None)
+    if obs is None:
+        return _exec_step(nav, tmpl, vars, abort)
+    try:
+        obs.step_begin(observed_what(tmpl, vars), tmpl.get("type"))
+    except Exception:
+        return _exec_step(nav, tmpl, vars, abort)
+    try:
+        r = _exec_step(nav, tmpl, vars, abort)
+    except Aborted:
+        obs.step_end(False, "đã dừng theo yêu cầu")
+        raise
+    except (ConfigError, InputError) as e:              # lời của hai loại lỗi này do tool tạo ra (đã che biến bí mật; chữ gõ trực tiếp bỏ ra ở observed_why)
+        obs.step_end(False, observed_why(tmpl, e))
+        raise
+    except Exception as e:
+        obs.step_end(False, "lỗi: %s" % e.__class__.__name__)
+        raise
+    obs.step_end(r[0], observed_why(tmpl, r[1]))
+    return r
+
+
+def _exec_step(nav, tmpl: dict, vars: dict, abort=None):
     if abort and abort():
         raise Aborted()
     t = tmpl.get("type")
@@ -471,6 +745,18 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
         label = show(raw, vars)
         if t != "wait_text":                    # bước chờ thì tự nhìn lại nhiều lần, không cần chờ trước
             _sleep(LOOK_SETTLE, abort)
+        card = card_opts(tmpl, vars) if t != "wait_text" else None
+        if card:
+            # «Bấm vào chữ A trong ô có chữ B» (vd số coin + giá của MỘT gói): tìm đúng ô, chưa thấy thì lướt danh sách để tìm
+            wait = _text_wait(tmpl, "Bấm vào chữ")
+            card["label"] = label                       # lời báo chỉ dùng chữ đã che (show): {{username}}… giữ nguyên tên
+            pos, why, acted = _find_card(nav, alts, card, wait, abort)
+            if not pos:
+                return False, why, acted
+            if t == "assert_text":
+                return True, "", acted
+            ok, why2, acted2 = _tap(nav, pos[0], pos[1], verify=_card_still_there(nav, alts, card, pos))
+            return ok, why2, acted or acted2
         if t == "tap_text":
             wait = _text_wait(tmpl, "Bấm vào chữ")
             pos = _find_wait(nav, alts, wait, abort)
@@ -519,13 +805,27 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
         #     chắn — đi tiếp là bấm nhầm). Vì thế đừng dùng bước này cho thứ bấm xong VẪN CÒN trên màn hình (thẻ, nút bật / tắt): dùng
         #     «bấm vào chữ».
         cases = if_cases(tmpl, vars)
+        # `until`: chữ chỉ hiện khi KHÔNG còn hộp thoại nào che (vd tab «Shop» của màn chính) → thấy nó mà không thấy trường hợp nào thì XONG
+        # ngay, không chờ hết `timeout`. Nhờ vậy chờ được lâu (hộp thoại hiện muộn sau khi game tải) mà không tốn thời gian khi đã sạch.
+        until = alternatives(subst(str(tmpl.get("until") or ""), vars))
         try:
             timeout = max(0.0, min(float(tmpl.get("timeout") or 0), 120.0))
         except (TypeError, ValueError):
             raise ConfigError("bước «Nếu thấy chữ … thì bấm»: thời gian chờ phải là số giây")
         done, hits, acted_any = [], [0] * len(cases), False
+        # Chỗ chữ của từng trường hợp lúc được xử lý (where), đã từng mất đi sau đó chưa (gone), đã cho thêm thời gian chờ nút hiện chưa
+        # (regrace) — để phân biệt «chữ còn ở CHỖ KHÁC sau khi hộp thoại đóng» với «hộp thoại HIỆN LẠI mà nút chưa kịp hiện».
+        where, gone, regrace = [None] * len(cases), [False] * len(cases), [False] * len(cases)
         flips = 0                                     # số lần «thấy lại rồi lại không thấy» (chữ nhấp nháy / đọc lúc được lúc không)
+
+        def case_at(c, img):
+            return next((p for p in (nav.e.find_text(a, img) for a in c["alts"]) if p), None)
+
+        def same_place(p, q, img):
+            tol = max(40.0, 0.05 * max(img.shape[:2])) if hasattr(img, "shape") else 40.0
+            return abs(p[0] - q[0]) <= tol and abs(p[1] - q[1]) <= tol
         end = time.time() + timeout
+        until_since = None                            # lúc bắt đầu thấy chữ «until» liên tục (màn hình sạch phải giữ đủ UNTIL_STABLE giây)
         _sleep(LOOK_SETTLE, abort)
         while True:
             if flips > IF_FLIPS_MAX:                  # chốt dừng: không kết luận được hộp thoại đã đóng hay chưa thì DỪNG, không nhìn mãi
@@ -538,21 +838,39 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
             k, pos, blocked = None, None, None
             for i, c in enumerate(cases):
                 if not any(text_has(txt, a) for a in c["alts"]):
+                    gone[i] = gone[i] or bool(hits[i])
                     continue
-                if c["key"]:
+                if c["key"] or c["at"]:
                     k = i
                     break
                 pos = next((p for p in (nav.e.find_text(a, img) for a in c["tap_alts"]) if p), None)
                 if pos:
                     k = i
                     break
-                blocked = blocked or c
+                if hits[i]:
+                    # Đã xử lý rồi mà chữ còn, nút không còn: chữ ở CHỖ KHÁC (vd «konami.net» trên thanh địa chỉ của trang vừa mở) = hộp
+                    # thoại đã đóng; chữ ở ĐÚNG CHỖ cũ (không đo được chỗ thì: chữ đã mất rồi hiện lại) = hộp thoại HIỆN LẠI, nút chưa kịp hiện.
+                    p = case_at(c, img)
+                    if not (same_place(p, where[i], img) if (p and where[i]) else gone[i]):
+                        continue
+                    if not regrace[i]:                # cho nút thêm IF_REAPPEAR_WAIT giây để hiện (hộp thoại đang trượt vào)
+                        regrace[i] = True
+                        end = max(end, time.time() + IF_REAPPEAR_WAIT)
+                blocked = blocked or c                # thấy chữ mà không có nút để bấm: màn hình đang bị chắn
             if k is None:
-                if time.time() >= end:
+                # «Sạch» = thấy chữ «until» mà không có trường hợp nào, LIÊN TỤC đủ UNTIL_STABLE giây (đo trên eFootball: tab «Shop» hiện
+                # thoáng qua vài giây TRƯỚC khi «Login Bonus» / «Sign Players» trượt vào — kết luận ở lần thấy đầu là quá sớm).
+                if until and not blocked and any(text_has(txt, u) for u in until):
+                    until_since = until_since or time.time()
+                else:
+                    until_since = None
+                clear = until_since is not None and time.time() - until_since >= UNTIL_STABLE
+                if clear or time.time() >= end:
                     if blocked:
                         return False, "thấy chữ «%s» nhưng không thấy chữ «%s» để bấm" % (blocked["label"], blocked["tap_label"]), acted_any
                     if not done:
-                        return True, "không thấy %s — bỏ qua" % " / ".join("«%s»" % c["label"] for c in cases), acted_any
+                        return True, ("thấy «%s» — không có gì phải xử lý" % show(str(tmpl.get("until")), vars)) if clear else \
+                            "không thấy %s — bỏ qua" % " / ".join("«%s»" % c["label"] for c in cases), acted_any
                     if len(cases) == 1:
                         c = cases[0]
                         return True, "thấy «%s» → đã %s%s" % (c["label"], c["act"], (" (%d lần)" % hits[0]) if hits[0] > 1 else ""), acted_any
@@ -568,18 +886,26 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
                 if not any(text_has(norm_text(nav.e.read_text(img)), a) for a in c["alts"]):
                     flips += 1
                     continue                          # đã đóng trong lúc chờ → nhìn lại từ đầu
-                if not c["key"]:
+                if not c["key"] and not c["at"]:
                     pos = next((p for p in (nav.e.find_text(a, img) for a in c["tap_alts"]) if p), None)
                     if not pos:
                         flips += 1
                         continue
+            if not c["at"]:
+                where[k] = case_at(c, img)            # nhớ chỗ chữ của hộp thoại lúc xử lý (xem `same_place` ở trên)
+            gone[k] = regrace[k] = False
             hits[k] += 1
             if hits[k] > IF_REPEAT:
                 return False, "đã %s %d lần mà vẫn còn thấy «%s» (hộp thoại không đóng)" % (c["act"], IF_REPEAT, c["label"]), acted_any
             if len(done) >= IF_MAX_TAPS:
                 return False, "đã xử lý %d hộp thoại liên tiếp mà vẫn còn thấy «%s» — dừng lại (một bước xử lý tối đa %d lần)" % (len(done), c["label"], IF_MAX_TAPS), acted_any
+            until_since = None
             if c["key"]:
                 ok, why, acted = _keyed(hid(nav, "key " + c["key"]), abort)
+            elif c["at"]:
+                # nút không đọc được chữ (vd «OK» xanh nhạt của hộp «Sign Players»): bấm theo toạ độ — nhưng CHỈ khi chữ của hộp thoại còn
+                # đang hiện ngay trước cú bấm (không bấm mù vào chỗ đó khi hộp thoại đã đóng)
+                ok, why, acted = _tap(nav, c["at"][0], c["at"][1], verify=lambda im, c=c: any(text_has(norm_text(nav.e.read_text(im)), a) for a in c["alts"]))
             else:
                 ok, why, acted = _tap(nav, pos[0], pos[1], verify=_still_there(nav, c["tap_alts"], pos))
             acted_any = acted_any or acted
@@ -707,15 +1033,17 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
 IF_REPEAT = 2            # cùng một trường hợp của bước «nếu … thì bấm» được bấm tối đa chừng này lần (bấm rồi vẫn thấy mãi = hộp thoại không đóng)
 IF_MAX_TAPS = 6          # tổng số lần bấm tối đa của một bước «nếu … thì bấm»
 IF_AFTER_TAP = 1.2       # nghỉ sau mỗi lần bấm rồi mới nhìn lại
+UNTIL_STABLE = 4.0       # bước «nếu thấy chữ…» có `until`: màn hình phải «sạch» liên tục chừng này giây mới kết thúc sớm
 IF_FLIPS_MAX = 4         # số lần tối đa «thấy lại hộp thoại vừa xử lý rồi lại không thấy» trong một bước; quá thì dừng (không nhìn mãi)
-IF_RECHECK = 1.5         # thấy lại một hộp thoại VỪA xử lý: chờ thêm chừng này rồi nhìn lần nữa, vẫn còn mới làm lại (hộp thoại đóng chậm ≠ cú bấm không ăn)
+IF_REAPPEAR_WAIT = 3.0   # hộp thoại VỪA xử lý hiện lại (chữ ở đúng chỗ cũ) mà nút chưa thấy: chờ nút thêm chừng này rồi mới báo «bị chắn»
+IF_RECHECK = 1.5        # thấy lại một hộp thoại VỪA xử lý: chờ thêm chừng này rồi nhìn lần nữa, vẫn còn mới làm lại (hộp thoại đóng chậm ≠ cú bấm không ăn)
 
 
 def if_cases(tmpl: dict, vars: dict) -> list:
     """Các trường hợp của bước «nếu thấy chữ … thì bấm …»: [{alts, tap_alts, label, tap_label, key, act}].
     Bước ghi `cases: [{text, tap | key}, …]` (nhiều trường hợp) hoặc `text` + `tap` / `key` (một trường hợp). `tap` để trống = bấm chính chữ
     vừa thấy. `key` = nhấn PHÍM đó thay cho bấm (hộp «lưu mật khẩu» của iOS không nhận cú bấm của con trỏ, chỉ đóng được bằng phím esc)."""
-    raw_cases = tmpl.get("cases") if isinstance(tmpl.get("cases"), list) and tmpl.get("cases") else [{"text": tmpl.get("text"), "tap": tmpl.get("tap"), "key": tmpl.get("key")}]
+    raw_cases = tmpl.get("cases") if isinstance(tmpl.get("cases"), list) and tmpl.get("cases") else [{"text": tmpl.get("text"), "tap": tmpl.get("tap"), "key": tmpl.get("key"), "at": tmpl.get("at")}]
     out = []
     for c in raw_cases[:12]:
         if not isinstance(c, dict):
@@ -727,20 +1055,31 @@ def if_cases(tmpl: dict, vars: dict) -> list:
         key = str(c.get("key") or "").strip().lower()
         if key and key not in KEYS:
             raise ConfigError("bước «Nếu thấy chữ … thì nhấn phím»: phím «%s» không hỗ trợ (chỉ: %s)" % (key, ", ".join(KEYS)))
+        at = None
+        if c.get("at") is not None and not key:
+            try:
+                at = (int(c["at"][0]), int(c["at"][1]))
+                if len(c["at"]) != 2 or min(at) < 0:
+                    raise ValueError
+            except (TypeError, ValueError, IndexError, KeyError, OverflowError):
+                raise ConfigError("bước «Nếu thấy chữ … thì bấm tại»: toạ độ phải là hai số x, y")
         tap_raw = str(c.get("tap") or "") or raw
         tap_label = show(tap_raw, vars)
+        act = ("nhấn phím %s" % key) if key else ("bấm tại (%d, %d)" % at) if at else "bấm «%s»" % tap_label
         out.append({"alts": alts, "tap_alts": alternatives(subst(tap_raw, vars)) or alts, "label": show(raw, vars), "tap_label": tap_label,
-                    "key": key, "act": ("nhấn phím %s" % key) if key else "bấm «%s»" % tap_label})
+                    "key": key, "at": at, "act": act})
     return out
 
 
 def typable(raw: str, vars: dict) -> str:
     """Chữ sẽ gõ của một bước «gõ chữ» (đã thế {{biến}}); ném InputError nếu tool không gõ được (ký tự có dấu, khoảng trắng cuối…)."""
     text = subst(raw, vars)
+    # tên chữ trong lời báo: chữ có {{biến}} thì giữ TÊN biến (show); chữ gõ trực tiếp (có thể là mật khẩu gõ tay) thì chỉ nói số ký tự
+    label = "«%s»" % show(raw, vars) if PLACEHOLDER.search(raw) else "chữ gõ trực tiếp (%d ký tự)" % len(raw)
     if any(not (32 <= ord(c) <= 126) for c in text):
-        raise InputError("«%s» có ký tự tool không gõ được (chỉ gõ được chữ không dấu, số, ký hiệu thường)" % show(raw, vars))
+        raise InputError("%s có ký tự tool không gõ được (chỉ gõ được chữ không dấu, số, ký hiệu thường)" % label)
     if text != text.rstrip():
-        raise InputError("«%s» kết thúc bằng khoảng trắng — tool không gõ được" % show(raw, vars))
+        raise InputError("%s kết thúc bằng khoảng trắng — tool không gõ được" % label)
     return text
 
 
@@ -762,7 +1101,7 @@ def run_steps(nav, steps: list, vars: dict, abort=None, on_step=None):
         ok, why, acted = exec_step(nav, st, vars, abort)
         touched = touched or acted or (ok and st.get("type") in INPUT_TYPES)
         if not ok and not st.get("optional"):
-            return False, "%s — %s" % (_describe(st, vars), why), i, touched
+            return False, "%s — %s" % (said(st, vars), observed_why(st, why)), i, touched
         _sleep(STEP_GAP, abort)
     return True, "", None, touched
 
@@ -876,7 +1215,9 @@ def session_probe(nav, steps: dict, rules: list, timeout: float, abort=None) -> 
     "unknown" (không nhận ra màn hình). Chỉ chạy «đoạn mở game» (xem open_prefix) rồi đọc màn hình —
     không gõ gì của khách; thứ duy nhất được bấm là hộp thoại chắn màn hình mà bước «nếu thấy chữ … thì bấm» trong đoạn đó dọn đi. Bước chờ/kiểm chữ trong đoạn đó hỏng thì bỏ qua (khi game
     đang đăng nhập sẵn thì màn hình chờ của nó khác)."""
-    for st in open_prefix(steps.get("login") or []):
+    prefix = open_prefix(steps.get("login") or [])
+    watch_phase(nav, "Kiểm game trước khi nhận đơn", len(prefix))
+    for st in prefix:
         ok, why, _ = exec_step(nav, st, {}, abort)
         if not ok and st.get("type") not in ("wait_text", "assert_text") and not st.get("optional"):
             return "unknown"
@@ -956,6 +1297,7 @@ class JobFlow:
 
     def _phase(self, phase, vars):
         steps = self.steps.get(phase) or []
+        watch_phase(self.nav, PHASE_LABEL[phase], len(steps))
         ok, why, idx, touched = run_steps(self.nav, steps, vars, self.abort)
         if not ok:
             self._say("%s: lỗi ở bước %d — %s" % (PHASE_LABEL[phase], idx + 1, why), "bad")
@@ -1061,6 +1403,7 @@ class JobFlow:
             self.session = "unknown"
 
         check_typable(login, vars)        # tài khoản / mật khẩu không gõ được → từ chối ngay, khi phiên còn chắc chắn «chưa đăng nhập»
+        watch_phase(self.nav, PHASE_LABEL["login"], len(login))
         try:
             ok, why, idx, _ = run_steps(self.nav, login, vars, self.abort, on_step=before_step)
         except StaleSession:
@@ -1184,6 +1527,7 @@ class JobFlow:
 
         # (2) chạy các bước mua
         plist = self.steps["purchase"]
+        watch_phase(self.nav, PHASE_LABEL["purchase"], len(plist))
         fail_why = ""
         failed = False
         touched = False
@@ -1202,7 +1546,7 @@ class JobFlow:
                 touched = True
                 self.risky = True                       # từ đây: chưa xác nhận thì không được báo failed
             if not ok and not st.get("optional"):
-                failed, fail_why = True, "%s — %s" % (_describe(st, pv), why)
+                failed, fail_why = True, "%s — %s" % (said(st, pv), observed_why(st, why))
                 break
             _sleep(STEP_GAP, self.abort)
         if not touched:                                  # lỗi trước khi chạm vào gì (vd không thấy ô gói)

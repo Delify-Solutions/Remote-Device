@@ -82,6 +82,13 @@
             <span class="badge rounded-pill bg-label-secondary ms-auto" id="nav-flow-count">0</span>
           </a>
         </li>
+        <li class="menu-item">
+          <a class="menu-link app-nav" data-view="monitor" href="javascript:void(0)">
+            <i class="menu-icon icon-base ti tabler-activity"></i>
+            <div>Theo dõi</div>
+            <span class="badge rounded-pill bg-label-secondary ms-auto" id="nav-mon-count" hidden>0</span>
+          </a>
+        </li>
         <li class="menu-header small"><span class="menu-header-text">Tự động hoá</span></li>
         <li class="menu-item">
           <a class="menu-link app-nav" data-view="ai" href="javascript:void(0)">
@@ -270,6 +277,39 @@
               <button class="btn btn-primary" id="btn-ai-refresh"><i class="ti tabler-refresh me-1"></i>Tải lại</button>
             </div>
             <div id="ai-body"><div class="api-note">Đang tải…</div></div>
+          </section>
+
+          <!-- ---------- VIEW: THEO DÕI (máy nào đang chạy bước nào + lịch sử theo máy / theo đơn) ---------- -->
+          <section class="view" id="view-monitor">
+            <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+              <div>
+                <h4 class="mb-1">Theo dõi</h4>
+                <small class="text-muted">Máy nào đang chạy bước nào, và lịch sử của từng máy, từng đơn.</small>
+              </div>
+              <button class="btn btn-label-secondary" id="btn-mon-refresh"><i class="ti tabler-refresh me-1"></i>Tải lại</button>
+            </div>
+            <div class="card mon-card">
+              <h6 class="mon-title">Đang chạy</h6>
+              <div id="mon-live"><div class="api-note">Đang tải…</div></div>
+            </div>
+            <div class="card mon-card mt-4">
+              <div class="mon-tabs" role="tablist">
+                <button class="mon-tab active" data-mon-tab="machine" role="tab">Lịch sử theo máy</button>
+                <button class="mon-tab" data-mon-tab="orders" role="tab">Lịch sử theo đơn</button>
+              </div>
+              <div id="mon-pane-machine">
+                <div class="mon-bar">
+                  <select id="mon-machine" class="form-select form-select-sm" aria-label="Chọn máy"></select>
+                  <small class="text-muted" id="mon-machine-info"></small>
+                </div>
+                <div id="mon-timeline" class="mon-timeline"></div>
+                <button class="btn btn-sm btn-text-secondary mt-2" id="btn-mon-older" hidden>Xem cũ hơn</button>
+              </div>
+              <div id="mon-pane-orders" hidden>
+                <div id="mon-orders"></div>
+                <div id="mon-order-detail" class="mon-timeline mt-3" hidden></div>
+              </div>
+            </div>
           </section>
 
           <!-- ---------- VIEW: NHÓM & KỊCH BẢN ---------- -->

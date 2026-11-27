@@ -30,7 +30,24 @@ STEP_TYPES = ["tap", "tap_text", "tap_image", "tap_if", "type", "key", "combo", 
 
 
 def run_step(nav, step, log=print):
-    """Chạy 1 bước. Trả (ok: bool, message: str)."""
+    """Chạy 1 bước. Trả (ok: bool, message: str). Máy có bộ theo dõi (nav.observer) thì báo cho nó lúc bắt đầu / xong bước."""
+    obs = getattr(nav, "observer", None)
+    if obs is None:
+        return _run_step(nav, step, log)
+    try:
+        obs.step_begin(apimode.observed_what(step, {}), step.get("type"))
+    except Exception:
+        return _run_step(nav, step, log)
+    try:
+        ok, msg = _run_step(nav, step, log)
+    except BaseException:
+        obs.step_end(False, "lỗi")
+        raise
+    obs.step_end(ok, "" if ok else apimode.observed_why(step, msg))
+    return ok, msg
+
+
+def _run_step(nav, step, log=print):
     t = step.get("type")
     try:
         if t == "tap":
@@ -40,7 +57,8 @@ def run_step(nav, step, log=print):
             ok, why, _ = apimode.exec_step(nav, step, {})
             return ok, why or ("xong" if ok else "không thực hiện được")
         # Bấm vào vùng ảnh / có ghi «chờ chữ hiện ra» / «tắt hẳn rồi mở mới» / «gõ từng ký tự»: cùng MỘT cách làm với lúc nhận đơn
-        if t == "tap_image" or (t in ("tap_text", "hold_text") and step.get("timeout")) or (t == "launch" and step.get("fresh")) or (t == "type" and step.get("gap")):
+        if t == "tap_image" or (t in ("tap_text", "hold_text") and step.get("timeout")) or (t == "launch" and step.get("fresh")) or (t == "type" and step.get("gap")) \
+                or (t in ("tap_text", "assert_text") and (step.get("near") or step.get("scroll"))):
             ok, why, _ = apimode.exec_step(nav, step, {})
             return ok, apimode.describe(step, {}) + ((" — " + why) if why else "")
         if t == "tap_text":
@@ -114,6 +132,7 @@ def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None, pause_ga
     stop_check: hàm trả True để DỪNG giữa chừng (dùng khi dừng 1 máy).
     pause_gate: hàm được gọi TRƯỚC mỗi bước; đang «tạm dừng» thì nó chặn ở đó (người xử lý tay) cho tới khi tiếp tục hoặc bị dừng."""
     results = []
+    apimode.watch_phase(nav, None, len(steps))
     for i, step in enumerate(steps):
         if pause_gate:
             pause_gate()

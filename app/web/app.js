@@ -167,7 +167,7 @@ function showView(name) {
   const was = ($(".view.active") || {}).id;
   $$(".app-nav").forEach(b => b.closest(".menu-item").classList.toggle("active", b.dataset.view === name));
   $$(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
-  const titles = { overview: "Tổng quan", devices: "Thiết bị", esp: "ESP32", flows: "Nhóm & Kịch bản", ai: "Kết nối AI" };
+  const titles = { overview: "Tổng quan", devices: "Thiết bị", esp: "ESP32", flows: "Nhóm & Kịch bản", ai: "Kết nối AI", monitor: "Theo dõi" };
   const pt = document.getElementById("page-title"); if (pt) pt.textContent = titles[name] || "";
   if (name === "overview") loadOverview();
   if (name === "flows") {
@@ -176,9 +176,173 @@ function showView(name) {
     loadRunLog(); startStatusPoll();
   } else if (name === "devices") { startStatusPoll(); }
   else { stopStatusPoll(); }
+  if (name === "monitor") startMonitor(); else stopMonitor();
   if (name === "esp" && !ESP_SCANNED) espScan();   // tự quét lần đầu mở tab ESP
   if (name === "ai") loadAI();
 }
+
+/* =========================================================
+   THEO DÕI — máy nào đang chạy bước nào + lịch sử theo máy / theo đơn (dữ liệu từ app/history.py)
+   ========================================================= */
+let MON = { timer: null, live: {}, now: 0, machine: "", events: [], tab: "machine", sig: "", order: null };
+
+// Khoảng thời gian đọc được: «6 giây», «2 phút 10 giây», «1 giờ 3 phút».
+function monDur(sec) {
+  sec = Math.max(0, Math.round(Number(sec) || 0));
+  if (sec < 60) return `${sec} giây`;
+  if (sec < 3600) return `${Math.floor(sec / 60)} phút` + (sec % 60 ? ` ${sec % 60} giây` : "");
+  return `${Math.floor(sec / 3600)} giờ` + (Math.floor(sec % 3600 / 60) ? ` ${Math.floor(sec % 3600 / 60)} phút` : "");
+}
+function monClock(t, withDay) {               // giờ địa phương HH:MM:SS (kèm ngày/tháng nếu cần)
+  const d = new Date((Number(t) || 0) * 1000), p = (n) => String(n).padStart(2, "0");
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return withDay ? `${p(d.getDate())}/${p(d.getMonth() + 1)} ${hm}` : hm;
+}
+// Kết quả của một đơn → [chữ, kiểu nhãn]
+function monResult(r) {
+  return ({ done: ["Hoàn tất", "ok"], failed: ["Thất bại", "bad"], review: ["Chờ đối soát", "warn"], error: ["Bộ chạy lỗi giữa chừng", "bad"] })[r] || ["Gateway đã đóng đơn", "mut"];
+}
+function monItems(items) {                    // «1050 Coins ×2, Gói khởi đầu ×1»
+  return (Array.isArray(items) ? items : []).map(it => `${(it && (it.name || it.code)) || "?"} ×${(it && it.qty) || 1}`).join(", ");
+}
+// Việc một máy ĐANG làm → {head, step, since}: «nạp Efootball · đơn T-12», «Đăng nhập · bước 5/16 — Bấm vào chữ «Login»», mốc bắt đầu bước.
+function monLiveLine(v) {
+  if (!v) return null;
+  const head = [v.kind, [v.group, v.script].filter(Boolean).join(" · "), v.order ? `đơn ${v.order.ref || v.order.id}` : ""].filter(Boolean).join(" — ");
+  const st = v.step, la = v.last;
+  const pos = (x) => [x.phase, x.i ? `bước ${x.i}${x.n ? "/" + x.n : ""}` : ""].filter(Boolean).join(" · ");
+  if (st) return { head, step: [pos(st), st.what].filter(Boolean).join(" — "), since: st.since, running: true };
+  if (la) return { head, step: [pos(la), la.what].filter(Boolean).join(" — "), since: la.t, running: false, ok: !!la.ok, msg: la.msg || "" };
+  return { head, step: v.phase || "", since: v.since, running: false };
+}
+// Các sự kiện (cũ → mới) gom thành TỪNG LƯỢT CHẠY, lượt mới nhất đứng trước: [{run: sự kiện run_begin | null, end: run_end | null, items: [...]}]
+function monGroup(events) {
+  const blocks = [];
+  let cur = null;
+  (Array.isArray(events) ? events : []).forEach(e => {
+    if (!e || typeof e !== "object") return;
+    const rid = e.ev === "run_begin" ? e.id : (e.run || null);
+    if (!cur || cur.id !== rid) { cur = { id: rid, run: null, end: null, items: [] }; blocks.push(cur); }
+    if (e.ev === "run_begin") cur.run = e;
+    else if (e.ev === "run_end") cur.end = e;
+    else cur.items.push(e);
+  });
+  return blocks.reverse();
+}
+function monEventHtml(e) {                    // một dòng của lịch sử; mọi chữ lấy từ dữ liệu đều được thoát
+  if (e.ev === "step") {
+    const pos = [e.phase, e.i ? `${e.i}${e.n ? "/" + e.n : ""}` : ""].filter(Boolean).join(" ");
+    return `<div class="mon-ev ${e.ok ? "ok" : "bad"}"><span class="mon-mark">${e.ok ? "✓" : "✗"}</span><span class="mon-t">${monClock(e.t)}</span>`
+      + `<span class="mon-what">${pos ? `<span class="mon-pos">${esc(pos)}</span>` : ""}${esc(e.what || "")}${e.msg ? `<span class="mon-msg"> — ${esc(e.msg)}</span>` : ""}</span>`
+      + `<span class="mon-dur">${esc(monDur(e.dur))}</span></div>`;
+  }
+  if (e.ev === "order_begin") return `<div class="mon-ev order"><span class="mon-mark">▸</span><span class="mon-t">${monClock(e.t)}</span><span class="mon-what"><b>Đơn ${esc(e.ref || e.order || "")}</b>${e.resumed ? " (làm tiếp)" : ""} — ${esc(monItems(e.items) || "không có gói")}</span></div>`;
+  if (e.ev === "order_end") {
+    const [label, cls] = monResult(e.result);
+    return `<div class="mon-ev order"><span class="mon-mark">■</span><span class="mon-t">${monClock(e.t)}</span><span class="mon-what"><b>Đơn ${esc(e.ref || e.order || "")}</b> <span class="pill ${cls}">${esc(label)}</span>${e.msg ? `<span class="mon-msg"> — ${esc(e.msg)}</span>` : ""}</span><span class="mon-dur">${esc(monDur(e.dur))}</span></div>`;
+  }
+  if (e.ev === "note") return `<div class="mon-ev note ${e.kind === "bad" ? "bad" : ""}"><span class="mon-mark">·</span><span class="mon-t">${monClock(e.t)}</span><span class="mon-what">${esc(e.text || "")}</span></div>`;
+  return "";
+}
+function monBlocksHtml(events, empty) {
+  const blocks = monGroup(events);
+  if (!blocks.length) return `<div class="api-note">${esc(empty)}</div>`;
+  return blocks.map(b => {
+    const r = b.run, first = r || b.items[0] || b.end || {};
+    const title = r ? [r.kind, [r.group, r.script].filter(Boolean).join(" · ")].filter(Boolean).join(" — ") : "Thao tác lẻ (ngoài lượt chạy)";
+    const tail = b.end ? `${b.end.status ? esc(b.end.status) + " · " : ""}${esc(monDur(b.end.dur))}` : (r ? `<span class="pill ok">đang chạy</span>` : "");
+    return `<div class="mon-block"><div class="mon-block-head"><span class="mon-t">${monClock(first.t, true)}</span><b>${esc(title)}</b><span class="mon-block-tail">${tail}</span></div>`
+      + (b.items.map(monEventHtml).join("") || `<div class="api-note">Chưa có bước nào.</div>`) + `</div>`;
+  }).join("");
+}
+
+function monName(n) { const d = DEVICES.find(x => x.name === n); return d ? (d.label || d.name) : n; }
+function renderMonLive() {
+  const box = $("#mon-live");
+  const names = [...new Set([...DEVICES.filter(d => d.board_online || d.udid).map(d => d.name), ...Object.keys(MON.live), ...Object.keys(RUN_STATUS)])];
+  if (!names.length) { box.innerHTML = `<div class="api-note">Chưa có máy nào.</div>`; return; }
+  let busy = 0;
+  box.innerHTML = names.map(n => {
+    const st = RUN_STATUS[n] || {}, v = monLiveLine(MON.live[n]);
+    const running = !!st.running || !!(v && v.running);
+    if (running) busy++;
+    const state = st.hold && !st.running ? `<span class="pill bad" title="${esc(st.hold)}">dừng chờ kiểm tra</span>` : st.parked ? `<span class="pill warn">đang dừng để xử lý tay</span>`
+      : st.running ? `<span class="pill ok">${esc(st.status || "đang chạy")}</span>` : (v && v.running) ? `<span class="pill ok">đang chạy thử</span>` : `<span class="pill mut">nghỉ</span>`;
+    const line = v ? `<div class="mon-live-head">${esc(v.head)}</div>`
+      + (v.step ? `<div class="mon-live-step ${v.running ? "" : (v.ok === false ? "bad" : "done")}">${v.running ? "" : (v.ok === false ? "✗ " : "✓ ")}${esc(v.step)}${v.msg ? ` — ${esc(v.msg)}` : ""}`
+        + (v.since ? `<span class="mon-dur">${v.running ? esc(monDur(MON.now - v.since)) : "xong " + esc(monDur(MON.now - v.since)) + " trước"}</span>` : "") + `</div>` : "") : "";
+    return `<div class="mon-live-row ${running ? "on" : ""}" data-mon-pick="${esc(n)}" role="button" tabindex="0" title="Xem lịch sử của máy này">
+      <span class="dot ${running ? "on" : ""}"></span><div class="mon-live-main"><div class="mon-live-name">${esc(monName(n))} ${state}</div>${line}</div></div>`;
+  }).join("");
+  $$("[data-mon-pick]", box).forEach(r => r.onclick = () => { setMonTab("machine"); pickMonMachine(r.dataset.monPick); });
+  const badge = $("#nav-mon-count"); if (badge) { badge.hidden = !busy; badge.textContent = String(busy); }
+  const sel = $("#mon-machine"), keep = MON.machine || sel.value;
+  const opts = names.map(n => `<option value="${esc(n)}">${esc(monName(n))}</option>`).join("");
+  if (sel.dataset.sig !== opts) { sel.innerHTML = opts; sel.dataset.sig = opts; }
+  if (keep && names.includes(keep)) sel.value = keep;
+  if (!MON.machine && sel.value) pickMonMachine(sel.value);
+}
+async function pollMonitor() {
+  try {
+    const [r, st] = await Promise.all([API().history_live(), API().run_status()]);
+    if (st) RUN_STATUS = st;
+    if (r && r.ok) { MON.live = r.live || {}; MON.now = r.now || Date.now() / 1000; }
+  } catch (e) { return; }
+  renderMonLive();
+  // máy đang xem vừa có bước mới xong → nạp lại lịch sử của nó (không nạp lại mỗi nhịp: tránh làm trôi chỗ người dùng đang đọc)
+  const v = MON.live[MON.machine], sig = v ? JSON.stringify([v.last && v.last.t, v.order && v.order.id, !!v.step]) : "";
+  if (sig !== MON.sig) { MON.sig = sig; if (MON.tab === "machine") loadMonMachine(); else loadMonOrders(); }
+}
+async function pickMonMachine(n) { MON.machine = n; MON.sig = ""; $("#mon-machine").value = n; await loadMonMachine(); }
+async function loadMonMachine(older) {
+  if (!MON.machine) return;
+  try {
+    const before = older && MON.events.length ? MON.events[0].t : null;
+    const r = await API().history_machine(MON.machine, 300, before);
+    const ev = (r && r.events) || [];
+    MON.events = older ? ev.concat(MON.events) : ev;
+    $("#btn-mon-older").hidden = ev.length < 300;
+  } catch (e) { return; }
+  $("#mon-machine-info").textContent = MON.events.length ? `${MON.events.filter(e => e.ev === "step").length} bước gần nhất` : "";
+  $("#mon-timeline").innerHTML = monBlocksHtml(MON.events, "Máy này chưa có lịch sử — chạy một kịch bản hoặc bấm «Thử» một bước là có.");
+}
+async function loadMonOrders() {
+  const box = $("#mon-orders");
+  let rows = [];
+  try { rows = ((await API().history_orders(200)) || {}).orders || []; } catch (e) { return; }
+  if (!rows.length) { box.innerHTML = `<div class="api-note">Chưa có đơn nào chạy qua tool này.</div>`; $("#mon-order-detail").hidden = true; return; }
+  box.innerHTML = `<div class="mon-table"><div class="mon-tr head"><span>Lúc</span><span>Đơn</span><span>Máy</span><span>Gói</span><span>Kết quả</span><span>Mất</span></div>`
+    + rows.map(o => { const [label, cls] = monResult(o.result);
+      return `<div class="mon-tr ${MON.order === String(o.id) ? "sel" : ""}" data-mon-order="${esc(o.id)}" role="button" tabindex="0" title="${esc(o.msg || "")}">
+        <span class="mon-t">${monClock(o.t, true)}</span><span><b>${esc(o.ref || o.id)}</b></span><span>${esc(monName(o.machine || ""))}</span>
+        <span>${esc(monItems(o.items))}</span><span><span class="pill ${cls}">${esc(label)}</span>${o.failed ? ` <small class="text-muted">${Number(o.failed)} bước lỗi</small>` : ""}</span><span>${esc(monDur((o.end || 0) - (o.t || 0)))}</span></div>`; }).join("") + `</div>`;
+  $$("[data-mon-order]", box).forEach(r => r.onclick = () => openMonOrder(r.dataset.monOrder));
+}
+async function openMonOrder(id) {
+  MON.order = String(id);
+  $$("#mon-orders .mon-tr").forEach(r => r.classList.toggle("sel", r.dataset.monOrder === MON.order));
+  const box = $("#mon-order-detail");
+  box.hidden = false; box.innerHTML = `<div class="api-note">Đang tải…</div>`;
+  try {
+    const r = await API().history_order(id);
+    const ev = (r && r.events) || [];
+    box.innerHTML = `<h6 class="mon-title">Các bước của đơn ${esc(((r.runs || [])[0] || {}).ref || id)}</h6>`
+      + (ev.length ? ev.map(monEventHtml).join("") : `<div class="api-note">Không còn lịch sử các bước của đơn này (đã quá cũ).</div>`);
+  } catch (e) { box.innerHTML = `<div class="api-note">Không tải được: ${esc(String(e))}</div>`; }
+}
+function setMonTab(tab) {
+  MON.tab = tab;
+  $$(".mon-tab").forEach(b => b.classList.toggle("active", b.dataset.monTab === tab));
+  $("#mon-pane-machine").hidden = tab !== "machine";
+  $("#mon-pane-orders").hidden = tab !== "orders";
+  if (tab === "orders") loadMonOrders(); else loadMonMachine();
+}
+function startMonitor() {
+  if (!DEVICES.length) loadDevices();
+  pollMonitor();
+  if (!MON.timer) MON.timer = setInterval(pollMonitor, 2000);
+}
+function stopMonitor() { if (MON.timer) { clearInterval(MON.timer); MON.timer = null; } }
 
 /* =========================================================
    DEVICES
@@ -1148,9 +1312,9 @@ async function bleStatus(btn) {
 function stepText(s) {
   switch (s.type) {
     case "tap": return `(${s.x}, ${s.y})`;
-    case "tap_text": return `“${s.text}”` + (Number(s.timeout) > 0 ? ` (chờ ${Number(s.timeout)}s)` : "");
+    case "tap_text": return `“${s.text}”` + (s.near ? ` + “${s.near}”` : "") + (Number(s.timeout) > 0 ? ` (chờ ${Number(s.timeout)}s)` : "");
     case "tap_image": return `vùng ảnh ${Number(s.w) || "?"}×${Number(s.h) || "?"}` + (Number(s.timeout) > 0 ? ` (chờ ${Number(s.timeout)}s)` : "");
-    case "tap_if": return ifCases(s).map(k => `“${k.text}” → ${ifKey(k) ? "phím " + ifKey(k) : `“${k.tap || k.text}”`}`).join("; ") + ` (${s.timeout || 0}s)`;
+    case "tap_if": return ifCases(s).map(k => `“${k.text}” → ${ifKey(k) ? "phím " + ifKey(k) : ifAt(k) ? `(${ifAt(k).join(", ")})` : `“${k.tap || k.text}”`}`).join("; ") + ` (${s.timeout || 0}s)`;
     case "type": return `“${s.text}”`;
     case "key": return s.name;
     case "combo": return s.keys;
@@ -1158,7 +1322,7 @@ function stepText(s) {
     case "home": return "màn hình chính";
     case "wait": return s.seconds + "s";
     case "wait_text": return `“${s.text}” (${s.timeout || 15}s)`;
-    case "assert_text": return `“${s.text}”`;
+    case "assert_text": return `“${s.text}”` + (s.near ? ` + “${s.near}”` : "");
     case "swipe": return s.dir ? (SWIPE_DIR[s.dir] || s.dir) : `(${s.x1}, ${s.y1}) → (${s.x2}, ${s.y2})`;
     case "hold": return `(${s.x}, ${s.y}) · ${s.seconds || 1}s`;
     case "hold_text": return `“${s.text}” · ${s.seconds || 1}s`;
@@ -1204,15 +1368,17 @@ function stepSentence(s) {
   const dim = (t) => ` <span class="flow-dim">${esc(t)}</span>`;
   switch (s.type) {
     case "tap": return `Bấm tại ${stepVal(`(${s.x}, ${s.y})`)}`;
-    case "tap_text": return `Bấm vào chữ ${stepVal(`«${s.text}»`)}${Number(s.timeout) > 0 ? dim(`chờ tối đa ${Number(s.timeout)} giây`) : ""}`;
+    case "tap_text": return `Bấm vào chữ ${stepVal(`«${s.text}»`)}${cardText(s)}${Number(s.timeout) > 0 ? dim(`chờ tối đa ${Number(s.timeout)} giây`) : ""}`;
     case "tap_image": {                                                // hình cần bấm hiện ngay trong câu
       const src = imageSrc(s.image);
       return `Bấm vào hình ${src ? `<img class="flow-thumb" src="${src}" alt="vùng ảnh cần bấm">` : stepVal("(ảnh không đọc được)")}`
         + (Number(s.timeout) > 0 ? dim(`chờ tối đa ${Number(s.timeout)} giây`) : "");
     }
     case "tap_if":                                                     // mỗi trường hợp một dòng: «Nếu thấy chữ A thì bấm B»
-      return ifCases(s).map(k => `Nếu thấy chữ ${stepVal(`«${k.text}»`)} thì ` + (ifKey(k) ? `nhấn phím ${stepVal(ifKey(k))}` : `bấm ${stepVal(`«${k.tap || k.text}»`)}`)).join("<br>")
-        + dim((ifCases(s).length > 1 ? "không thấy gì thì bỏ qua · " : "") + (Number(s.timeout) > 0 ? `chờ tối đa ${s.timeout} giây` : "xem một lần"));
+      return ifCases(s).map(k => `Nếu thấy chữ ${stepVal(`«${k.text}»`)} thì ` + (ifKey(k) ? `nhấn phím ${stepVal(ifKey(k))}`
+        : ifAt(k) ? `bấm tại ${stepVal(`(${ifAt(k)[0]}, ${ifAt(k)[1]})`)}` : `bấm ${stepVal(`«${k.tap || k.text}»`)}`)).join("<br>")
+        + dim((ifCases(s).length > 1 ? "không thấy gì thì bỏ qua · " : "") + (Number(s.timeout) > 0 ? `chờ tối đa ${s.timeout} giây` : "xem một lần")
+              + (s.until ? ` · xong khi thấy «${s.until}»` : ""));
     case "type": return `Gõ ${stepVal(`«${s.text}»`)}` + (Number(s.gap) > 0 ? dim(`từng ký tự, cách nhau ${Number(s.gap)} giây`) : "");   // có ngoặc: thấy được cả chữ rỗng / khoảng trắng ở đầu, cuối
     case "key": return `Nhấn phím ${stepVal(s.name)}`;
     case "combo": return `Nhấn tổ hợp ${stepVal(s.keys)}`;
@@ -1220,7 +1386,7 @@ function stepSentence(s) {
     case "home": return "Về màn hình chính";
     case "wait": return `Chờ ${stepVal(`${s.seconds} giây`)}`;
     case "wait_text": return `Chờ thấy chữ ${stepVal(`«${s.text}»`)}${dim(`tối đa ${s.timeout || 15} giây`)}`;
-    case "assert_text": return `Kiểm có chữ ${stepVal(`«${s.text}»`)}`;
+    case "assert_text": return `Kiểm có chữ ${stepVal(`«${s.text}»`)}${cardText(s)}`;
     case "swipe": return s.dir ? `Vuốt ${stepVal(SWIPE_DIR[s.dir] || s.dir)}` : `Vuốt từ ${stepVal(`(${s.x1}, ${s.y1})`)} tới ${stepVal(`(${s.x2}, ${s.y2})`)}`;
     case "hold": return `Bấm giữ tại ${stepVal(`(${s.x}, ${s.y})`)}${dim(`trong ${s.seconds || 1} giây`)}`;
     case "hold_text": return `Bấm giữ vào chữ ${stepVal(`«${s.text}»`)}${dim(`trong ${s.seconds || 1} giây` + (Number(s.timeout) > 0 ? ` · chờ chữ tối đa ${Number(s.timeout)} giây` : ""))}`;
@@ -1231,7 +1397,7 @@ function stepSentence(s) {
 // Bước «nếu thấy chữ … thì bấm …»: danh sách trường hợp [{text, tap}] — bước ghi `cases` (nhiều) hoặc `text` / `tap` (một).
 function ifCases(s) {
   const cs = Array.isArray(s.cases) ? s.cases.filter(k => k && typeof k === "object") : [];
-  return cs.length ? cs : [{ text: s.text, tap: s.tap, key: s.key }];
+  return cs.length ? cs : [{ text: s.text, tap: s.tap, key: s.key, at: s.at }];
 }
 // phím dùng được ở trường hợp «thì nhấn phím» (hộp thoại không nhận cú bấm của con trỏ)
 const IF_KEYS = ["esc", "enter", "tab", "back", "space"];
@@ -1249,14 +1415,21 @@ function parseIfCases(text) {
     if (!seen) return;
     const one = { text: seen };
     const k = /^(?:phím|phim|key)\s+([a-z]+)$/i.exec(tap);
+    const xy = /^@\s*(\d{1,4})\s*[,; ]\s*(\d{1,4})$/.exec(tap);         // «=> @667,571»: bấm tại toạ độ (nút không đọc được chữ)
     if (k && IF_KEYS.includes(k[1].toLowerCase())) one.key = k[1].toLowerCase();
+    else if (xy) one.at = [Number(xy[1]), Number(xy[2])];
     else if (tap && tap !== seen) one.tap = tap;
     out.push(one);
   });
   return out.slice(0, 12);
 }
+function ifAt(k) {                       // toạ độ hợp lệ của trường hợp «bấm tại», hoặc null
+  const a = k && k.at;
+  return Array.isArray(a) && a.length === 2 && a.every(v => Number.isInteger(v) && v >= 0 && v < 10000) ? a : null;
+}
 function ifCaseLine(k) {                 // một trường hợp viết lại thành một dòng của ô nhập (ngược với parseIfCases)
-  return ifKey(k) ? `${k.text} => phím ${ifKey(k)}` : (k.tap && k.tap !== k.text) ? `${k.text} => ${k.tap}` : `${k.text}`;
+  return ifKey(k) ? `${k.text} => phím ${ifKey(k)}` : ifAt(k) ? `${k.text} => @${ifAt(k)[0]},${ifAt(k)[1]}`
+    : (k.tap && k.tap !== k.text) ? `${k.text} => ${k.tap}` : `${k.text}`;
 }
 
 let STEP_RES = new WeakMap();        // bước (đối tượng) → {ok, msg} của lần thử gần nhất. Sửa bước tạo đối tượng mới nên kết quả cũ tự mất.
@@ -1601,6 +1774,34 @@ function setTextWait(s, raw) {
   if (w > 0) s.timeout = w; else delete s.timeout;
 }
 
+// Ô «trong cùng ô phải có chữ» + «chưa thấy thì lướt» của bước bấm / kiểm chữ (xem apimode.card_opts).
+const NEAR_DIR_LABEL = { below: "ngay dưới", right: "bên phải", left: "bên trái" };
+const SCROLL_LABEL = { "": "Không lướt", left: "Lướt sang trái (xem phần bên phải)", right: "Lướt sang phải", up: "Lướt lên (xem phần bên dưới)", down: "Lướt xuống" };
+function cardFields(cur, pkg) {
+  const c = cur || {};
+  return [
+    { key: "near", label: "Trong cùng ô phải có chữ (để trống = không cần)", value: c.near ?? "", placeholder: "VD: {{package.price_text}}", vars: pkg },
+    // hướng cũ không còn dùng được (vd «above» của bản trước): GIỮ nguyên làm một lựa chọn riêng — đổi lặng lẽ sang «ngay dưới» là đảo nghĩa
+    // của bước; để nguyên thì tool báo lỗi cấu hình lúc chạy, người sửa tự chọn lại
+    { key: "near_dir", type: "select", label: "Chữ đó nằm ở", value: c.near_dir || "below",
+      options: Object.entries(NEAR_DIR_LABEL).map(([v, l]) => ({ value: v, label: l }))
+        .concat(c.near_dir && !Object.hasOwn(NEAR_DIR_LABEL, c.near_dir) ? [{ value: String(c.near_dir), label: "(hướng cũ không còn dùng — chọn lại)" }] : []) },
+    { key: "scroll", type: "select", label: "Chưa thấy thì", value: c.scroll || "", options: Object.entries(SCROLL_LABEL).map(([v, l]) => ({ value: v, label: l })) },
+  ];
+}
+function setCard(s, r) {                   // ghi các tuỳ chọn «trong cùng ô» vào bước; để trống thì bỏ hẳn (bước như cũ)
+  const near = String(r.near || "").trim();
+  if (near) s.near = near; else delete s.near;
+  // hướng lạ chỉ được GIỮ khi đó chính là giá trị cũ của bước (xem cardFields) — không nhận giá trị lạ mới
+  if (near && r.near_dir && r.near_dir !== "below" && (Object.hasOwn(NEAR_DIR_LABEL, r.near_dir) || r.near_dir === s.near_dir)) s.near_dir = String(r.near_dir); else delete s.near_dir;
+  if (SCROLL_LABEL[r.scroll] && r.scroll) s.scroll = r.scroll; else { delete s.scroll; delete s.scrolls; }
+}
+function cardText(s) {                      // phần câu mô tả «có … ngay dưới · chưa thấy thì lướt …»; dữ liệu lạ không được in ra
+  const out = [];
+  if (s.near) out.push(`có ${stepVal(`«${s.near}»`)} ${!s.near_dir ? NEAR_DIR_LABEL.below : Object.hasOwn(NEAR_DIR_LABEL, s.near_dir) ? NEAR_DIR_LABEL[s.near_dir] : "(hướng không còn dùng — chọn lại)"}`);
+  if (SCROLL_LABEL[s.scroll] && s.scroll) out.push(`<span class="flow-dim">chưa thấy thì ${esc(SCROLL_LABEL[s.scroll].toLowerCase())}</span>`);
+  return out.length ? " " + out.join(" ") : "";
+}
 // `list` = danh sách bước chứa nó (để biết đang ở giai đoạn nào của đơn → những dữ liệu nào của đơn dùng được).
 async function stepPrompt(type, cur, list) {
   const c = cur || {}, T = cur ? "Sửa bước: " : "Thêm bước: ";
@@ -1618,11 +1819,11 @@ async function stepPrompt(type, cur, list) {
     const gap = Math.min(2, Math.max(0, parseFloat(r.gap) || 0));
     if (gap > 0) s.gap = gap; else delete s.gap;
   } else if (type === "tap_text") {
-    const r = await askForm(T + "Bấm vào chữ", "", [
+    const r = await askForm(T + "Bấm vào chữ", "Có nhiều ô giống nhau (vd danh sách gói): ghi thêm chữ phải có TRONG CÙNG Ô (giá…) để bấm đúng ô; danh sách dài thì chọn hướng lướt để máy tự tìm.", [
       { key: "text", label: "Chữ hiển thị trên màn (OCR)", value: c.text ?? "", placeholder: "VD: Đăng nhập", vars: pkg },
       textWaitField(cur),
-    ]);
-    if (!r || !r.text) return null; s.text = r.text; setTextWait(s, r.timeout);
+    ].concat(cardFields(cur, pkg)));
+    if (!r || !r.text) return null; s.text = r.text; setTextWait(s, r.timeout); setCard(s, r);
   } else if (type === "tap_image") {
     if (!cur) return null;                                 // thêm mới không qua hộp thoại: kéo khung trên ảnh màn hình (xem startPick)
     const m0 = Number(c.min) > 1 ? Number(c.min) / 100 : Number(c.min) > 0 ? Number(c.min) : 0.9;
@@ -1639,14 +1840,16 @@ async function stepPrompt(type, cur, list) {
     const lines = (cur ? ifCases(c).filter(k => k.text) : []).map(ifCaseLine).join("\n");
     const r = await askForm(T + "Nếu thấy chữ … thì bấm",
       "Cho hộp thoại lúc có lúc không (thông báo, quảng cáo, hỏi lưu mật khẩu). Thấy trường hợp nào thì xử lý trường hợp đó rồi kiểm lại là nó đã đóng; không thấy gì thì bước coi như xong. Mỗi hộp thoại ghi một dòng, dùng chữ chỉ nó có.", [
-      { key: "cases", type: "textarea", label: "Mỗi dòng một trường hợp:  thấy chữ gì  =>  bấm chữ gì   (hoặc  =>  phím esc)", value: lines, placeholder: "Tính năng mới => Tiếp tục\nChào mừng đến => Hủy\nlưu mật khẩu này => phím esc" },
+      { key: "cases", type: "textarea", label: "Mỗi dòng một trường hợp:  thấy chữ gì  =>  bấm chữ gì   (hoặc  =>  phím esc   /   =>  @x,y  bấm tại toạ độ)", value: lines, placeholder: "Tính năng mới => Tiếp tục\nChào mừng đến => Hủy\nlưu mật khẩu này => phím esc" },
       // bước cũ không ghi thời gian thì đang chạy «xem một lần» (0) → hiện đúng 0, không tự đổi hành vi khi người dùng chỉ mở ra xem
       { key: "timeout", label: "Chờ xem có hiện không, tối đa (giây) — 0 = chỉ xem một lần", value: String(c.timeout ?? (cur ? 0 : 8)) },
+      { key: "until", label: "Xong ngay khi thấy chữ (để trống = chờ hết thời gian) — chữ chỉ có khi không còn hộp thoại nào, vd «Shop»", value: c.until ?? "", placeholder: "VD: Shop" },
     ]);
     if (!r) return null;
     const cases = parseIfCases(r.cases);
+    if (String(r.until || "").trim()) s.until = String(r.until).trim(); else delete s.until;
     if (!cases.length) { toast("Ghi ít nhất một dòng: thấy chữ gì => bấm chữ gì", "warn"); return null; }
-    delete s.text; delete s.tap; delete s.key; delete s.cases;
+    delete s.text; delete s.tap; delete s.key; delete s.at; delete s.cases;
     if (cases.length === 1) Object.assign(s, cases[0]);        // một trường hợp: ghi gọn `text` / `tap`
     else s.cases = cases;
     s.timeout = Math.min(120, Math.max(0, parseFloat(r.timeout) || 0));
@@ -1682,8 +1885,10 @@ async function stepPrompt(type, cur, list) {
     ]);
     if (!r || !r.text) return null; s.text = r.text; s.timeout = parseFloat(r.timeout) || 15;
   } else if (type === "assert_text") {
-    const t = await askOne(T + "Kiểm có chữ", "Xác minh màn hình có chữ", c.text ?? "", "VD: Thành công", pkg);
-    if (!t) return null; s.text = t;
+    const r = await askForm(T + "Kiểm có chữ", "Xác minh màn hình có chữ (không bấm gì). Có ghi chữ đi kèm / hướng lướt thì kiểm đúng một ô — dùng để chạy thử việc tìm gói mà không mua.", [
+      { key: "text", label: "Xác minh màn hình có chữ", value: c.text ?? "", placeholder: "VD: Thành công", vars: pkg },
+    ].concat(cardFields(cur, pkg)));
+    if (!r || !r.text) return null; s.text = r.text; setCard(s, r);
   } else if (type === "swipe") {
     const byXy = !!cur && !c.dir;
     const r = await askForm(T + "Vuốt",
@@ -2783,6 +2988,10 @@ function init() {
   $("#flow-device").onchange = (e) => { SEL = e.target.value || null; };
   $("#btn-shot").onclick = (e) => shot(e.currentTarget);
   $("#btn-ble").onclick = (e) => bleStatus(e.currentTarget);
+  $$(".mon-tab").forEach(b => b.onclick = () => setMonTab(b.dataset.monTab));
+  $("#btn-mon-refresh").onclick = () => { MON.sig = ""; pollMonitor(); };
+  $("#mon-machine").onchange = (e) => pickMonMachine(e.target.value);
+  $("#btn-mon-older").onclick = () => loadMonMachine(true);
   $("#screen").onclick = onScreenClick;
   $("#screen").onpointerdown = onScreenDown;
   $("#screen").onpointermove = onScreenMove;

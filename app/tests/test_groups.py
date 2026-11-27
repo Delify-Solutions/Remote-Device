@@ -405,7 +405,8 @@ def main():
         import types
         if "webview" not in sys.modules:
             sys.modules["webview"] = types.SimpleNamespace(create_window=lambda *a, **k: None, start=lambda *a, **k: None)
-        import gui
+        import gui, history
+        gui.HISTORY = gui.RUNNER.history = history.History(None)      # không ghi lịch sử vào dữ liệu THẬT
         sc_ok = {"id": "s1", "name": "Đăng nhập", "steps": [home], "mode": "once", "loops": 1}
         sc_empty = {"id": "s2", "name": "Rỗng", "steps": [], "mode": "once", "loops": 1}
         sc_dup = {"id": "s3", "name": "Mua gói", "steps": [home], "mode": "once", "loops": 1}

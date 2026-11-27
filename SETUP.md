@@ -334,6 +334,64 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
     thử tự động (`test_ui_steps.py`) chỉ phủ các hàm thuần (đổi khung kéo ra toạ độ, kiểm ảnh, đọc ô «giống tối thiểu», lấy bước của gateway…).
   - Giới hạn: hình chỉ khớp với máy CÙNG độ phân giải và cùng chiều xoay với lúc cắt; nền phía sau nút thay đổi nhiều (video, hiệu ứng)
     thì phải khoanh sát nút hoặc hạ độ giống. Ảnh mẫu (PNG) nằm trong chính dữ liệu của bước; không gửi lên gateway.
+- **Đăng nhập eFootball (Data Transfer → KONAMI ID) — các trường hợp đã gặp trên máy thật** (chạy lặp ngày 27/11/2026 trên hai iPhone 8, có bộ
+  ghi màn hình nền gom từng màn mới; luật của pool `efootball-ios` trên gateway dev đã đổi sang đúng các câu này):
+  | Màn / câu trên màn | Nghĩa | Kịch bản xử lý |
+  |---|---|---|
+  | «Tính năng mới trong Game Center» / «Chào mừng đến Game Center» | iOS hỏi Game Center (máy mới) | «nếu thấy» → «Tiếp tục» / «Hủy» |
+  | «"eFootball™" muốn sử dụng "konami.net" để đăng nhập» | hỏi mở trang đăng nhập | «Tiếp tục» (máy 01 có lúc phải bấm 2 lần) |
+  | trang trống «KONAMI ID / E-mail address» | chưa từng đăng nhập trên máy | gõ email |
+  | trang **còn nhớ email của lần trước** + «Password» + «Log In with Another KONAMI ID» | đã có đơn đăng nhập thành công trên máy | **bấm «Log In with Another KONAMI ID» trước** — không thì mật khẩu khách mới bị gõ vào tài khoản khách cũ → «sai mật khẩu» oan, lộ email khách cũ (bước đã thêm, CHƯA chạy thử trên máy) |
+  | «Please enter a combination of alphanumeric characters of 10-32 characters in length.» | ô mật khẩu trống (gõ không vào ô) | lỗi của tool — bấm vào GIỮA ô rồi gõ |
+  | «Unable to log in. Please check your login ID and password.» | sai email / mật khẩu | báo khách, hoàn |
+  | «Bạn có muốn lưu mật khẩu này…» | iOS hỏi lưu mật khẩu | phím Esc (không nhận cú bấm) |
+  | «Two-Step Verification — Please enter the 6-digit verification code…» | cần mã | giai đoạn «Nhập OTP»: bấm ô đầu, gõ từng số cách 0,4 giây, Enter |
+  | (không hỏi mã, vào thẳng «Data Transferred») | tài khoản đã đăng nhập trên MÁY NÀY trong 180 ngày (ô «Skip two-factor … 180 days» bật sẵn) | — |
+  | «Your verification code is incorrect.» | sai mã | xin lại mã |
+  | «Data Transferred — You can transfer your data N more times. This number is reset monthly.» [To Title Screen] | **thành công**; mỗi lần tiêu 1 lượt / tháng | chụp lại |
+  | «Cannot Transfer Data — Data transfer failed.» [OK] | tài khoản chưa liên kết với game — **hoặc** trang đăng nhập bị huỷ («Hủy») | báo khách (tool không tự huỷ giữa chừng) |
+  | «Cannot Transfer Data — You have reached your data transfer limit…» | hết lượt tháng (theo tài liệu, chưa gặp) | báo khách |
+  | «Download Latest Data?» [Cancel / Download] | sau khi vào game | «Download» |
+  | «Login Bonus» (1–2 trang), «… Campaign» [Continue], «Sign Players» [OK — chữ OK không đọc được] | sau màn tiêu đề, hiện muộn | «nếu thấy» chờ 60 giây, xong khi thấy «Shop» liên tục 4 giây; «Sign Players» → bấm tại toạ độ |
+  | «Purpose of Data Processing for Digital Advertising» | tài khoản mới vào game lần đầu | chưa có bước xử lý (gặp một lần, lướt hết thì qua) |
+  - Thư mã xác minh của tài khoản test thứ hai **không về** hộp thư tạm sau 2 lần thử — chưa rõ do Konami hay do hộp thư.
+  - **Ảnh chụp bị xoay (máy 01):** sau khi mở trang đăng nhập web, máy 01 có lúc chụp ra khung DỌC (750×1334) trong khi game vẫn NGANG — kéo dài cả
+    khi mở lại game. Bộ đọc chữ đã tự xoay thẳng khi phần lớn chữ nằm dọc (toạ độ trả về theo ảnh gốc, bấm vẫn đúng), nên **bước theo CHỮ chạy được**;
+    nhưng **bước theo TOẠ ĐỘ, «bấm tại toạ độ» (`at`) của «nếu thấy chữ», «bấm vào vùng ảnh»** (ghi trên ảnh ngang), hướng lướt, và **bước «trong
+    cùng ô»** (hướng dưới / trái / phải và các tỉ lệ 15 / 35 / 25% tính theo khung ảnh gốc — thường thành không chọn được ô) thì KHÔNG đúng trên
+    ảnh xoay — việc cần làm tiếp: quy ước mọi
+    ảnh chụp được xoay thẳng trước khi so / bấm. Máy 002 không bị. Hộp thoại hệ thống không nhận cú bấm trên máy 01 cũng xảy ra trong trạng thái này.
+  - Vision có lúc đọc chữ Latin thành chữ Kirin trông giống hệt («OK» → «ОK»): khi so khớp đã đổi về Latin.
+- **Gói nạp — cấu hình và cách tool tìm đúng gói.** Mỗi gói khai ở gateway (trang quản trị → Pool → mục 5 «Gói nạp»): **Mã gói** (thứ shop gửi
+  trong `items[].code`), **Tên**, **Chữ OCR để dò** = số coin in trên ô gói (nhiều cách viết ngăn bằng `|`, vd `1,000|1000`), **Giá hiển thị** = giá
+  in trên CÙNG ô đó (vd `CHF 7.50`), **Giới hạn mua** (gói sale / Starter Set: «Chỉ 1 lần»). Lúc mua, giai đoạn «Mua một gói» của kịch bản dùng
+  `{{package.ocr_text}}` / `{{package.price_text}}` của gói trong đơn.
+  - Đo trên danh sách gói eFootball thật (iPhone 8 xoay ngang, tài khoản Apple vùng Thuỵ Sĩ → giá CHF), có **15 ô**: 3 ô Coin Sale có hạn
+    (500 — 2.30 · 1,500 — 7.50 · 4,500 — 21.00), 3 ô Starter Set (10 — 0.60 · 50 — 0.60 · 100 — 1.80), 9 ô thường (100 — 0.80 · 300 — 2.30 ·
+    500 — 3.80 · 1,000 — 7.50 · 2,000 — 15.00 · 3,000 — 21.00 · 5,000 — 34.00 · 10,000 — 63.00 · 15,000 — 93.00). **Cùng số coin có hai ô**
+    (500 sale / 500 thường), **cùng giá có hai ô** (2.30 = sale 500 / thường 300; 7.50; 21.00; 0.60), chữ «100» còn nằm trong «Paid: 100» →
+    tìm theo MỘT chữ là bấm nhầm. Phải khớp **số coin + giá trong cùng một ô** (bước dưới). Gateway dev đã có đúng 15 gói này (mã `coin_100` …
+    `coin_15000`, `sale_500` / `sale_1500` / `sale_4500`, `starter_bambang` / `starter_suarez` / `starter_casillas`).
+  - **Giá phụ thuộc vùng của tài khoản Apple trên MÁY** (không phải tài khoản game của khách): máy dùng Apple ID vùng khác thì giá in khác
+    (₫, $…) → «Giá hiển thị» phải khớp với vùng của các máy đang chạy pool đó. Gói Coin Sale có hạn dùng (đếm ngược trên ô) — hết hạn thì
+    tắt «Bán» của gói đó.
+- **«Bấm vào chữ» / «Kiểm có chữ» trong CÙNG MỘT Ô** (`"near"`: chữ phải đi kèm, `"near_dir"`: nó nằm ngay dưới (mặc định) / bên phải / bên trái — không có «ngay trên»: bố cục có chữ đi kèm nằm trên thì tìm chữ phía trên, chữ đi kèm là chữ ngay dưới nó;
+  `"scroll"`: chưa thấy thì lướt danh sách left / right / up / down, `"scrolls"`: tối đa mấy lần, mặc định 8). Bước mua gói của kịch bản
+  «nạp Efootball»: `{"type":"tap_text","text":"{{package.ocr_text}}","near":"{{package.price_text}}","scroll":"left","timeout":5}`.
+  - «Cùng ô» = chữ đi kèm thẳng cột (lệch ≤ 15% bề ngang) và cách ≤ 35% bề cao (bên trái / phải: cùng hàng, cách ≤ 25% bề ngang) theo hướng đã
+    chọn, và **giữa hai chữ không có dòng nào CÙNG LOẠI với chữ cần tìm** — cùng loại = cùng là số thuần («300», «1,500»), hoặc cùng khung chữ khi
+    coi mọi cụm số như nhau («500 Coins» / «1,500 Coins»): có một số coin khác nằm giữa = giá đó thuộc ô khác. Cả hai chữ phải khớp NGUYÊN DÒNG
+    («500» không khớp «1,500», «100» không khớp «Paid: 100», «26.000đ» không khớp «126.000đ») — đọc chữ ra khác đi thì khai thêm cách viết
+    bằng «|». Bỏ qua chữ chạm mép màn hình (ô bị cắt dở), và dòng toàn số nằm SÁT một mảnh số khác cùng hàng (bộ đọc chữ có lúc tách «1,500»
+    thành «1,» + «500» — mảnh «500» không được tính là gói 500). **Từ hai ô trở lên cùng đủ điều kiện → không chọn** (nhập nhằng, không đoán).
+    Lướt hết danh sách một chiều (lướt mà chữ không đổi) thì tự lướt ngược. Danh sách trôi trước khi con trỏ tới nơi → không bấm.
+  - Lướt xong xuôi mà không thấy gói → bước hỏng, KHÔNG tính là «đã chạm luồng mua» (gói sale hết hạn = đơn «chưa nạp», không làm máy dừng
+    chờ đối soát); chỉ cú lướt hỏng giữa chừng (không rõ đã nhả nút chưa) mới tính là đã chạm. Một bước tìm gói lướt tối đa 8 + 16 lần, mỗi
+    lần vài giây — với danh sách eFootball (15 ô) tìm thấy trong khoảng 1 phút.
+  - **Thử khô** việc tìm gói: dùng «Kiểm có chữ» với cùng chữ đi kèm + hướng lướt — chỉ lướt, KHÔNG bấm vào ô gói. Đã thử trên máy thật với
+    dữ liệu gói của gateway: 15,000 — CHF 93.00, Starter 100 — CHF 1.80, sale 500 — CHF 2.30, thường 1,000 — CHF 7.50 đều tìm đúng ô.
+  - **Chưa thử: bấm vào ô gói trở đi** (bấm ô gói là bắt đầu mua thật — hỏi mật khẩu Apple / nút Buy / «Purchase Successful»), nên giai đoạn
+    «Mua một gói» mới có bước tìm + bấm ô; các bước sau đó, luật «nạp thành công» / «thất bại» của pool chưa soạn.
 - **«Gõ chữ» từng ký tự** (`"gap": giây`, 0 = gõ liền một mạch như trước). Đo trên trang đăng nhập KONAMI (iPhone 8):
   - ô mã «mỗi số một ô» tự nhảy sang ô kế bằng mã của trang — gõ liền 6 số chỉ vào được 2 số; gõ từng số cách nhau 0,4–0,6 giây thì đủ cả 6;
   - gõ liền một mạch email 24 ký tự vào ô KONAMI ID có lần **rơi mất 6 ký tự ở giữa** (trang báo «The email address you entered is invalid»);
@@ -348,9 +406,17 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   thống có lúc không «ăn» — trước đây bước một trường hợp báo ✓ ngay sau lần bấm đầu nên các bước sau trượt khó hiểu). Bước nhiều trường hợp
   còn chờ thêm xem hộp thoại khác có hiện nối theo không. Trước khi làm lại, bước chờ thêm 1,5 giây rồi nhìn lần nữa — hộp thoại đóng chậm
   không bị bấm / nhấn phím lần hai (phím esc thứ hai sẽ rơi vào màn hình bên dưới). Hộp thoại «lúc thấy lúc không» quá 4 lần nhìn lại → bước
-  hỏng (không nhìn mãi). Một trường hợp «bấm chữ» chỉ tính là «xảy ra» khi thấy **cả chữ của nó lẫn chữ cần
+  hỏng (không nhìn mãi).
+  - **«Xong khi thấy chữ»** (`"until"`): chữ chỉ có khi KHÔNG còn hộp thoại nào che (vd tab «Shop» của màn chính eFootball) — thấy nó, không có
+    trường hợp nào, LIÊN TỤC đủ 4 giây thì bước xong ngay, không chờ hết thời gian chờ. Nhờ vậy chờ được lâu (60 giây — các hộp thoại «Login Bonus»,
+    «Campaign», «Sign Players» hiện muộn sau khi game tải) mà không tốn thời gian khi đã sạch. Phải «liên tục»: đo thật, tab «Shop» hiện thoáng
+    qua vài giây TRƯỚC khi «Login Bonus» trượt vào.
+  - **«Bấm tại toạ độ»** (`=> @667,571`, dữ liệu `{"text":"Sign Players","at":[667,571]}`): cho nút mà bộ đọc chữ không đọc được (đo thật: chữ «OK»
+    xanh nhạt của hộp «Sign Players» không có trong kết quả đọc, phím Enter cũng không đóng được). Chỉ bấm khi chữ của hộp thoại đang hiện,
+    kiểm lại ngay trước cú bấm (hộp thoại vừa đóng thì không bấm). Một trường hợp «bấm chữ» chỉ tính là «xảy ra» khi thấy **cả chữ của nó lẫn chữ cần
   bấm**: thấy chữ mà chưa có nút thì xét trường hợp kế và nhìn lại; hết thời gian chờ vẫn vậy, hoặc làm 2 lần vẫn còn → bước hỏng (màn hình
-  đang bị chắn, đi tiếp là bấm nhầm). Vì bước đòi hộp thoại phải ĐÓNG, đừng dùng nó cho thứ bấm xong vẫn còn trên màn hình (thẻ, nút bật / tắt)
+  đang bị chắn, đi tiếp là bấm nhầm). Trường hợp ĐÃ xử lý mà chữ còn, nút không còn: chữ ở CHỖ KHÁC chỗ lúc bấm (vd «konami.net» trên thanh
+  địa chỉ của trang vừa mở) = hộp thoại đã đóng; chữ ở ĐÚNG CHỖ cũ = hộp thoại HIỆN LẠI → chờ nút thêm 3 giây, không có thì bước hỏng. Vì bước đòi hộp thoại phải ĐÓNG, đừng dùng nó cho thứ bấm xong vẫn còn trên màn hình (thẻ, nút bật / tắt)
   — dùng «bấm vào chữ». Trong giai đoạn mua, bước này bị bỏ qua (không thấy gì) thì KHÔNG tính là «đã chạm luồng mua»; đã bấm thì có tính. Vì thế **mỗi trang ghi một dòng với chữ riêng của trang đó** — đo trên iPhone 8: lần đầu mở eFootball, iOS hiện «Tính năng
   mới trong Game Center» (chỉ có «Tiếp tục») rồi mới tới «Chào mừng đến Game Center» (có «Hủy»); ghi chung một dòng «Game Center => Hủy» thì trang
   đầu không có gì để bấm. Dữ liệu: `{"type":"tap_if","cases":[{"text":"Tính năng mới","tap":"Tiếp tục"},{"text":"Chào mừng đến","tap":"Hủy"}],"timeout":8}`
@@ -368,6 +434,19 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   mất dấu con trỏ → không bấm. Nay nhận nút tới 140 lần diện tích con trỏ, cho phép chữ trên nút đổi màu theo (tối đa 8% diện tích nút) và bào bỏ
   nét chữ trước khi tìm chấm tròn — đo đúng ở 180/180 vị trí quét quanh chữ «Login» trên ảnh thật. Cỡ con trỏ nay tính theo CẠNH NGẮN của ảnh
   (ảnh chụp ngang của iPhone 8 từng bị coi là máy ×3).
+- **Trang «Theo dõi»** (menu trái): (1) **Đang chạy** — mỗi máy một dòng: đang chạy gì (nhận đơn / kịch bản / chạy thử / AI), nhóm · kịch bản,
+  đơn nào, giai đoạn, **bước thứ mấy / tổng số và là bước gì**, chạy được bao lâu; vừa xong thì hiện bước vừa xong kèm ✓ / ✗ và lý do. (2) **Lịch
+  sử theo máy** — gom theo từng lượt chạy (mới nhất trên cùng), mỗi bước một dòng: giờ, kết quả, lý do khi hỏng, mất bao lâu; xen các mốc bắt đầu /
+  kết thúc đơn và lời nhắn của bộ chạy. (3) **Lịch sử theo đơn** — mỗi đơn một dòng (lúc, mã, máy, gói, kết quả, số bước lỗi, mất bao lâu); bấm
+  vào đơn để xem các bước của đúng đơn đó. Bấm một máy ở «Đang chạy» là mở lịch sử của máy đó.
+  - Mọi bước chạy trên máy đều được ghi — kịch bản, đơn của khách, nút «Thử», AI / dòng lệnh `farm` — trong `app/data/history/` (không có trong git).
+    Tệp của một máy quá ~3 MB thì bỏ nửa cũ; sổ đơn giữ 3000 đơn gần nhất.
+  - **Không có thông tin đăng nhập của khách**: bước ghi bằng lời mô tả đã che (`{{username}}`, `{{password}}`, `{{otp}}` giữ nguyên tên biến), bước
+    «gõ chữ» ghi TRỰC TIẾP (không qua biến — có thể là mật khẩu gõ tay) chỉ ghi số ký tự — cả trong lời báo lỗi của bước, lời nhắn và kết quả
+    của đơn (bước hỏng / «không gõ được»), lỗi bất ngờ chỉ ghi tên loại lỗi; của đơn chỉ ghi mã
+    đơn + gói. Thông tin gói (số coin, giá) thì hiện đúng giá trị. (Lời nhắn «Worker dừng vì lỗi không mong đợi: …» của bộ chạy vẫn chép nguyên
+    lời lỗi như nhật ký chạy trước giờ.)
+  - Ghi lịch sử hỏng (đĩa đầy, thư mục lỗi) không làm hỏng bước đang chạy.
 - **Máy xoay NGANG (game)**: chuột Bluetooth luôn chạy theo trục DỌC của máy — «về góc» ghim con trỏ ở góc trên-phải (hoặc dưới-trái) của ảnh chụp
   ngang, di +x làm con trỏ đi xuống trên ảnh. `nav.tap_at` tự nhận ra hướng ở mỗi lần bấm (xem con trỏ rời góc nào), quay ảnh về hệ trục của chuột để
   đo, đổi điểm cần bấm và hướng vuốt sang hệ đó (`nav.Frame`). Không phân định được hướng → không bấm. Đo trên iPhone 8 đang mở eFootball: tới đích
@@ -437,6 +516,7 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
 | `app/control.py` | bộ công cụ dùng chung (đọc màn hình, bấm, gõ, vuốt, chạy nhóm…), máy chủ trong app, chế độ tự mở cổng |
 | `app/cli.py`, `farm` | dòng lệnh |
 | `app/fastshot.py` | chụp màn hình qua một kết nối giữ mở (~0,33s/ảnh thay vì ~1,3s) |
+| `app/history.py` | «máy nào đang chạy bước nào» + lịch sử theo MÁY (`app/data/history/may-<tên>.jsonl`) và theo ĐƠN (`don.jsonl`); xem ở trang **Theo dõi** |
 | `app/iosapp.py` | tắt hẳn rồi mở mới một app qua USB (kênh công cụ nhà phát triển); chọn app theo tên hiển thị / tên gói / bundle id, bỏ qua app ẩn của hệ thống |
 | `app/eyes.py` | chụp màn hình, tìm chữ / tìm hình, định vị con trỏ. Bộ đọc chữ của macOS (Vision) báo lỗi giữa chừng mà máy không cài tesseract → `read_text` / `find_text` BÁO LỖI, không lặng lẽ trả «màn hình trống» / «không thấy chữ» |
 | `app/ocr.py` | đọc chữ bằng bộ có sẵn của macOS (Apple Vision, nạp bằng pyobjc-core, không cài thêm). Tesseract không đọc được chữ trên nền nhiều màu của game (màn hình tiêu đề eFootball: 0 dòng) còn Vision đọc được (~0,3–0,4s). `eyes.read_text` GHÉP hai bộ (riêng kiểu đọc một dòng `psm` — phép thử bàn phím — giữ tesseract); `find_text` / `ocr_lines` dùng Vision trước, không thấy thì hỏi tesseract. Vision không «sửa chính tả». Đặt `IPF_OCR=tesseract` để tắt Vision. |
@@ -449,6 +529,7 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
 ./.venv/bin/python app/tests/test_api_mode.py     # chế độ nhận đơn (gateway tạm + iPhone giả)
 ./.venv/bin/python app/tests/test_presence.py     # tool tự báo gateway: máy rảnh ở kịch bản nào + danh mục kịch bản (gateway tạm nếu có php)
 ./.venv/bin/python app/tests/test_ocr.py          # bộ đọc chữ: Apple Vision (chữ trên nền màu của game) ghép với tesseract
+./.venv/bin/python app/tests/test_history.py      # «máy nào đang chạy bước nào» + lịch sử theo máy / theo đơn; không lọt thông tin đăng nhập
 ./.venv/bin/python app/tests/test_ui_steps.py     # trình sửa kịch bản (chạy mã giao diện bằng node): câu của từng bước, ô «Lấy từ đơn», đổi cách chạy
 uv run --python 3.12 --with mcp app/tests/interop_sdk.py     # kiểm chéo với client của SDK MCP chính thức
 ./.venv/bin/python app/tests/smoke_device.py iPhoneFarm-01   # máy THẬT (tắt app trước): các bước của chế độ nhận đơn

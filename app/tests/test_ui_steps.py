@@ -158,6 +158,48 @@ out.imgSentence = [stepSentence({ type: "tap_image", image: PNG, w: 90, h: 90, t
 out.imgText = [stepText({ type: "tap_image", image: PNG, w: 90, h: 90, timeout: 5 }), stepText({ type: "tap_image", image: PNG, w: X, h: X })];
 out.imgSrc = [imageSrc(PNG) === "data:image/png;base64," + PNG, imageSrc(""), imageSrc(null), imageSrc("abc def"), imageSrc("data:image/png;base64," + PNG), imageSrc("AAAA===="), imageSrc("A".repeat(1200001))];
 out.imgKind = stepKind("tap_image");
+// ---- 9. «trong cùng ô phải có chữ» + «chưa thấy thì lướt» ----
+out.card = [stepSentence({ type: "tap_text", text: "{{package.ocr_text}}", near: "{{package.price_text}}", scroll: "left", timeout: 5 }),
+            stepSentence({ type: "assert_text", text: "500", near: X, near_dir: "right", scroll: X }), stepSentence({ type: "tap_text", text: "A" }),
+            stepText({ type: "tap_text", text: "500", near: "CHF 2.30" }), stepText({ type: "assert_text", text: "500" })];
+const cs1 = { type: "tap_text", text: "A", near: "x", near_dir: "left", scroll: "up", scrolls: 3 };
+setCard(cs1, { near: "  ", near_dir: "left", scroll: "" });
+const cs2 = { type: "tap_text", text: "A" };
+setCard(cs2, { near: " CHF 2.30 ", near_dir: "below", scroll: "left" });
+const cs3 = { type: "tap_text", text: "A" };
+setCard(cs3, { near: "B", near_dir: X, scroll: X });
+out.setCard = [cs1, cs2, cs3];
+const cs4 = { type: "tap_text", text: "A", near: "B", near_dir: "above" };          // hướng của bản trước, nay không còn
+const f4 = cardFields(cs4, []).find(f => f.key === "near_dir");
+setCard(cs4, { near: "B", near_dir: f4.value, scroll: "" });
+out.legacyDir = [cs4, f4.options.some(o => o.value === "above"), stepSentence(cs4)];
+
+// ---- 8. trang «Theo dõi» ----
+out.atParse = parseIfCases("Sign Players => @667,571\nA => @ 12 ; 34\nB => @-1,5\nC => @x,y");
+out.atLines = out.atParse.map(ifCaseLine);
+out.atSentence = [stepSentence({ type: "tap_if", text: "Sign Players", at: [667, 571], timeout: 9 }), stepSentence({ type: "tap_if", text: "A", at: [X, 1] }),
+                  stepText({ type: "tap_if", text: "A", at: [1, 2], timeout: 3 }), stepSentence({ type: "tap_if", text: "A", at: [-5, 3] })];
+out.ifAt = [ifAt({ at: [1, 2] }), ifAt({ at: [-1, 5] }), ifAt({ at: [1, 2, 3] }), ifAt({ at: [1.5, 2] }), ifAt({ at: [10000, 1] }), ifAt(null)];
+out.until = [stepSentence({ type: "tap_if", text: "A", tap: "B", timeout: 60, until: "Shop" }), stepSentence({ type: "tap_if", text: "A", tap: "B", timeout: 60, until: X })];
+out.monDur = [0, 6.4, 59.6, 60, 130, 3600, 3785, -5, "abc"].map(monDur);
+out.monResult = ["done", "failed", "review", "error", null, X].map(monResult);
+out.monItems = [monItems([{ name: "1050 Coins", qty: 2 }, { code: "starter" }, null]), monItems(null), monItems("rác")];
+out.monLive = [monLiveLine(null),
+  monLiveLine({ kind: "nhận đơn", group: "Nhóm A", script: "nạp Efootball", order: { id: "7", ref: "T-7" }, phase: "Đăng nhập", step: { what: "Bấm vào chữ «Login»", i: 5, n: 16, phase: "Đăng nhập", since: 100 } }),
+  monLiveLine({ kind: "chạy thử một bước", last: { what: "Tap chữ «Shop»", ok: false, msg: "không thấy chữ", t: 90, i: 1 } }),
+  monLiveLine({ kind: "kịch bản", group: "G", phase: "Mua một gói", since: 50 })];
+const EV = [{ ev: "step", t: 1, what: "lẻ", ok: true, dur: 1 },
+  { ev: "run_begin", t: 2, id: "r1", kind: "nhận đơn", group: "G", script: "S" }, { ev: "order_begin", t: 3, run: "r1", order: "7", ref: "T-7", items: [{ name: X, qty: 1 }] },
+  { ev: "step", t: 4, run: "r1", order: "7", what: X, ok: false, msg: X, i: 2, n: 5, phase: "Đăng nhập", dur: 2.2 }, { ev: "note", t: 5, run: "r1", text: X, kind: "bad" },
+  { ev: "order_end", t: 6, run: "r1", order: "7", ref: "T-7", result: "review", msg: X, dur: 70 }, { ev: "run_end", t: 7, run: "r1", status: "DỪNG", dur: 5 },
+  { ev: "run_begin", t: 8, id: "r2", kind: "chạy thử" }, "rác", null];
+const G8 = monGroup(EV);
+out.monGroup = G8.map(b => [b.id, !!b.run, !!b.end, b.items.length]);
+out.monGroupBad = [monGroup(null).length, monGroup("x").length];
+out.monHtml = EV.filter(e => e && typeof e === "object").map(monEventHtml).join("|");
+out.monBlocks = monBlocksHtml(EV, "trống");
+out.monEmpty = monBlocksHtml([], X);
+out.monClock = [monClock(0), monClock(1795700000, true)];
 out.imgMin = ["90", "80", "0.8", "1", "", "abc", "-5", "0", "20", "100", "99.6"].map(parseImageMin);
 const POOL = { code: "p", steps: { login: [{ type: "home" }], purchase: [{ type: "tap_text", text: "Mua" }], nav: "rác" } };
 out.gwSteps = [gatewaySteps({ pool: "p" }, POOL, "purchase").length, gatewaySteps({ pool: "khac" }, POOL, "purchase").length, gatewaySteps({ pool: "" }, POOL, "purchase").length,
@@ -198,10 +240,12 @@ def main():
         return 0
     src = open(APP_JS, encoding="utf-8").read()
     esc_line = next(l for l in src.splitlines() if l.startswith("const esc ="))
-    parts = [esc_line] + [const_source(src, n) for n in ("SWIPE_DIR", "STEP_LABEL", "STEP_KIND", "API_PHASES", "ORDER_LABEL", "TEXT_WAIT_NEW", "REGION_DRAG", "IF_KEYS")]
+    parts = [esc_line] + [const_source(src, n) for n in ("SWIPE_DIR", "STEP_LABEL", "STEP_KIND", "API_PHASES", "ORDER_LABEL", "TEXT_WAIT_NEW", "REGION_DRAG", "IF_KEYS", "NEAR_DIR_LABEL", "SCROLL_LABEL")]
+    parts += [function_source(src, n) for n in ("monDur", "monClock", "monResult", "monItems", "monLiveLine", "monGroup", "monEventHtml", "monBlocksHtml")]
     parts += [function_source(src, n) for n in ("ifCases", "parseIfCases", "stepText", "stepKind", "stepVal", "stepSentence", "normApi", "scriptStepCount", "setScriptMode", "addPicked",
                                                 "orderVars", "varChips", "insertAtCursor", "textWaitField", "setTextWait", "imageSrc", "dragRegion",
-                                                "ifKey", "ifCaseLine", "canRerunHeld", "parseImageMin", "gatewaySteps", "flatPixels")]
+                                                "ifKey", "ifAt", "ifCaseLine", "canRerunHeld", "parseImageMin", "gatewaySteps", "flatPixels",
+                                                "cardText", "setCard", "cardFields")]
     stubs = ("let FLOW = { steps: [] }; let PICK_TO = null; let ORDERS = null; let RENDERS = 0; const TOASTS = []; let CFG = null; let GW_POOL = null;\n"
              "function scriptOrders() { return ORDERS; }\nfunction ordersCfg() { return CFG; }\nfunction renderSteps() { RENDERS++; }\nfunction toast(m) { TOASTS.push(m); }\n")
     r = subprocess.run([node, "-e", stubs + "\n".join(parts) + HARNESS], capture_output=True, text=True, timeout=60)
@@ -307,6 +351,47 @@ def main():
        "gần như không kéo → coi là một cú BẤM (toạ độ); khung quá nhỏ / quá lớn → báo, không tạo bước", r[2:5])
     ok(r[5] == {"x": 1200, "y": 660, "w": 134, "h": 90} and r[6] is None and r[7] is None and r[8] is None,
        "kéo ra ngoài ảnh → vùng được cắt gọn trong ảnh; chưa có ảnh / thiếu điểm → không tạo gì", r[5:])
+
+    print("== 9. «Trong cùng ô phải có chữ» + «chưa thấy thì lướt» ==")
+    cd = o["card"]
+    ok(cd[0] == 'Bấm vào chữ <b>«<code>{{package.ocr_text}}</code>»</b> có <b>«<code>{{package.price_text}}</code>»</b> ngay dưới <span class="flow-dim">chưa thấy thì lướt sang trái (xem phần bên phải)</span> <span class="flow-dim">chờ tối đa 5 giây</span>'
+       and "bên phải" in cd[1] and "&lt;img" in cd[1] and "<img" not in cd[1] and "lướt" not in cd[1] and cd[2] == "Bấm vào chữ <b>«A»</b>"
+       and cd[3] == "“500” + “CHF 2.30”" and cd[4] == "“500”",
+       "câu của bước nói rõ «có … ngay dưới · chưa thấy thì lướt …»; chữ lạ được thoát; hướng lướt lạ không in ra; bước không dùng thì như cũ", cd)
+    sc = o["setCard"]
+    ok(sc[0] == {"type": "tap_text", "text": "A"} and sc[1] == {"type": "tap_text", "text": "A", "near": "CHF 2.30", "scroll": "left"} and sc[2] == {"type": "tap_text", "text": "A", "near": "B"},
+       "lưu: để trống thì bỏ hẳn các tuỳ chọn (bước như cũ); «ngay dưới» là mặc định nên không ghi; giá trị lạ bị bỏ", sc)
+    lg = o["legacyDir"]
+    ok(lg[0].get("near_dir") == "above" and lg[1] is True and "không còn dùng" in lg[2] and "ngay dưới" not in lg[2],
+       "bước còn hướng CŨ («above»): mở ra lưu lại KHÔNG bị đổi lặng lẽ thành «ngay dưới» (đảo nghĩa) — giữ nguyên, câu của bước báo phải chọn lại", lg)
+
+    ok(o["atParse"] == [{"text": "Sign Players", "at": [667, 571]}, {"text": "A", "at": [12, 34]}, {"text": "B", "tap": "@-1,5"}, {"text": "C", "tap": "@x,y"}]
+       and o["atLines"][:2] == ["Sign Players => @667,571", "A => @12,34"],
+       "gõ «=> @x,y»: trường hợp BẤM TẠI TOẠ ĐỘ; toạ độ sai dạng thì vẫn là bấm vào chữ như đã gõ; mở ra sửa hiện lại đúng dòng", o["atParse"])
+    ok("bấm tại <b>(667, 571)</b>" in o["atSentence"][0] and "bấm tại" not in o["atSentence"][1] and "<img" not in o["atSentence"][1] and o["atSentence"][2] == "“A” → (1, 2) (3s)",
+       "câu của bước nói «bấm tại (x, y)»; toạ độ lạ không in ra", o["atSentence"])
+    ok(o["ifAt"] == [[1, 2], None, None, None, None, None] and "bấm tại" not in o["atSentence"][3],
+       "toạ độ hợp lệ = hai số nguyên không âm (< 10000); toạ độ âm / thừa số / số lẻ → không coi là «bấm tại»", o["ifAt"])
+    ok(o["until"][0].endswith('<span class="flow-dim">chờ tối đa 60 giây · xong khi thấy «Shop»</span>') and "<img" not in o["until"][1] and "&lt;img" in o["until"][1],
+       "câu của bước có điều kiện nói «xong khi thấy …»; chữ lạ được thoát", o["until"])
+    print("== 8. Trang «Theo dõi» ==")
+    ok(o["monDur"] == ["0 giây", "6 giây", "1 phút", "1 phút", "2 phút 10 giây", "1 giờ", "1 giờ 3 phút", "0 giây", "0 giây"], "khoảng thời gian viết thành chữ đọc được; số âm / chữ lạ → 0 giây", o["monDur"])
+    ok(o["monResult"] == [["Hoàn tất", "ok"], ["Thất bại", "bad"], ["Chờ đối soát", "warn"], ["Bộ chạy lỗi giữa chừng", "bad"], ["Gateway đã đóng đơn", "mut"], ["Gateway đã đóng đơn", "mut"]],
+       "kết quả của đơn → nhãn + màu; giá trị lạ không được in ra", o["monResult"])
+    ok(o["monItems"] == ["1050 Coins ×2, starter ×1, ? ×1", "", ""], "gói của đơn viết thành «tên ×số lượng»", o["monItems"])
+    ml = o["monLive"]
+    ok(ml[0] is None and ml[1]["head"] == "nhận đơn — Nhóm A · nạp Efootball — đơn T-7" and ml[1]["step"] == "Đăng nhập · bước 5/16 — Bấm vào chữ «Login»" and ml[1]["running"] is True and ml[1]["since"] == 100,
+       "máy ĐANG chạy: «nhận đơn — nhóm · kịch bản — đơn …» + «giai đoạn · bước 5/16 — tên bước»", ml[1])
+    ok(ml[2]["running"] is False and ml[2]["ok"] is False and ml[2]["step"] == "bước 1 — Tap chữ «Shop»" and ml[2]["msg"] == "không thấy chữ" and ml[3]["step"] == "Mua một gói",
+       "máy vừa xong một bước: hiện bước đó kèm kết quả / lý do; chưa có bước nào thì hiện giai đoạn", ml[2:])
+    ok(o["monGroup"] == [["r2", True, False, 0], ["r1", True, True, 4], [None, False, False, 1]] and o["monGroupBad"] == [0, 0],
+       "lịch sử gom theo TỪNG LƯỢT CHẠY, lượt mới nhất đứng trước; bước lẻ thành một khối riêng; dữ liệu rác bị bỏ", o["monGroup"])
+    h = o["monHtml"] + o["monBlocks"] + o["monEmpty"]
+    ok("<img" not in h and h.count("&lt;img") >= 6 and "Chờ đối soát" in o["monHtml"] and "Đăng nhập 2/5" in o["monHtml"] and "đang chạy" in o["monBlocks"]
+       and "Thao tác lẻ" in o["monBlocks"] and "nhận đơn — G · S" in o["monBlocks"],
+       "mọi chữ lấy từ lịch sử (tên bước, lý do, tên gói, lời nhắn) đều được thoát; khối đang chạy có nhãn «đang chạy»", h[:300])
+    import re as _re
+    ok(_re.fullmatch(r"\d\d:\d\d:\d\d", o["monClock"][0]) and _re.fullmatch(r"\d\d/\d\d \d\d:\d\d:\d\d", o["monClock"][1]), "giờ hiện dạng HH:MM:SS (kèm ngày/tháng ở đầu khối)", o["monClock"])
 
     print("== 7. «Nhấn phím» trong bước có điều kiện; mở mới app; gõ từng ký tự; «Chạy lại» ==")
     ok(o["keyParse"] == [{"text": "lưu mật khẩu này", "key": "esc"}, {"text": "Game Center", "tap": "Hủy"}, {"text": "x", "key": "enter"}, {"text": "y", "key": "tab"},

@@ -1542,6 +1542,102 @@ def run_all(gw, rigs):
         k1f = Popup([sp, sp] + [title, sp] * 40)
         j1f = apimode.exec_step(k1f, {"type": "tap_if", "text": "lưu mật khẩu này", "key": "esc", "timeout": 0}, {})
         ok(j1f[0] is False and k1f.sent == ["key esc"] and "lúc thấy lúc không" in j1f[1], "…trường hợp «nhấn phím» cũng có chốt dừng đó (và không nhấn phím thêm)", (j1f, k1f.sent))
+        # «xong khi thấy chữ» (until): chờ lâu được (hộp thoại hiện muộn sau khi game tải) mà màn hình đã sạch thì xong ngay
+        home = (["Home", "Shop", "Academy", "Extras", "Match"], {"Shop": (514, 110)})
+        bonus = (["Login Bonus", "Continue", "10,000"], {"Continue": (668, 587)})
+        loading = (["KONAMI"], {})
+        pops = {"type": "tap_if", "timeout": 60, "until": "Shop", "cases": [{"text": "Login Bonus", "tap": "Continue"}, {"text": "Sign Players", "tap": "OK"}]}
+        real_stable = apimode.UNTIL_STABLE
+        apimode.UNTIL_STABLE = 0.3                     # (bài thử: «sạch liên tục» rút còn 0,3 giây cho nhanh)
+        u1 = Popup([loading, loading, loading, bonus, home])
+        t0 = time.time()
+        v1 = apimode.exec_step(u1, pops, {})
+        ok(v1[0] is True and u1.taps == [(668, 587)] and time.time() - t0 < 5 and "Continue" in v1[1],
+           "hộp thoại hiện MUỘN (sau 3 lần nhìn) → vẫn bắt được; xử lý xong, thấy «Shop» là xong NGAY (không chờ hết 60 giây)", (v1, u1.taps))
+        u2 = Popup([home])
+        v2 = apimode.exec_step(u2, pops, {})
+        ok(v2 == (True, "thấy «Shop» — không có gì phải xử lý", False) and u2.taps == [] and u2.n >= 2,
+           "màn hình đã sạch ngay từ đầu → xong ngay khi «sạch» đủ lâu (không chờ hết 60 giây), không bấm gì", (v2, u2.n))
+        covered = (["Home", "Shop", "Sign Players", "OK"], {"OK": (667, 571)})     # chữ «until» lộ ra nhưng hộp thoại vẫn đang che
+        u3 = Popup([covered, home])
+        v3 = apimode.exec_step(u3, pops, {})
+        ok(v3[0] is True and u3.taps == [(667, 571)], "chữ «until» có trên màn hình nhưng vẫn còn hộp thoại → xử lý hộp thoại trước (trường hợp được xét trước «until»)", (v3, u3.taps))
+        slid = (["Home", "Shop", "Sign Players"], {})                         # thấy chữ hộp thoại mà chưa thấy nút → không được coi là sạch
+        u4 = Popup([slid, covered, home])
+        v4 = apimode.exec_step(u4, pops, {})
+        ok(v4[0] is True and u4.taps == [(667, 571)], "hộp thoại đang trượt vào (chưa thấy nút) mà «until» đã lộ → KHÔNG kết thúc sớm, chờ nút rồi bấm", (v4, u4.taps))
+
+        class Slow(Popup):                           # mỗi lần chụp mất 0,1 giây thật: hộp thoại «trượt vào» kéo dài LÂU HƠN thời gian «sạch liên tục»
+            def screenshot(self):
+                time.sleep(0.1)
+                return super().screenshot()
+        u4b = Slow([slid] * 6 + [covered, home])
+        v4b = apimode.exec_step(u4b, pops, {})
+        ok(v4b[0] is True and u4b.taps == [(667, 571)], "…kể cả khi chữ của hộp thoại (chưa có nút) cùng «until» kéo dài quá thời gian «sạch» → vẫn chờ nút, không kết thúc sớm / không báo hỏng sớm", (v4b, u4b.taps))
+        ok(apimode.describe(pops).endswith(" (xong khi thấy «Shop»)"), "mô tả bước nói rõ điều kiện xong sớm", apimode.describe(pops))
+        u5 = Popup([home, bonus, home])                # đo thật: tab «Shop» hiện THOÁNG QUA trước khi «Login Bonus» trượt vào
+        v5 = apimode.exec_step(u5, pops, {})
+        ok(v5[0] is True and u5.taps == [(668, 587)], "«Shop» chỉ thoáng qua (chưa đủ thời gian «sạch liên tục») → KHÔNG kết thúc sớm; hộp thoại hiện sau đó vẫn được xử lý", (v5, u5.taps))
+        # nút không đọc được chữ (đo thật: chữ «OK» xanh nhạt của hộp «Sign Players» không có trong kết quả đọc chữ) → «bấm tại toạ độ»
+        sign = (["Home", "Extras", "Sign Players", "Sign players to create your ideal team."], {})
+        atc = {"type": "tap_if", "timeout": 60, "until": "Shop", "cases": [{"text": "Sign Players", "at": [667, 571]}]}
+        u6 = Popup([sign, home])
+        v6 = apimode.exec_step(u6, atc, {})
+        ok(v6[0] is True and u6.taps == [(667, 571)] and "bấm tại (667, 571)" in v6[1], "trường hợp «bấm tại toạ độ»: thấy chữ của hộp thoại → bấm đúng toạ độ đó, kiểm hộp thoại đã đóng", (v6, u6.taps))
+
+        class GoneAt(Popup):                         # hộp thoại tự đóng trong lúc con trỏ đang đi tới toạ độ
+            def tap_at(self, x, y, click=True, verify=None):
+                self.cur = home
+                return super().tap_at(x, y, click, verify)
+        u7 = GoneAt([sign, home])
+        v7 = apimode.exec_step(u7, dict(atc, until=""), {})
+        ok(u7.taps == [] and u7.sent == [], "hộp thoại đã đóng ngay trước cú bấm → KHÔNG bấm vào toạ độ đó (không bấm mù)", (v7, u7.taps))
+        u8 = Popup([home])
+        v8 = apimode.exec_step(u8, dict(atc, timeout=0, until=""), {})
+        ok(v8[0] is True and u8.taps == [], "không thấy chữ của hộp thoại → không bấm toạ độ", v8)
+        for bad in ([667], ["x", 1], [-1, 5], "667,571"):
+            try:
+                apimode.exec_step(Popup([sign]), dict(atc, cases=[{"text": "Sign Players", "at": bad}]), {}); raised = False
+            except apimode.ConfigError:
+                raised = True
+            ok(raised, "toạ độ sai dạng (%r) → báo lỗi cấu hình" % (bad,))
+        ok(apimode.describe(atc) == "Nếu thấy chữ «Sign Players» thì bấm tại (667, 571) (xong khi thấy «Shop»)", "mô tả trường hợp «bấm tại»", apimode.describe(atc))
+        apimode.UNTIL_STABLE = real_stable
+        # đã bấm xong, hộp thoại đóng, nhưng CHỮ của nó vẫn còn ở chỗ khác (đo thật: «konami.net» trên thanh địa chỉ của trang vừa mở)
+        knet = (["\"eFootball\" muốn sử dụng", "\"konami.net\" để đăng nhập", "Hủy", "Tiếp tục"], {"Tiếp tục": (802, 500), "Hủy": (533, 501)})
+        page = (["Hủy", "my.konami.net", "KONAMI ID", "Login"], {"Hủy": (71, 47), "Login": (669, 529)})
+        k1g = Popup([knet, page])
+        j1g = apimode.exec_step(k1g, {"type": "tap_if", "text": "konami.net", "tap": "Tiếp tục", "timeout": 10}, {})
+        ok(j1g[0] is True and k1g.taps == [(802, 500)], "đã bấm rồi, nút biến mất, chữ còn ở chỗ khác (thanh địa chỉ) → hộp thoại ĐÃ ĐÓNG, bước xong (không báo «bị chắn»)", (j1g, k1g.taps))
+        k1h = Popup([page])
+        j1h = apimode.exec_step(k1h, {"type": "tap_if", "text": "konami.net", "tap": "Tiếp tục", "timeout": 0}, {})
+        ok(j1h[0] is False and "không thấy chữ «Tiếp tục» để bấm" in j1h[1] and k1h.taps == [],
+           "…còn CHƯA bấm lần nào mà thấy chữ không có nút → vẫn là «bị chắn» như trước (không bấm bừa)", j1h)
+        real_reappear = apimode.IF_REAPPEAR_WAIT
+        apimode.IF_REAPPEAR_WAIT = 0.2
+        try:
+            knetP = (knet[0], dict(knet[1], **{"\"konami.net\" để đăng nhập": (640, 300)}))
+            pageP = (page[0], dict(page[1], **{"my.konami.net": (300, 20)}))
+            k1i = Popup([knetP, pageP])
+            j1i = apimode.exec_step(k1i, {"type": "tap_if", "text": "konami.net", "tap": "Tiếp tục", "timeout": 10}, {})
+            ok(j1i[0] is True and k1i.taps == [(802, 500)], "đo được chỗ chữ: lúc bấm ở giữa màn hình, sau đó ở thanh địa chỉ (CHỖ KHÁC) → hộp thoại đã đóng", (j1i, k1i.taps))
+            nobtn = (gc[0], {"Game Center": (668, 308)})            # hộp thoại HIỆN LẠI (chữ ở đúng chỗ cũ) mà nút «Hủy» chưa thấy
+            k1j = Popup([gc, nobtn])
+            j1j = apimode.exec_step(k1j, {"type": "tap_if", "text": "Game Center", "tap": "Hủy", "timeout": 0}, {})
+            ok(j1j[0] is False and "không thấy chữ «Hủy» để bấm" in j1j[1] and k1j.taps == [(73, 33)],
+               "đã bấm, hộp thoại hiện lại ĐÚNG CHỖ cũ mà không có nút (chờ thêm vẫn không có) → «bị chắn», KHÔNG báo ✓", (j1j, k1j.taps))
+            k1k = Popup([gc, nobtn, gc, gc, title])
+            j1k = apimode.exec_step(k1k, {"type": "tap_if", "text": "Game Center", "tap": "Hủy", "timeout": 0}, {})
+            ok(j1k[0] is True and k1k.taps == [(73, 33), (73, 33)], "…nút hiện muộn trong lúc chờ thêm → bấm lại, hộp thoại đóng → xong", (j1k, k1k.taps))
+            k1l = Popup([gc, title, nobtn])
+            j1l = apimode.exec_step(k1l, {"type": "tap_if", "text": "Game Center", "tap": "Hủy", "timeout": 0, "until": "FOOTBALL"}, {})
+            gcU = (gc[0], {"Hủy": (73, 33)})                        # không đo được chỗ chữ → «đã mất rồi hiện lại» = hiện lại
+            k1m = Popup([gcU, title, (gc[0], {}), (gc[0], {})])
+            j1m = apimode.exec_step(k1m, {"type": "tap_if", "timeout": 1, "cases": [{"text": "Game Center", "tap": "Hủy"}, {"text": "Login Bonus", "tap": "Continue"}]}, {})
+            ok(j1m[0] is False and "không thấy chữ «Hủy» để bấm" in j1m[1], "không đo được chỗ chữ: chữ đã MẤT rồi HIỆN LẠI không có nút → «bị chắn»", (j1m, k1m.taps))
+            ok(j1l[0] is True, "hộp thoại đã đóng (màn hình sạch) thì bước xong như trước", j1l)
+        finally:
+            apimode.IF_REAPPEAR_WAIT = real_reappear
         k1d = Popup([sp, sp, title])
         j1d = apimode.exec_step(k1d, {"type": "tap_if", "text": "lưu mật khẩu này", "key": "esc", "timeout": 0}, {})
         ok(j1d[0] is True and k1d.sent == ["key esc"], "trường hợp «nhấn phím» mà hộp thoại đóng chậm → chỉ nhấn phím MỘT lần (phím esc thứ hai sẽ rơi vào màn hình bên dưới)", (j1d, k1d.sent))
@@ -1895,6 +1991,173 @@ def run_all(gw, rigs):
         ok(eyes_mod.locate_image(None, crop) == (None, 0.0) and eyes_mod.locate_image(title_scr, None) == (None, 0.0) and eyes_mod.locate_image(title_scr[:, :, 0], crop) == (None, 0.0)
            and eyes_mod.locate_image(np.dstack([title_scr, title_scr[:, :, :1]]), crop) == (None, 0.0) and eyes_mod.locate_image(title_scr.astype(np.float32), crop) == (None, 0.0),
            "thiếu ảnh / ảnh không đủ ba kênh màu / 4 kênh / không phải 8 bit → «không thấy», không ném lỗi")
+
+        # Chữ + toạ độ đọc bằng Vision trên danh sách gói eFootball THẬT (iPhone 8 xoay ngang, 1334×750, tài khoản Apple vùng CHF), lật từ trái sang phải
+        L = lambda *rows: [{"text": t, "x": x, "y": y, "w": w, "h": h} for t, x, y, w, h in rows]
+        HEAD = [("Terms of Use", 434, 30, 188, 28), ("Product Details", 774, 30, 216, 28), ("Back", 123, 705, 78, 26), ("Details", 668, 705, 100, 26)]
+        SHOP = [
+            L(*HEAD, ("6 day(s) 0 hr(s)", 394, 116, 192, 28), ("500", 201, 407, 62, 26), ("1,500", 800, 411, 88, 34), ("Paid: 291", 180, 453, 112, 26),
+              ("Paid: 937", 771, 454, 114, 30), ("Pa", 1316, 453, 32, 26), ("Free: 209", 182, 493, 116, 28), ("Free: 563", 769, 492, 114, 24),
+              ("CHF 2.30", 191, 553, 134, 30), ("CHF 7.50", 780, 553, 136, 32), ("CH", 1316, 552, 32, 28), ("Remaining: 1", 201, 592, 154, 32)),
+            L(*HEAD, ("4,500", 216, 412, 92, 36), ("Starter Set: Bambang Pamungkas", 881, 364, 350, 28), ("10", 776, 407, 40, 26), ("Paid: 2,666", 195, 456, 142, 32),
+              ("Paid: 10", 762, 453, 96, 28), ("Free: 1,834", 192, 493, 136, 32), ("Free: 0", 754, 492, 84, 24), ("CHF 21.00", 200, 553, 152, 32),
+              ("CHF 0.60", 782, 553, 140, 30), ("CH", 1316, 552, 32, 28)),
+            L(*HEAD, ("Starter Set: Luis Suárez", 243, 363, 238, 22), ("Starter Set: Iker Casillas", 833, 365, 242, 22), ("50", 191, 406, 42, 28),
+              ("100", 786, 407, 60, 26), ("Paid: 50", 175, 453, 102, 26), ("Paid: 100", 769, 453, 114, 26), ("Free: 0", 166, 492, 84, 24),
+              ("Free: 0", 754, 492, 84, 24), ("CHF 0.60", 194, 553, 140, 32), ("CHF 1.80", 778, 553, 132, 30), ("CH", 1316, 568, 32, 28)),
+            L(*HEAD, ("100", 198, 137, 60, 26), ("500", 789, 137, 62, 26), ("Paid: 97", 175, 183, 102, 28), ("Paid: 477", 771, 183, 114, 26),
+              ("Free: 3", 165, 224, 82, 24), ("Free: 23", 762, 224, 96, 24), ("CHF 0.80", 194, 284, 140, 32), ("CHF 3.80", 780, 284, 136, 32),
+              ("300", 201, 422, 62, 28), ("1,000", 802, 426, 92, 36), ("Paid: 291", 180, 468, 112, 30), ("Paid: 937", 770, 468, 116, 28),
+              ("Free: 9", 166, 508, 84, 24), ("Free: 63", 761, 508, 98, 26), ("CHF 2.30", 191, 569, 134, 30), ("CHF 7.50", 780, 569, 136, 30)),
+            L(*HEAD, ("2,000", 217, 142, 94, 36), ("5,000", 805, 141, 94, 36), ("CHF 15.00", 200, 284, 152, 32), ("CHF 34.00", 790, 284, 156, 32),
+              ("3,000", 216, 426, 92, 36), ("10,000", 812, 427, 112, 38), ("CHF 21.00", 200, 569, 152, 32), ("CHF 63.00", 791, 569, 158, 30)),
+            L(*HEAD, ("5,000", 217, 141, 94, 38), ("15,000", 812, 142, 108, 36), ("CHF 34.00", 202, 284, 156, 32), ("CHF 93.00", 791, 284, 158, 32),
+              ("10,000", 224, 427, 112, 38), ("CHF 63.00", 203, 569, 158, 30)),
+        ]
+
+        print("\n== 33. «Bấm vào ô có chữ … và …» (danh sách gói: khớp số coin + giá trong CÙNG MỘT ô) ==")
+        WH = (1334, 750)
+        pc = lambda k, coin, price: apimode.pick_card(SHOP[k], apimode.alternatives(coin), apimode.alternatives(price), WH)
+        ok(pc(0, "500", "CHF 2.30") == (201, 407) and pc(3, "500", "CHF 3.80") == (789, 137) and pc(3, "500", "CHF 2.30") is None and pc(0, "500", "CHF 3.80") is None,
+           "hai gói cùng 500 coin: chọn đúng gói theo GIÁ cùng ô (gói sale 2.30 ≠ gói thường 3.80); giá không nằm cùng ô thì không chọn")
+        ok(pc(3, "300", "CHF 2.30") == (201, 422) and pc(0, "300", "CHF 2.30") is None,
+           "cùng giá 2.30 có hai gói (sale 500 và thường 300): số coin quyết định; màn hình không có ô «300» thì không thấy")
+        ok(pc(3, "100", "CHF 0.80") == (198, 137) and pc(2, "100", "CHF 1.80") == (786, 407) and pc(2, "100", "CHF 0.80") is None and pc(3, "100", "CHF 1.80") is None,
+           "«100» không khớp vào «Paid: 100» / «1,000»; ô Starter 100 coin (1.80) ≠ ô thường 100 coin (0.80)")
+        ok(pc(3, "300", "CHF 0.80") is None and pc(3, "100", "CHF 2.30") is None,
+           "giá của ô HÀNG KHÁC (ngay trên / hàng dưới cùng cột) không được tính là cùng ô")
+        ok(pc(0, "1,500|1500", "CHF 7.50") == (800, 411) and pc(3, "1,000|1000", "CHF 7.50") == (802, 426) and pc(3, "1,500|1500", "CHF 7.50") is None
+           and pc(0, "1,000|1000", "CHF 7.50") is None,
+           "cùng giá 7.50: gói 1,500 (sale) và 1,000 (thường) không lẫn; viết «1000» hay «1,000» đều khớp")
+        ok(pc(1, "4,500|4500", "CHF 21.00") == (216, 412) and pc(4, "3,000|3000", "CHF 21.00") == (216, 426) and pc(4, "10,000|10000", "CHF 63.00") == (812, 427)
+           and pc(5, "15,000|15000", "CHF 93.00") == (812, 142) and pc(4, "15,000", "CHF 93.00") is None,
+           "các gói lớn: đúng ô, kể cả khi hai trang lật chồng lên nhau (5,000 / 10,000 nằm ở cả hai trang nhưng ở chỗ khác)")
+        ok(pc(1, "10", "CHF 0.60") == (776, 407) and pc(2, "50", "CHF 0.60") == (191, 406) and pc(1, "50", "CHF 0.60") is None,
+           "Starter Set 10 coin và 50 coin cùng giá 0.60: số coin quyết định; «10» không khớp vào «Paid: 10» khi có ô ghi đúng «10»")
+        ok(apimode.pick_card(SHOP[3], ["100"], [], WH) == (198, 137) and apimode.pick_card([], ["100"], ["CHF 0.80"], WH) is None,
+           "không ghi chữ đi kèm → chỉ chọn khi có ĐÚNG MỘT dòng khớp nguyên dòng; màn hình trống → không thấy")
+        side = [{"text": "Mua", "x": 900, "y": 300, "w": 60, "h": 30}, {"text": "1050 Coins", "x": 600, "y": 300, "w": 160, "h": 30},
+                {"text": "Mua", "x": 900, "y": 450, "w": 60, "h": 30}, {"text": "2150 Coins", "x": 600, "y": 452, "w": 160, "h": 30}]
+        ok(apimode.pick_card(side, ["Mua"], ["2150 Coins"], WH, "left") == (900, 450) and apimode.pick_card(side, ["2150 Coins"], ["Mua"], WH, "right") == (600, 452)
+           and apimode.pick_card(side, ["Mua"], ["2150 Coins"], WH, "below") is None and apimode.pick_card(side, ["Mua"], ["2150"], WH, "left") is None,
+           "chữ đi kèm nằm BÊN TRÁI / PHẢI (danh sách dạng hàng ngang: «1050 Coins … Mua»): chọn đúng nút «Mua» của hàng có gói cần mua")
+
+        class Shop(Popup):                         # danh sách gói lật được: mỗi lần lướt sang trái là sang trang kế (hết danh sách thì đứng yên)
+            def __init__(self, start=0):
+                super().__init__([title]); self.page, self.swipes = start, []
+
+            def screenshot(self):
+                self.n += 1
+                self.cur = SHOP[self.page]
+                return np.zeros((750, 1334, 3), np.uint8)
+
+            def text_lines(self, img=None):
+                return SHOP[self.page]
+
+            def read_text(self, img=None, **kw):
+                return "\n".join(r["text"] for r in SHOP[self.page])
+
+            def swipe(self, x1, y1, x2, y2):
+                self.swipes.append("left" if x2 < x1 else "right")
+                self.page = max(0, min(len(SHOP) - 1, self.page + (1 if x2 < x1 else -1)))
+                return True
+
+            def tap_at(self, x, y, click=True, verify=None):
+                if verify is not None and not verify(np.zeros((750, 1334, 3), np.uint8)):
+                    return False
+                self.taps.append((x, y, self.page))
+                return True
+        tc = {"type": "tap_text", "text": "{{package.ocr_text}}", "near": "{{package.price_text}}", "scroll": "left"}
+        pv = {"package.ocr_text": "10,000|10000", "package.price_text": "CHF 63.00"}
+        s1 = Shop(0)
+        q1 = apimode.exec_step(s1, tc, pv)
+        ok(q1[0] is True and q1[2] is True and s1.taps == [(812, 427, 4)] and s1.swipes == ["left"] * 4 and s1.sent[-1] == "click",
+           "gói chưa có trên màn hình → lướt sang trái tới trang có gói đó rồi bấm đúng ô (10,000 — CHF 63.00)", (q1, s1.taps, s1.swipes))
+        s2 = Shop(5)
+        q2 = apimode.exec_step(s2, dict(tc), {"package.ocr_text": "500", "package.price_text": "CHF 2.30"})
+        ok(q2[0] is True and s2.taps == [(201, 407, 0)] and s2.swipes[:1] == ["left"] and s2.swipes.count("right") == 5,
+           "máy đang đứng CUỐI danh sách: lướt sang trái không đổi gì (hết danh sách) → tự lướt ngược lại tìm, bấm đúng gói sale 500", (s2.taps, s2.swipes))
+        s3 = Shop(2)
+        q3 = apimode.exec_step(s3, dict(tc, scrolls=2), {"package.ocr_text": "7,777", "package.price_text": "CHF 1.00"})
+        ok(q3[0] is False and q3[2] is False and s3.taps == [] and "không thấy ô «7,777» có «CHF 1.00» ngay dưới" in q3[1] and len(s3.swipes) <= 2 + 4,
+           "gói không có trong danh sách → lướt hết số lần cho phép theo cả hai chiều rồi báo hỏng, KHÔNG bấm gì; lướt xong xuôi không tính là «đã chạm» "
+           "(gói hết hạn = «chưa mua», không thành đối soát)", (q3, s3.swipes))
+        s3b = Shop(2)
+        q3b = apimode.exec_step(s3b, {"type": "tap_text", "text": "{{otp}}", "near": "{{password}}", "scroll": "left", "scrolls": 1}, {"otp": "135790", "password": "MatKhau-Bi-Mat"})
+        ok(q3b[0] is False and "135790" not in q3b[1] and "MatKhau-Bi-Mat" not in q3b[1] and "{{otp}}" in q3b[1] and "{{password}}" in q3b[1],
+           "lời báo của bước tìm ô chỉ ghi TÊN biến bí mật, không ghi giá trị", q3b)
+        # ghép nhầm giữa các ô / nhập nhằng / ô bị cắt ở mép → không chọn
+        grid = [{"text": "300", "x": 200, "y": 140, "w": 60, "h": 26}, {"text": "CHF 2.30", "x": 195, "y": 285, "w": 134, "h": 30},
+                {"text": "500", "x": 200, "y": 425, "w": 60, "h": 26}, {"text": "CHF 3.80", "x": 195, "y": 570, "w": 134, "h": 30}]
+        ok(apimode.pick_card(grid, ["500"], ["CHF 2.30"], WH) is None and apimode.pick_card(grid, ["300"], ["CHF 2.30"], WH) == (200, 140)
+           and apimode.pick_card(grid, ["500"], ["CHF 3.80"], WH) == (200, 425) and apimode.pick_card(grid, ["300"], ["CHF 3.80"], WH) is None,
+           "giá của ô KHÁC (hàng trên / hàng dưới) không ghép được vào số coin của ô này")
+        try:
+            apimode.exec_step(Shop(0), {"type": "tap_text", "text": "500", "near": "CHF 2.30", "near_dir": "above"}, {}); raised = False
+        except apimode.ConfigError:
+            raised = True
+        ok(raised, "chế độ «ngay trên» đã bỏ (giá của ô hàng trên nằm gần số coin hơn giá của chính ô đó) → báo lỗi cấu hình")
+        tight = [{"text": "300", "x": 200, "y": 100, "w": 60, "h": 26}, {"text": "Paid: 291", "x": 190, "y": 130, "w": 110, "h": 26},
+                 {"text": "CHF 2.30", "x": 195, "y": 160, "w": 134, "h": 30}, {"text": "500", "x": 200, "y": 220, "w": 60, "h": 26},
+                 {"text": "Paid: 477", "x": 190, "y": 250, "w": 110, "h": 26}, {"text": "CHF 3.80", "x": 195, "y": 280, "w": 134, "h": 30}]
+        ok(apimode.pick_card(tight, ["300"], ["CHF 3.80"], WH) is None and apimode.pick_card(tight, ["300"], ["CHF 2.30"], WH) == (200, 100)
+           and apimode.pick_card(tight, ["500"], ["CHF 3.80"], WH) == (200, 220),
+           "hàng ô SÁT nhau (giá của ô hàng dưới lọt vào tầm): giữa số coin và giá có một số coin khác = đã sang ô khác → không ghép; dòng «Paid: …» thì không chặn")
+        twins = grid + [{"text": "500", "x": 800, "y": 425, "w": 60, "h": 26}, {"text": "CHF 3.80", "x": 795, "y": 570, "w": 134, "h": 30}]
+        ok(apimode.pick_card(twins, ["500"], ["CHF 3.80"], WH) is None, "HAI ô cùng đủ điều kiện → không chọn (nhập nhằng: không đoán ô nào)")
+        edge = [{"text": "500", "x": 1310, "y": 425, "w": 60, "h": 26}, {"text": "CHF 2.30", "x": 1300, "y": 570, "w": 80, "h": 30}]
+        ok(apimode.pick_card(edge, ["500"], ["CHF 2.30"], WH) is None, "ô bị CẮT ở mép màn hình (chữ chạm mép: «1,500» cắt còn «500») → không chọn")
+        vnd = [{"text": "130", "x": 200, "y": 140, "w": 60, "h": 26}, {"text": "126.000đ", "x": 195, "y": 285, "w": 134, "h": 30}]
+        ok(apimode.pick_card(vnd, ["130"], ["26.000đ"], WH) is None and apimode.pick_card(vnd, ["130"], ["126.000đ"], WH) == (200, 140),
+           "giá phải khớp NGUYÊN DÒNG: «26.000đ» không khớp vào «126.000đ»")
+        far = [{"text": "Mua", "x": 900, "y": 300, "w": 60, "h": 30}, {"text": "2150", "x": 310, "y": 300, "w": 80, "h": 30}]
+        ok(apimode.pick_card(far, ["Mua"], ["2150"], WH, "left") is None, "«bên trái / phải»: chữ ở ô bên cạnh (cách ~590 px) không tính là cùng ô")
+        PW = (750, 1334)                            # màn DỌC, ô sát nhau, số coin có chữ đi kèm («500 Coins»)
+        coins = [{"text": "500 Coins", "x": 200, "y": 100, "w": 160, "h": 30}, {"text": "1,500 Coins", "x": 200, "y": 220, "w": 180, "h": 30},
+                 {"text": "CHF 7.50", "x": 200, "y": 280, "w": 134, "h": 30}]
+        ok(apimode.pick_card(coins, ["500 Coins"], ["CHF 7.50"], PW) is None and apimode.pick_card(coins, ["1,500 Coins"], ["CHF 7.50"], PW) == (200, 220),
+           "«500 Coins» và «1,500 Coins» là CÙNG LOẠI (mọi cụm số coi như nhau) → giá của ô 1,500 không ghép nhầm vào ô 500")
+        split = [{"text": "1,", "x": 180, "y": 425, "w": 24, "h": 26}, {"text": "500", "x": 215, "y": 425, "w": 46, "h": 26},
+                 {"text": "CHF 7.50", "x": 200, "y": 570, "w": 134, "h": 30},
+                 {"text": "500", "x": 800, "y": 425, "w": 60, "h": 26}, {"text": "CHF 3.80", "x": 800, "y": 570, "w": 134, "h": 30}]
+        ok(apimode.pick_card(split, ["500"], ["CHF 3.80"], WH) == (800, 425) and apimode.pick_card(split, ["500"], ["CHF 7.50"], WH) is None
+           and apimode.pick_card(split, ["500"], [], WH) == (800, 425),
+           "đọc chữ TÁCH «1,500» thành «1,» + «500»: mảnh «500» dính sát một mảnh số khác cùng hàng = một phần của số lớn hơn → không khớp")
+        try:
+            apimode.exec_step(Shop(0), {"type": "tap_text", "text": "500", "near": "x", "near_dir": "any"}, {}); raised = False
+        except apimode.ConfigError:
+            raised = True
+        ok(raised, "chế độ «ở gần» (không rõ hướng) đã bỏ — dễ ghép nhầm sang ô khác → báo lỗi cấu hình")
+        s4 = Shop(3)
+        q4 = apimode.exec_step(s4, {"type": "assert_text", "text": "500", "near": "CHF 3.80"}, {})
+        s5 = Shop(0)
+        q5 = apimode.exec_step(s5, {"type": "assert_text", "text": "500", "near": "CHF 3.80"}, {})
+        ok(q4 == (True, "", False) and s4.taps == [] and s4.sent == ["home"] and q5[0] is False and s5.swipes == [] and s5.taps == [],
+           "«Kiểm có chữ» + chữ đi kèm: chỉ KIỂM (không bấm gì) — dùng để chạy thử việc tìm gói mà không mua; không ghi hướng lướt thì không lướt", (q4, q5))
+
+        class Shift(Shop):                         # ô bị trôi khỏi chỗ cũ trong lúc con trỏ đang đi tới
+            def tap_at(self, x, y, click=True, verify=None):
+                self.page = 5
+                return super().tap_at(x, y, click, verify)
+        s6 = Shift(4)
+        q6 = apimode.exec_step(s6, dict(tc), {"package.ocr_text": "3,000", "package.price_text": "CHF 21.00"})
+        ok(q6[0] is False and s6.taps == [], "danh sách trôi đi trước khi con trỏ tới nơi (ô không còn ở chỗ cũ) → KHÔNG bấm", q6)
+        for bad in ({"near": "x", "near_dir": "cheo"}, {"scroll": "cheo"}, {"near": "x", "scrolls": "nhieu"}, {"near": "  |  "}):
+            try:
+                apimode.exec_step(Shop(0), dict({"type": "tap_text", "text": "500"}, **bad), {}); raised = False
+            except apimode.ConfigError:
+                raised = True
+            ok(raised, "tuỳ chọn «trong cùng ô» sai (%s) → báo lỗi cấu hình, không bấm" % bad)
+        ok(apimode.describe(tc, pv) == "Tap chữ «10,000|10000» có «CHF 63.00» ngay dưới (chưa thấy thì lướt trái)"
+           and apimode.describe({"type": "assert_text", "text": "Mua", "near": "{{password}}", "near_dir": "left"}, {"password": "bi-mat"}) == "Kiểm chữ «Mua» có «{{password}}» bên trái",
+           "mô tả bước: hiện giá trị của gói, giữ TÊN biến bí mật", apimode.describe(tc, pv))
+        e7 = Shop(4)
+        ok7, msg7 = engine.run_step(e7, dict(tc), )
+        ok(ok7 is False and "package.ocr_text" in msg7, "kịch bản thường (không có dữ liệu đơn) dùng chung cách làm: thiếu {{biến}} → báo rõ", msg7)
+        e8 = Shop(4)
+        ok8, _ = engine.run_step(e8, {"type": "tap_text", "text": "3,000", "near": "CHF 21.00"})
+        ok(ok8 is True and e8.taps == [(216, 426, 4)], "kịch bản thường: bước có chữ đi kèm đi qua cùng bộ chạy, bấm đúng ô", e8.taps)
+
     finally:
         apimode.LOOK_SETTLE, apimode._sleep = real_settle, real_sleep
 

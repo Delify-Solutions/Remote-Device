@@ -115,6 +115,37 @@ def main():
     [t.start() for t in ths]; [t.join(60) for t in ths]
     ok(not errs and len(got) == 6 and len(set(got)) == 1, "6 luồng đọc cùng một ảnh → cùng một kết quả, không lỗi", (got, errs))
 
+    print("== 3b. Ảnh chụp bị XOAY (chữ nằm dọc) → đọc trên bản xoay thẳng, toạ độ trả về theo ảnh GỐC ==")
+    # đo thật: trang đăng nhập web mở từ game đang ngang trả về khung DỌC với nội dung nằm nghiêng → Vision đọc sót «Tiếp tục»
+    flat, fb = draw([(60, 40, "eFootball muốn sử dụng konami.net", (255, 255, 255)), (60, 140, "Tiếp tục", (255, 255, 255)), (420, 140, "Hủy", (255, 255, 255)),
+                     (60, 240, "KONAMI ID / E-mail address", (255, 255, 255))], size=(900, 360))
+    for code, name in ((cv2.ROTATE_90_CLOCKWISE, "thuận"), (cv2.ROTATE_90_COUNTERCLOCKWISE, "ngược")):
+        side = cv2.rotate(flat, code)
+        H0, W0 = flat.shape[:2]
+
+        def rot_pt(x, y):                       # điểm trên ảnh phẳng → điểm trên ảnh xoay
+            return (H0 - 1 - y, x) if code == cv2.ROTATE_90_CLOCKWISE else (y, W0 - 1 - x)
+
+        def rot_box(b):
+            p1, p2 = rot_pt(b[0], b[1]), rot_pt(b[2], b[3])
+            return (min(p1[0], p2[0]), min(p1[1], p2[1]), max(p1[0], p2[0]), max(p1[1], p2[1]))
+        hit = ocr.find(side, "Tiếp tục")
+        side_texts = [r["text"] for r in ocr.lines(side)]
+        ok(inside(hit, rot_box(fb[1]), pad=10) and "Tiếp tục" in side_texts and "KONAMI ID / E-mail address" in side_texts and inside(ocr.find(side, "Hủy"), rot_box(fb[2]), pad=10),
+           "ảnh xoay %s 90°: đọc được đủ chữ, và vị trí «Tiếp tục» / «Hủy» là vị trí TRÊN ẢNH XOAY (chỗ con trỏ sẽ bấm)" % name, (hit, rot_box(fb[1]), side_texts))
+        order = [next((i for i, t in enumerate(side_texts) if want in t), -1) for want in ("eFootball", "Tiếp tục", "KONAMI ID")]
+        ok(-1 not in order and order == sorted(order),
+           "ảnh xoay %s 90°: các dòng giữ THỨ TỰ ĐỌC của giao diện (trên → dưới), không bị xếp lại theo cột của ảnh gốc" % name, (order, side_texts))
+    ok(not ocr._sideways([{"text": "abc", "box": (0, 0, 10, 40)}]) and ocr._sideways([{"text": "abcd", "box": (0, 0, 10, 40)}, {"text": "efgh", "box": (20, 0, 30, 50)}, {"text": "ij", "box": (0, 0, 50, 5)}])
+       and not ocr._sideways([{"text": "abcd", "box": (0, 0, 100, 20)}, {"text": "efgh", "box": (0, 0, 10, 40)}]),
+       "chỉ coi là «chữ nằm dọc» khi PHẦN LỚN các dòng đủ dài có hộp cao hơn rộng (một dòng dọc lẻ — chữ trang trí — không làm xoay cả ảnh)")
+    ok(ocr._unrotate_box((10, 20, 30, 60), "cw", 100, 200) == (20, 169, 61, 190) and ocr._unrotate_box((10, 20, 30, 60), "ccw", 100, 200) == (39, 10, 80, 31),
+       "đổi hộp từ ảnh xoay về ảnh gốc (cả hai chiều)")
+
+    ok(eyes.norm_text("ОK") == "ok" and eyes.norm_text("Еріс") == "epic" and ocr._norm("ВАСК") == "back" and eyes.text_has(eyes.norm_text("Nút ОK"), "OK")
+       and eyes.norm_text("Đăng nhập") == "dang nhap" and eyes.norm_text("Эра") == "эpa",
+       "chữ Kirin / Hy Lạp trông y hệt chữ Latin được đổi về Latin khi so (Vision từng đọc «OK» thành «ОK»); chữ Kirin không giống Latin giữ nguyên")
+
     print("== 4. eyes.read_text / find_text: ghép với tesseract ==")
     e = eyes.Eyes("khong-dung-toi")
     real_tess = eyes.pytesseract
