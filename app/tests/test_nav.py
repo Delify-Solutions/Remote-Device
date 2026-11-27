@@ -1014,6 +1014,35 @@ def main():
     n.e = Both(w, "ccw")
     ok(n.tap_at(600, 300) is False and w.clicks == [], "không phân định được hướng (dấu hiệu con trỏ ở hai góc) → KHÔNG bấm, không đoán", w.clicks)
 
+    class Turning(Landscape):                               # ảnh chụp ĐỔI chiều giữa lúc đang đưa con trỏ (ngang → dọc) từ ảnh thứ `at`
+        at = 5
+
+        def screenshot(self):
+            return super().screenshot() if self.w.shots + 1 < self.at else self.w.render()
+    for at in (3, 5, 8):
+        n, w = lrig("ccw")
+        n.e = Turning(w, "ccw")
+        n.e.at = at
+        X, Y = n.e.to_img(186, 831)
+        ok(n.tap_at(X, Y) is False and w.clicks == [], "ảnh chụp đổi cỡ / chiều GIỮA lúc đưa con trỏ (từ ảnh thứ %d) → toạ độ đích không còn đúng → KHÔNG bấm" % at, w.clicks)
+
+    seen_steady = []
+
+    class Spy(FakeEyes):                                    # trong lúc đưa con trỏ, cách quay ảnh THẲNG của máy phải được giữ nguyên
+        def screenshot(self):
+            seen_steady.append(Eyes._steady.get(None, 0))
+            return super().screenshot()
+    n, w = rig()
+    n.e = Spy(w)
+    got = n.tap_at(400, 700)
+    ok(got is True and len(seen_steady) > 2 and seen_steady[0] == 0 and all(s > 0 for s in seen_steady[1:]) and Eyes._steady.get(None, 0) == 0,
+       "tap_at: ảnh NỀN đầu tiên chụp ngoài «steady» (được xét lại cách quay — bước bấm toạ độ không có lần nhìn nào trước), mọi ảnh sau giữ "
+       "nguyên cách quay; xong thì nhả", (got, seen_steady[:5], Eyes._steady.get(None)))
+    seen_steady.clear()
+    n, w = rig(visible=False)
+    n.e = Spy(w)
+    ok(n.tap_at(400, 700) is False and Eyes._steady.get(None, 0) == 0, "không tới nơi (không bấm) → cũng nhả «steady»", Eyes._steady.get(None))
+
     print("\n== 3d. Lệnh xuống board: gửi liền mạch, bấm giữ luôn nhả, không bấm đôi ==")
     class FakeSerial:
         """Cổng serial giả: trả "OK <lệnh>" cho mỗi dòng nhận được. `feed` = các MẨU dữ liệu board «nhả» dần

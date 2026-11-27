@@ -14,7 +14,7 @@ lệnh cho từng ảnh (~1,3s) và tạm nghỉ dùng đường nhanh FAST_COOL
 vài giây chờ đường nhanh hết giờ).
 """
 from __future__ import annotations
-import subprocess, tempfile, os, sys, time, unicodedata
+import contextlib, subprocess, tempfile, os, sys, threading, time, unicodedata
 import numpy as np
 import cv2
 import fastshot
@@ -164,8 +164,86 @@ class Eyes:
         Eyes._fast_off[self.udid] = time.time() + self.FAST_COOLDOWN
         return None
 
+    # ---- ẢNH THẲNG: mọi ảnh trả ra đều cùng chiều với GIAO DIỆN ----
+    # Đo trên iPhone 8 (máy 01): sau khi mở trang đăng nhập web từ game đang ngang, máy chụp ra khung DỌC 750×1334 với nội dung nằm NGHIÊNG,
+    # kéo dài cả khi mở lại game. Bước ghi theo toạ độ / vùng ảnh / hướng lướt / «trong cùng ô» đều được soạn trên ảnh THẲNG → mọi ảnh trả ra
+    # được quay thẳng theo chữ trên màn hình (ocr.upright_turn). Con trỏ không cần biết chuyện này: Nav tự dò hướng của ảnh so với hệ trục
+    # chuột theo góc con trỏ hiện ra (như với game xoay ngang — xem nav.Frame).
+    # Cách quay được NHỚ theo từng máy và chỉ xét lại khi: cỡ ảnh chụp đổi; màn hình đổi nhiều (≥ TURN_CHANGE) sau ít nhất TURN_GAP giây;
+    # lần xét trước chưa chắc (ít chữ); hoặc đã TURN_AGE giây. Trong lúc đang đưa con trỏ (steady) KHÔNG xét lại — đổi chiều giữa chừng
+    # là toạ độ đích sai.
+    UPRIGHT = True
+    TURN_GAP = 2.0
+    TURN_AGE = 30.0
+    TURN_CHANGE = 0.25
+    _turns = {}                   # udid -> {"k": số lần quay 90° theo chiều kim đồng hồ, "shape", "t", "thumb", "sure"}
+    _steady = {}                  # udid -> số khối steady đang mở
+    _turn_lock = threading.Lock()
+
+    @staticmethod
+    def rotate(img, k: int):
+        """Quay ảnh k lần 90° theo chiều kim đồng hồ."""
+        k %= 4
+        return img if not k else cv2.rotate(img, (cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180, cv2.ROTATE_90_COUNTERCLOCKWISE)[k - 1])
+
+    @staticmethod
+    def _thumb(img):
+        g = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        return cv2.resize(g, (32, 32), interpolation=cv2.INTER_AREA)
+
+    @contextlib.contextmanager
+    def steady(self):
+        """Giữ NGUYÊN cách quay ảnh của máy này trong khối lệnh (đang đưa con trỏ tới đích)."""
+        key = getattr(self, "udid", None)
+        with Eyes._turn_lock:
+            Eyes._steady[key] = Eyes._steady.get(key, 0) + 1
+        try:
+            yield
+        finally:
+            with Eyes._turn_lock:
+                Eyes._steady[key] = max(0, Eyes._steady.get(key, 1) - 1)
+
+    def turn(self) -> int:
+        """Cách quay đang dùng cho ảnh của máy này (0 = ảnh chụp đã thẳng)."""
+        st = Eyes._turns.get(self.udid)
+        return st["k"] if st else 0
+
+    def upright(self, raw):
+        """Ảnh chụp `raw` → ảnh THẲNG (xem chú thích ở trên)."""
+        now = time.time()
+        thumb = self._thumb(raw)
+        with Eyes._turn_lock:
+            st = Eyes._turns.get(self.udid)
+            steady = Eyes._steady.get(self.udid, 0) > 0
+        same = st is not None and st["shape"] == raw.shape
+        if same:
+            age = now - st["t"]
+            due = age >= self.TURN_GAP and (age >= self.TURN_AGE or not st["sure"]
+                                            or float(np.mean(cv2.absdiff(thumb, st["thumb"]) > 20)) >= self.TURN_CHANGE)
+            if steady or not due:
+                return self.rotate(raw, st["k"])
+        k0 = st["k"] if same else 0
+        try:
+            k = ocr.upright_turn(self.rotate(raw, k0))
+        except Exception:
+            k = None
+        sure = k is not None
+        k = k0 if k is None else (k0 + k) % 4          # chưa biết → giữ cách quay cũ (cỡ ảnh đổi thì: không quay)
+        with Eyes._turn_lock:
+            cur = Eyes._turns.get(self.udid)
+            if Eyes._steady.get(self.udid, 0) > 0 and cur is not None and cur["shape"] == raw.shape:
+                # một luồng khác của CÙNG máy vừa bắt đầu đưa con trỏ trong lúc ta đang xét: không đổi cách quay giữa chừng của nó
+                return self.rotate(raw, cur["k"])
+            Eyes._turns[self.udid] = {"k": k, "shape": raw.shape, "t": now, "thumb": thumb, "sure": sure}
+        return self.rotate(raw, k)
+
     def screenshot(self):
-        """Trả về ảnh numpy BGR (OpenCV)."""
+        """Trả về ảnh numpy BGR (OpenCV), đã quay THẲNG theo giao diện (xem `upright`)."""
+        raw = self.grab()
+        return self.upright(raw) if self.UPRIGHT else raw
+
+    def grab(self):
+        """Ảnh chụp NGUYÊN như máy trả về (chưa quay thẳng)."""
         if self.FAST and fastshot.AVAILABLE:
             img = self._grab_fast()
             if img is not None:

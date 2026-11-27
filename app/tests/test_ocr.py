@@ -146,6 +146,109 @@ def main():
        and eyes.norm_text("Đăng nhập") == "dang nhap" and eyes.norm_text("Эра") == "эpa",
        "chữ Kirin / Hy Lạp trông y hệt chữ Latin được đổi về Latin khi so (Vision từng đọc «OK» thành «ОK»); chữ Kirin không giống Latin giữ nguyên")
 
+    print("== 3c. Ảnh THẲNG: Eyes.screenshot() luôn trả ảnh cùng chiều với giao diện ==")
+    # đo thật (máy 01): sau khi mở trang đăng nhập web từ game ngang, ảnh chụp ra khung DỌC với nội dung nằm nghiêng
+    ui, _ = draw([(60, 40, "eFootball muốn sử dụng konami.net", (255, 255, 255)), (60, 140, "Tiếp tục", (255, 255, 255)),
+                  (420, 140, "Hủy", (255, 255, 255)), (60, 240, "KONAMI ID / E-mail address", (255, 255, 255))], size=(900, 360))
+    blank = np.full_like(ui, 200)
+    portrait_ui, _ = draw([(40, 60, "Cài đặt chung", (255, 255, 255)), (40, 160, "Giới thiệu máy", (255, 255, 255)),
+                           (40, 260, "Cập nhật phần mềm", (255, 255, 255))], size=(360, 900))
+    calls = []
+    real_turn = ocr.upright_turn
+
+    def counted(img):
+        calls.append(img.shape)
+        return real_turn(img)
+
+    class Cam(eyes.Eyes):                             # «máy» trả ảnh chụp theo danh sách đặt sẵn
+        def __init__(self, udid):
+            super().__init__(udid)
+            self.feed = []
+
+        def grab(self):
+            return self.feed.pop(0) if len(self.feed) > 1 else self.feed[0]
+    real_gap = eyes.Eyes.TURN_GAP
+    ocr.upright_turn = counted
+    try:
+        for k, name in ((1, "thuận"), (3, "ngược")):
+            eyes.Eyes._turns.clear()
+            cam = Cam("may-xoay-%d" % k)
+            cam.feed = [eyes.Eyes.rotate(ui, k)]          # khung dọc, nội dung xoay `k` lần 90° theo chiều kim đồng hồ
+            got = cam.screenshot()
+            ok(got.shape == ui.shape and np.array_equal(got, ui) and cam.turn() == (4 - k) % 4,
+               "ảnh chụp xoay %s 90° → trả đúng ảnh THẲNG như giao diện (toạ độ / vùng ảnh / hướng lướt ghi trên ảnh thẳng dùng được)" % name, (got.shape, cam.turn()))
+        calls.clear()
+        for _ in range(4):
+            cam.screenshot()
+        ok(calls == [] and cam.turn() == 1, "đã biết cách quay, màn hình không đổi → KHÔNG đọc chữ lại (mỗi ảnh chỉ tốn một lần quay ảnh)", calls)
+        eyes.Eyes.TURN_GAP = 0
+        cam.feed = [eyes.Eyes.rotate(blank, 3)]
+        g2 = cam.screenshot()
+        ok(cam.turn() == 1 and g2.shape == ui.shape and eyes.Eyes._turns[cam.udid]["sure"] is False,
+           "màn hình đổi sang trang KHÔNG có chữ (đang tải) → giữ cách quay cũ, đánh dấu «chưa chắc» để xét lại sau", (cam.turn(), g2.shape))
+        cam.feed = [portrait_ui]                          # cùng cỡ khung dọc, nhưng giờ là giao diện DỌC thật (về màn hình chính)
+        with cam.steady():
+            g3 = cam.screenshot()
+        ok(g3.shape[:2] == (360, 900) and cam.turn() == 1,
+           "đang đưa con trỏ (steady) → KHÔNG xét lại cách quay giữa chừng, dù màn hình đã đổi", g3.shape)
+        g4 = cam.screenshot()
+        ok(cam.turn() == 0 and np.array_equal(g4, portrait_ui), "hết steady → xét lại: giao diện dọc thật → không quay nữa", (cam.turn(), g4.shape))
+        cam.feed = [ui]                                   # cỡ ảnh chụp đổi (khung ngang bình thường trở lại)
+        g5 = cam.screenshot()
+        ok(cam.turn() == 0 and np.array_equal(g5, ui), "cỡ ảnh chụp đổi → xét lại ngay; ảnh ngang đã thẳng → không quay", cam.turn())
+        eyes.Eyes._turns.clear()
+        cam.feed = [eyes.Eyes.rotate(ui, 2)]
+        ok(np.array_equal(cam.screenshot(), ui) and cam.turn() == 2, "ảnh lộn ngược (chữ đọc được nhưng ký tự đầu nằm bên phải ký tự cuối) → quay 180°", cam.turn())
+        eyes.Eyes._turns.clear()
+        cam.feed = [eyes.Eyes.rotate(blank, 1)]
+        ok(cam.screenshot().shape == blank.shape[:2][::-1] + (3,) and cam.turn() == 0, "máy mới, màn hình chưa có chữ → không quay (chưa biết thì không đoán)", cam.turn())
+        words, _ = draw([(80, 60, "Cancel", (255, 255, 255)), (520, 60, "Open", (255, 255, 255)), (80, 220, "Settings", (255, 255, 255)),
+                         (520, 220, "Download", (255, 255, 255))], size=(900, 360))
+        for k in (1, 3):
+            t = real_turn(eyes.Eyes.rotate(words, k))
+            eyes.Eyes._turns.clear()
+            cam.feed = [eyes.Eyes.rotate(words, k)]
+            gw = cam.screenshot()
+            ok(t in (None, (4 - k) % 4) and (cam.turn() in (0, (4 - k) % 4)) and not (cam.turn() == (6 - k) % 4),
+               "màn hình chỉ có chữ MỘT từ, xoay %d lần: không đo được chiều → không đoán (không bao giờ ra ảnh lộn ngược 180°)" % k, (t, cam.turn()))
+        ok(eyes.Eyes._turns[cam.udid]["sure"] is (real_turn(eyes.Eyes.rotate(words, 3)) is not None),
+           "…và «chưa chắc» khi không đo được → lần sau xét lại")
+        eyes.Eyes._turns.clear()
+        cam.feed = [eyes.Eyes.rotate(ui, 1)]
+        cam.screenshot()
+        calls.clear()
+        other, _ = draw([(60, 60, "Purchase Successful today", (255, 255, 255)), (60, 200, "eFootball Coins were added", (255, 255, 255))], size=(900, 360), bg=(30, 110, 60))
+        cam.feed = [eyes.Eyes.rotate(other, 1)]
+        cam.screenshot()
+        ok(len(calls) == 1 and cam.turn() == 3, "đã chắc mà màn hình ĐỔI nhiều → xét lại (một lần)", (calls, cam.turn()))
+        calls.clear()
+        cam.screenshot()
+        ok(calls == [], "màn hình đứng yên → không xét lại", calls)
+        eyes.Eyes._turns[cam.udid]["t"] -= eyes.Eyes.TURN_AGE + 1
+        cam.screenshot()
+        ok(len(calls) == 1, "đứng yên nhưng đã quá %ds → xét lại cho chắc" % eyes.Eyes.TURN_AGE, calls)
+
+        def racing(img):                              # luồng KHÁC của cùng máy bắt đầu đưa con trỏ ngay trong lúc ta đang xét
+            eyes.Eyes._steady[cam.udid] = eyes.Eyes._steady.get(cam.udid, 0) + 1
+            return 2
+        ocr.upright_turn = racing
+        eyes.Eyes._turns[cam.udid]["t"] -= eyes.Eyes.TURN_AGE + 1
+        try:
+            gr = cam.screenshot()
+        finally:
+            eyes.Eyes._steady[cam.udid] -= 1
+            ocr.upright_turn = counted
+        ok(cam.turn() == 3 and np.array_equal(gr, other), "kết quả xét lại tới SAU khi luồng khác đã bắt đầu đưa con trỏ → không đổi cách quay giữa chừng của nó", cam.turn())
+        eyes.Eyes.UPRIGHT = False
+        eyes.Eyes._turns.clear()
+        cam.feed = [eyes.Eyes.rotate(ui, 1)]
+        ok(cam.screenshot().shape[:2] == (900, 360), "tắt UPRIGHT → trả nguyên ảnh chụp")
+    finally:
+        eyes.Eyes.UPRIGHT = True
+        eyes.Eyes.TURN_GAP = real_gap
+        ocr.upright_turn = real_turn
+        eyes.Eyes._turns.clear()
+
     print("== 4. eyes.read_text / find_text: ghép với tesseract ==")
     e = eyes.Eyes("khong-dung-toi")
     real_tess = eyes.pytesseract

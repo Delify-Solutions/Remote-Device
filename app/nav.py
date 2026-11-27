@@ -13,7 +13,7 @@ Nên ta TÌM 1 lần vector move (ax,ay) click trúng mỗi nút, lưu lại, ph
     n.tap_move(ax, ay)       # di (ax,ay) từ góc rồi click
 """
 from __future__ import annotations
-import math, random, sys, time
+import contextlib, math, random, sys, time
 
 import cv2
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
@@ -274,8 +274,19 @@ class Nav:
         if verbose: print("  (máy đang xoay ngang: hệ trục chuột = ảnh quay %s)" % {"ccw": "90° ngược chiều kim đồng hồ", "cw": "90° theo chiều kim đồng hồ", 0: "0°"}[hits[0].rot])
         return hits[0]
 
-    def tap_at(self, px: int, py: int, tol: int = 12, iters: int = 34,
-               click=True, verbose=False, verify=None):
+    def tap_at(self, px: int, py: int, tol: int = 12, iters: int = 34, click=True, verbose=False, verify=None):
+        """Xem _tap_at. Trong lúc đưa con trỏ, cách quay ảnh THẲNG của máy được giữ nguyên (Eyes.steady)."""
+        # Ảnh NỀN đầu tiên được chụp NGOÀI steady (được xét lại cách quay nếu tới hạn): bước bấm theo toạ độ không có lần nhìn nào trước đó,
+        # cách quay nhớ từ màn hình trước có thể đã cũ. Từ sau ảnh đó mới giữ nguyên (xem anchor).
+        with contextlib.ExitStack() as hold:
+            self._hold = hold
+            try:
+                return self._tap_at(px, py, tol, iters, click, verbose, verify)
+            finally:
+                self._hold = None
+
+    def _tap_at(self, px: int, py: int, tol: int = 12, iters: int = 34,
+                click=True, verbose=False, verify=None):
         """Đưa con trỏ tới pixel (px,py) rồi click. Trả True nếu con trỏ ĐÃ tới nơi.
         KHÔNG tới được thì KHÔNG click (bấm bừa vào chỗ khác còn tệ hơn là không bấm).
 
@@ -311,6 +322,9 @@ class Nav:
                 shot = self.e.screenshot()
             except Exception:
                 shot = None
+            hold, steady = getattr(self, "_hold", None), getattr(self.e, "steady", None)
+            if hold is not None and steady is not None and fr is None:
+                hold.enter_context(steady())          # từ đây tới hết lần bấm: giữ nguyên cách quay ảnh của máy
             self.h.move(50, 50)            # rời góc để con trỏ hiện (ở góc là nửa hình, khó thấy)
             if shot is None:
                 return None
@@ -318,6 +332,9 @@ class Nav:
                 fr = self._frame(shot, verbose)
                 if fr is None:
                     return None
+            elif shot.shape[:2] != (fr.h, fr.w):
+                if verbose: print("  (cỡ / chiều ảnh chụp đổi giữa chừng — màn hình đã khác) -> KHÔNG click")
+                return None
             return fr.dev(shot)
 
         ref = anchor()
@@ -419,6 +436,9 @@ class Nav:
         for i in range(iters):
             time.sleep(self.TRACK_SETTLE)
             img = grab()
+            if img.shape != ref.shape:     # cỡ / chiều ảnh đổi giữa chừng: toạ độ đích không còn đúng → không bấm
+                if verbose: print("  (cỡ / chiều ảnh chụp đổi giữa chừng) -> KHÔNG click")
+                return False
             now = [c[:2] for c in self.e.pointer_blobs(ref, img, corner)]
             # `vis` = các vệt KHÔNG nằm gần vật đã biết là đứng yên / cựa quậy tại chỗ (cỡ một icon, ~30px). Chỉ dùng `vis` để chọn
             # «chỗ con trỏ có thể đang đứng» và để xét «mất dấu» — đừng di chuột theo vệt kim đồng hồ (đo thật: con trỏ bị đẩy sát
@@ -490,6 +510,8 @@ class Nav:
                 # (đo thật: để con trỏ «đứng chờ» trên icon đích → bộ dò mất dấu, bấm chậm 10–25 s hoặc hỏng).
                 time.sleep(self.TRACK_SETTLE)
                 still_img = grab()
+                if still_img.shape != ref.shape:
+                    return False
                 now2 = [c[:2] for c in self.e.pointer_blobs(ref, still_img, corner)]
                 if not any(_dist(c, p) <= self.STILL for c in now2):
                     if verbose: print("     (vệt đã dời đi dù không có lệnh nào → không phải con trỏ, đo lại)")

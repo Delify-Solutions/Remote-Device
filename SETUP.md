@@ -332,7 +332,7 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
     trùm nhiều nút giống nhau thì khi dãy nút xê dịch máy có thể chọn lệch một nút.
   - Phần giao diện của bước này gắn với trang (kéo khung, cắt ảnh, hộp sửa bước) chỉ được thử TAY trên trình sửa thật với hai iPhone 8; bài
     thử tự động (`test_ui_steps.py`) chỉ phủ các hàm thuần (đổi khung kéo ra toạ độ, kiểm ảnh, đọc ô «giống tối thiểu», lấy bước của gateway…).
-  - Giới hạn: hình chỉ khớp với máy CÙNG độ phân giải và cùng chiều xoay với lúc cắt; nền phía sau nút thay đổi nhiều (video, hiệu ứng)
+  - Giới hạn: hình chỉ khớp với máy CÙNG độ phân giải với lúc cắt (chiều xoay thì không sao khi tool dò được chiều — ảnh chụp được quay thẳng, xem «Ảnh chụp bị xoay»); nền phía sau nút thay đổi nhiều (video, hiệu ứng)
     thì phải khoanh sát nút hoặc hạ độ giống. Ảnh mẫu (PNG) nằm trong chính dữ liệu của bước; không gửi lên gateway.
 - **Đăng nhập eFootball (Data Transfer → KONAMI ID) — các trường hợp đã gặp trên máy thật** (chạy lặp ngày 27/11/2026 trên hai iPhone 8, có bộ
   ghi màn hình nền gom từng màn mới; luật của pool `efootball-ios` trên gateway dev đã đổi sang đúng các câu này):
@@ -356,11 +356,24 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   | «Purpose of Data Processing for Digital Advertising» | tài khoản mới vào game lần đầu | chưa có bước xử lý (gặp một lần, lướt hết thì qua) |
   - Thư mã xác minh của tài khoản test thứ hai **không về** hộp thư tạm sau 2 lần thử — chưa rõ do Konami hay do hộp thư.
   - **Ảnh chụp bị xoay (máy 01):** sau khi mở trang đăng nhập web, máy 01 có lúc chụp ra khung DỌC (750×1334) trong khi game vẫn NGANG — kéo dài cả
-    khi mở lại game. Bộ đọc chữ đã tự xoay thẳng khi phần lớn chữ nằm dọc (toạ độ trả về theo ảnh gốc, bấm vẫn đúng), nên **bước theo CHỮ chạy được**;
-    nhưng **bước theo TOẠ ĐỘ, «bấm tại toạ độ» (`at`) của «nếu thấy chữ», «bấm vào vùng ảnh»** (ghi trên ảnh ngang), hướng lướt, và **bước «trong
-    cùng ô»** (hướng dưới / trái / phải và các tỉ lệ 15 / 35 / 25% tính theo khung ảnh gốc — thường thành không chọn được ô) thì KHÔNG đúng trên
-    ảnh xoay — việc cần làm tiếp: quy ước mọi
-    ảnh chụp được xoay thẳng trước khi so / bấm. Máy 002 không bị. Hộp thoại hệ thống không nhận cú bấm trên máy 01 cũng xảy ra trong trạng thái này.
+    khi mở lại game. **Tool tự quay THẲNG mọi ảnh chụp** theo chữ trên màn hình (`Eyes.screenshot` → `ocr.upright_turn`): ảnh trả ra luôn cùng
+    chiều với giao diện, nên bước theo toạ độ, «bấm tại toạ độ», «bấm vào vùng ảnh», hướng lướt và «trong cùng ô» soạn trên ảnh thẳng dùng
+    được nguyên vẹn; con trỏ tự dò hướng của ảnh so với trục chuột theo góc nó hiện ra (như game xoay ngang). Đã chạy thật trên máy 01 đang bị
+    xoay: bấm (665,645) ở màn tiêu đề, «Sign Players» bấm tại (667,571), vào Shop, lướt trái tìm ô 15,000 — CHF 93.00, bấm nút menu bằng vùng
+    ảnh 90×90 → đều đúng (trước đây «Tap (1257,682)» hỏng).
+    - Cách quay được NHỚ theo từng máy; chỉ xét lại khi cỡ ảnh chụp đổi, màn hình đổi nhiều (sau ít nhất 2 giây), lần trước chưa chắc (màn
+      hình ít chữ — đang tải, logo: giữ cách quay cũ), hoặc đã 30 giây. Lần xét lại dùng chung kết quả đọc chữ với bước đang chạy (không tốn
+      thêm khi ảnh đã thẳng). Trong lúc đưa con trỏ KHÔNG xét lại; ảnh đổi cỡ / chiều giữa lúc đưa con trỏ → không bấm.
+    - Chiều đúng (chứ không lộn ngược 180°) = chiều mà ký tự đầu của dòng nằm bên trái ký tự cuối (Vision đọc được cả chữ lộn ngược). Dòng
+      một từ không cho biết chiều (Vision trả hộp cả từ cho từng ký tự) — bị bỏ qua khi đếm; màn hình CHỈ có dòng một từ thì «chưa biết»,
+      giữ cách quay cũ (không đoán — đoán sai là ảnh lộn ngược, bấm toạ độ vào điểm đối xứng).
+    - Ảnh nền đầu tiên của mỗi lần bấm được xét lại (bước bấm toạ độ không có lần nhìn nào trước); màn hình ít chữ («chưa chắc») hoặc có
+      hoạt hình thì mỗi lần chụp ngoài lúc đưa con trỏ có thể tốn một lượt đọc chữ, cách nhau ít nhất 2 giây.
+    - Cần Apple Vision: chạy với `IPF_OCR=tesseract` (không dùng Vision) thì KHÔNG quay thẳng được. Vùng ảnh / toạ độ đã ghi trên ảnh NGHIÊNG
+      trước đây (nếu có) phải ghi lại trên ảnh thẳng.
+    - Lần chạy thật đầu tiên, bước «nếu thấy chữ» (Sign Players → bấm tại (667,571)) báo «con trỏ không tới được…» một lần; chạy lại thì được.
+      Chưa rõ nguyên nhân (không lặp lại).
+    - Hộp thoại hệ thống không nhận cú bấm trên máy 01 cũng xảy ra trong trạng thái này (xem «assistivetouchd»).
   - Vision có lúc đọc chữ Latin thành chữ Kirin trông giống hệt («OK» → «ОK»): khi so khớp đã đổi về Latin.
 - **Gói nạp — cấu hình và cách tool tìm đúng gói.** Mỗi gói khai ở gateway (trang quản trị → Pool → mục 5 «Gói nạp»): **Mã gói** (thứ shop gửi
   trong `items[].code`), **Tên**, **Chữ OCR để dò** = số coin in trên ô gói (nhiều cách viết ngăn bằng `|`, vd `1,000|1000`), **Giá hiển thị** = giá

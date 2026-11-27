@@ -123,18 +123,7 @@ def _observe_once(img, correct=False):
     def score(rs):
         return sum(len(r["text"]) for r in rs if (r["box"][2] - r["box"][0]) >= (r["box"][3] - r["box"][1]))
 
-    def forward(rs):
-        # Vision đọc được cả chữ LỘN NGƯỢC (xoay sai chiều = 180°) nên đếm chữ không phân biệt được hai chiều; chiều ĐÚNG là chiều mà ký tự
-        # đầu của dòng nằm BÊN TRÁI ký tự cuối (thứ tự đọc của bản lộn ngược bị đảo ngược hết).
-        n = 0
-        for r in rs:
-            raw = r.get("raw") or ""
-            if len(raw.replace(" ", "")) < 4:
-                continue
-            a, b = _range_box(r, 0, 1), _range_box(r, len(raw) - 1, len(raw))
-            if a and b:
-                n += 1 if (a[0] + a[2]) < (b[0] + b[2]) else -1
-        return n
+    forward = _forward
     best, best_rot, best_key = None, None, None
     for rot, code in (("cw", cv2.ROTATE_90_CLOCKWISE), ("ccw", cv2.ROTATE_90_COUNTERCLOCKWISE)):
         rs = _observe_raw(cv2.rotate(img, code), correct)
@@ -145,8 +134,47 @@ def _observe_once(img, correct=False):
         return rows
     for r in best:
         r["rot"], r["W"], r["H"] = best_rot, W, H
+        r["fwd"] = best_key[0]    # > 0: đã đo được chiều đúng; 0: KHÔNG đo được (chỉ có dòng một từ) — chiều đọc có thể lộn ngược 180°
         r["box"] = _unrotate_box(r["box"], best_rot, W, H)
     return best                     # GIỮ thứ tự đọc của bản xoay thẳng (xếp lại theo toạ độ ảnh gốc là đọc theo cột → xáo dòng)
+
+
+def _forward(rs) -> int:
+    """Vision đọc được cả chữ LỘN NGƯỢC (xoay sai chiều = 180°) nên đếm chữ không phân biệt được hai chiều; chiều ĐÚNG là chiều mà ký tự
+    đầu của dòng nằm BÊN TRÁI ký tự cuối (thứ tự đọc của bản lộn ngược bị đảo ngược hết). Trả (số dòng xuôi) − (số dòng ngược), tính
+    trên khung của chính ảnh đã đọc ra `rs` (dòng chưa đổi hộp về ảnh khác)."""
+    n = 0
+    for r in rs:
+        raw = r.get("raw") or ""
+        if len(raw.replace(" ", "")) < 4:
+            continue
+        a, b = _range_box(r, 0, 1), _range_box(r, len(raw) - 1, len(raw))
+        if not (a and b):
+            continue
+        d = (b[0] + b[2]) - (a[0] + a[2])
+        if abs(d) > 8:                 # hộp TRÙNG nhau = không có thông tin (đo thật: dòng một từ — Vision trả hộp cả TỪ cho từng ký tự)
+            n += 1 if d > 0 else -1
+    return n
+
+
+def upright_turn(img):
+    """Ảnh `img` phải QUAY bao nhiêu thì chữ trên đó nằm thẳng: số lần quay 90° THEO chiều kim đồng hồ (0 = đã thẳng, 1, 2 = lộn ngược,
+    3 = quay ngược chiều 90°). None = chưa biết (ít chữ quá — màn hình tải, logo; hoặc chữ nằm dọc mà xoay cũng không đọc tốt hơn).
+    Dùng chung kết quả đọc chữ với read_text / find_text trên cùng ảnh (có nhớ theo nội dung ảnh) — ảnh đã thẳng thì không tốn thêm."""
+    rows = _observe(img)
+    longs = [r for r in rows if len((r.get("raw") or r.get("text") or "").replace(" ", "")) >= 4]
+    if len(longs) < 2:
+        return None
+    rot = rows[0].get("rot")
+    if rot:
+        # chỉ tin chiều đã ĐO được (ký tự đầu nằm bên trái ký tự cuối trên bản xoay). Màn hình chỉ có dòng một từ thì cả hai chiều xoay đều
+        # «không rõ» — chọn bừa một chiều là có thể ra ảnh LỘN NGƯỢC (verify vòng 30: hộp thoại «Cancel / Open») → chưa biết.
+        if rows[0].get("fwd", 0) <= 0:
+            return None
+        return 1 if rot == "cw" else 3
+    if _sideways(rows):
+        return None
+    return 2 if _forward(rows) <= -2 else 0
 
 
 def _observe_raw(img, correct=False):

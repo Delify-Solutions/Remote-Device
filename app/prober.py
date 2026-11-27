@@ -47,7 +47,7 @@ def identify(port, candidates, settle=0.4):
         before, ready = {}, []
         for c in candidates:
             try:
-                before[c["udid"]] = eyes[c["udid"]].screenshot(); ready.append(c)
+                before[c["udid"]] = eyes[c["udid"]].grab(); ready.append(c)        # chỉ so hai ảnh với nhau: ảnh NGUYÊN, không cần quay thẳng
             except Exception:
                 pass   # máy chưa chụp được (chưa mount DDI) → bỏ qua
         if not ready:
@@ -61,7 +61,7 @@ def identify(port, candidates, settle=0.4):
         ranked = []
         for c in ready:
             try:
-                after = eyes[c["udid"]].screenshot()
+                after = eyes[c["udid"]].grab()
             except Exception:
                 continue
             ranked.append((c, _diff_score(before[c["udid"]], after)))
