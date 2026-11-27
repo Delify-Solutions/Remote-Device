@@ -772,6 +772,7 @@ function renderOverview(r) {
       </div>
       <div class="ov-kv"><span>Thư mục môi trường</span><span class="mono">${esc(s.venv)}</span></div>
       <div class="ov-kv"><span>Trình quản lý gói</span><span>${esc(pm)}</span></div>
+      <div class="ov-kv"><span>Bộ đọc chữ</span><span>${esc(s.ocr || "—")}</span></div>
     </div></div>`;
 
   const pkgMissing = r.packages.filter(p => !p.ok);

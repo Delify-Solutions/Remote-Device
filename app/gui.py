@@ -379,15 +379,21 @@ def _start_presence():
     global _PRESENCE_LOCK
     try:
         import fcntl
-    except ImportError:                 # hệ không có fcntl (Windows): không khoá được, vẫn báo
-        PRESENCE.start()
-        return True
+
+        def grab(f):
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except ImportError:                 # Windows: khoá byte đầu của tệp bằng msvcrt (không chờ; tiến trình tắt thì hệ điều hành tự nhả)
+        import msvcrt
+
+        def grab(f):
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
     if _PRESENCE_LOCK is None:
         try:
             os.makedirs(store.DATA_DIR, exist_ok=True)
             f = open(os.path.join(store.DATA_DIR, "presence.lock"), "a+")
             try:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                grab(f)
             except OSError:
                 f.close()
                 PRESENCE.disable("Một cửa sổ / tiến trình khác của app đang báo cho gateway — tiến trình này không báo (tránh ghi đè lẫn nhau).")

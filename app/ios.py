@@ -7,7 +7,10 @@ from __future__ import annotations
 import json, os, subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PMD = os.path.join(ROOT, ".venv", "bin", "pymobiledevice3")
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import venvbin
+PMD = venvbin.tool("pymobiledevice3")          # trong .venv (Windows: .exe), không có thì tìm trong PATH
 
 # ProductType -> tên model dễ đọc
 MODEL = {

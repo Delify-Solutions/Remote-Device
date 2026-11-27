@@ -540,8 +540,8 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
 | `app/fastshot.py` | chụp màn hình qua một kết nối giữ mở (~0,33s/ảnh thay vì ~1,3s) |
 | `app/history.py` | «máy nào đang chạy bước nào» + lịch sử theo MÁY (`app/data/history/may-<tên>.jsonl`) và theo ĐƠN (`don.jsonl`); xem ở trang **Theo dõi** |
 | `app/iosapp.py` | tắt hẳn rồi mở mới một app qua USB (kênh công cụ nhà phát triển); chọn app theo tên hiển thị / tên gói / bundle id, bỏ qua app ẩn của hệ thống |
-| `app/eyes.py` | chụp màn hình, tìm chữ / tìm hình, định vị con trỏ. Bộ đọc chữ của macOS (Vision) báo lỗi giữa chừng mà máy không cài tesseract → `read_text` / `find_text` BÁO LỖI, không lặng lẽ trả «màn hình trống» / «không thấy chữ» |
-| `app/ocr.py` | đọc chữ bằng bộ có sẵn của macOS (Apple Vision, nạp bằng pyobjc-core, không cài thêm). Tesseract không đọc được chữ trên nền nhiều màu của game (màn hình tiêu đề eFootball: 0 dòng) còn Vision đọc được (~0,3–0,4s). `eyes.read_text` GHÉP hai bộ (riêng kiểu đọc một dòng `psm` — phép thử bàn phím — giữ tesseract); `find_text` / `ocr_lines` dùng Vision trước, không thấy thì hỏi tesseract. Vision không «sửa chính tả». Đặt `IPF_OCR=tesseract` để tắt Vision. |
+| `app/eyes.py` | chụp màn hình (quay THẲNG theo giao diện), tìm chữ / tìm hình, định vị con trỏ. Bộ đọc chữ chính (Vision / RapidOCR) báo lỗi giữa chừng mà máy không có tesseract → `read_text` / `find_text` BÁO LỖI, không lặng lẽ trả «màn hình trống» / «không thấy chữ». «Có tesseract» = CHẠY được chương trình tesseract (chỉ có gói pip `pytesseract` thì coi như không có) |
+| `app/ocr.py` | đọc chữ: macOS dùng bộ có sẵn Apple Vision (nạp bằng pyobjc-core, không cài thêm); Windows / Linux dùng RapidOCR (mục 9). Tự chọn; `IPF_OCR=vision` / `rapid` ép một bộ. Tesseract không đọc được chữ trên nền nhiều màu của game (màn hình tiêu đề eFootball: 0 dòng) còn Vision đọc được (~0,3–0,4s). `eyes.read_text` GHÉP hai bộ (riêng kiểu đọc một dòng `psm` — phép thử bàn phím — giữ tesseract); `find_text` / `ocr_lines` dùng Vision trước, không thấy thì hỏi tesseract. Vision không «sửa chính tả». Đặt `IPF_OCR=tesseract` để tắt Vision. |
 | `app/web/ai.js` | trang «Kết nối AI» |
 
 ### Kiểm thử
@@ -550,7 +550,8 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
 ./.venv/bin/python app/tests/test_nav.py          # định vị con trỏ, bấm vòng kín, lệnh xuống board
 ./.venv/bin/python app/tests/test_api_mode.py     # chế độ nhận đơn (gateway tạm + iPhone giả)
 ./.venv/bin/python app/tests/test_presence.py     # tool tự báo gateway: máy rảnh ở kịch bản nào + danh mục kịch bản (gateway tạm nếu có php)
-./.venv/bin/python app/tests/test_ocr.py          # bộ đọc chữ: Apple Vision (chữ trên nền màu của game) ghép với tesseract
+./.venv/bin/python app/tests/test_ocr.py          # bộ đọc chữ: Apple Vision + RapidOCR (chữ trên nền màu của game), ghép với tesseract
+./.venv/bin/python app/tests/test_portable.py     # phần chạy được trên Windows: đường dẫn .venv, file .bat, tự dùng RapidOCR khi không có Vision
 ./.venv/bin/python app/tests/test_history.py      # «máy nào đang chạy bước nào» + lịch sử theo máy / theo đơn; không lọt thông tin đăng nhập
 ./.venv/bin/python app/tests/test_ui_steps.py     # trình sửa kịch bản (chạy mã giao diện bằng node): câu của từng bước, ô «Lấy từ đơn», đổi cách chạy
 uv run --python 3.12 --with mcp app/tests/interop_sdk.py     # kiểm chéo với client của SDK MCP chính thức
@@ -654,3 +655,54 @@ dòng 700 ký tự bị chặn đúng; reset mềm ≈ 1,7 s, reset cứng qua R
 - Nút rộng của **hộp thoại hệ thống** (vd «Xác minh ID Apple → Để sau»): cú bấm đầu tiên từng bị iOS bỏ qua 1 lần, bấm lần hai mới ăn.
   Chưa tái hiện lại được nên chưa sửa; tạm dùng 2 bước «bấm chữ» (đánh dấu «bỏ qua nếu lỗi») liên tiếp.
 - Màn hình nền động hẳn (video) thì không định vị được con trỏ → không bấm (an toàn nhưng bước sẽ hỏng).
+- Hộp «Sign Players» (bước «bấm tại (667,571)») trên máy 01: lần ĐẦU hộp hiện ra, tool có lúc báo «con trỏ không tới được…» dù con trỏ đã
+  nằm trên nút; chạy lại thì được. Gặp với cả Apple Vision lẫn RapidOCR (không do bộ đọc). Đo bằng ảnh chụp liên tục: chữ «Sign Players»
+  đọc được NGAY khung đầu khi hộp còn đang hiện dần — màn hình còn đổi 75% rồi 43% trong ~0,4–0,8 giây sau đó mới đứng yên. Nghi tool
+  hành động lúc hộp chưa hiện xong; CHƯA chứng minh (lần đo đó bấm được) — việc cần làm tiếp: ghi chi tiết lần bấm hỏng rồi mới sửa.
+
+## 9. Chạy trên Windows (2026-11-27)
+
+Phần lớn tool vốn chạy được trên Windows (chụp màn hình qua USB bằng pymobiledevice3, điều khiển board ESP32 qua cổng COM, OpenCV, giao
+diện pywebview). Chỗ chỉ có trên Mac là **bộ đọc chữ Apple Vision** — trên Windows tool dùng **RapidOCR** (mô hình PaddleOCR, chạy bằng
+onnxruntime trên CPU, cài bằng pip `rapidocr`), mô hình nhận chữ **Latin** (đọc được chữ tiếng Việt: «Tiếp tục» → «Tiép tuc», khớp sau
+khi bỏ dấu; mô hình mặc định Trung + Anh đọc ra «Tiép tyc» — không khớp).
+
+**Cài đặt trên máy Windows:**
+1. Cài Python 3.12 (hoặc 3.11 / 3.10 — python.org, tick «Add python.exe to PATH»).
+2. Cài ứng dụng **Apple Devices** (Microsoft Store) hoặc iTunes — driver USB cho iPhone; cắm iPhone, bấm «Tin cậy».
+3. Lấy repo về, chạy `setup.bat` (tạo `.venv`, cài các gói, chạy `app\doctor.py` kiểm tra). Lần đầu đọc chữ, RapidOCR tự tải mô hình
+   (~19 MB, cần mạng — `setup.bat` nạp thử ngay để tải về; không tải được thì báo lỗi ngay ở bước cài, app không báo «có bộ đọc»
+   rồi đọc đâu hỏng đó; app đang chạy thì cứ 60 giây tự thử nạp lại).
+   - Gói được ghim trong `requirements-windows.txt` (RapidOCR 3.10.0 + **onnxruntime** — rapidocr không tự cài gói này; một bản opencv
+     duy nhất là bản headless). `setup.bat` chọn Python 3.12 → 3.11 → 3.10 và dừng nếu cài gói lỗi.
+   - Windows 10: nếu cửa sổ app trắng / không mở → cài «Microsoft Edge WebView2 Runtime» (Windows 11 có sẵn).
+   - Tesseract là tuỳ chọn (bộ đọc dự phòng). Không cài thì tool chỉ dùng RapidOCR — không lỗi.
+4. Chạy app: `run.bat`. Dòng lệnh / máy chủ MCP cho AI: `farm.bat` (như `./farm`; trang «Kết nối AI» và `farm.bat mcp-config` tự đưa lệnh
+   dùng `farm.bat`). Tệp `.mcp.json` của repo trỏ `./farm` (cho Mac) — trên Windows thêm máy chủ MCP bằng lệnh trang «Kết nối AI» đưa.
+5. Nạp firmware cho board từ Windows: cần thêm arduino-cli (`winget install ArduinoSA.CLI`), core esp32 2.0.17 và thư viện ESP32-BLE-Combo
+   (thư mục `.arduino` / `.arduino-user` không có trong git, cấu hình ở Mac đang trỏ đường dẫn của Mac). Board đã nạp sẵn thì không cần.
+
+**Đo chất lượng (trên Mac, ép dùng RapidOCR bằng `IPF_OCR=rapid`):**
+
+| | Apple Vision (Mac) | RapidOCR (Windows) |
+|---|---|---|
+| Thấy câu chữ kịch bản cần, 68 ảnh màn hình eFootball thật | 163 / 163 | 156 / 163 (sót chủ yếu ở ảnh bị xoay) |
+| Nhận chiều ảnh (61 ảnh × 4 hướng = 244 lần) | sai 0, chưa biết 1 | sai 0, chưa biết 2 |
+| Thời gian đọc một ảnh (Mac M-series) | ~0,15 s | ~0,5 s (lần xét chiều ~0,8 s) |
+
+- **Chạy thật bằng RapidOCR** (app chạy với `IPF_OCR=rapid`): máy 002 qua đủ giai đoạn «vào Shop» (mở lại game, màn tiêu đề, bấm toạ
+  độ, hộp «Sign Players» bấm tại toạ độ, Shop, «Product Details») và tìm được ô gói (cả ô phải lướt mới thấy); máy 01 (khung ảnh xoay)
+  qua màn tiêu đề + các hộp thoại tới Shop, tìm được ô 15,000 — CHF 93.00 (lướt trái) rồi lướt ngược về ô 100 — CHF 0.80.
+- Máy 002 hiện giá bằng **«kr»** («28,00 kr», «90,00 kr») trong khi máy 01 hiện CHF — Apple ID của hai máy khác vùng → «Giá hiển thị» của
+  gói ở gateway không dùng chung được cho cả hai máy (xem mục «Gói nạp»).
+- Nhận chiều ảnh tính theo DIỆN TÍCH chữ (tiêu đề / nút to nặng hơn chữ nhỏ — màn «Welcome Login Bonus» có tên cầu thủ in DỌC trên thẻ
+  từng làm Vision trả lời sai), và luôn so với bản xoay 180° (RapidOCR đọc chữ lộn ngược ra vài dòng rác ngắn mà độ tin vẫn cao). RapidOCR
+  chỉ dò khung chữ (~0,2 s) để biết màn hình có chữ hay không — chữ xoay sai chiều nó đọc ra rác rồi lọc bỏ hết.
+- Giới hạn của RapidOCR khi nhận chiều ảnh: nó KHÔNG đọc được chữ lộn ngược (đọc ra rác) nên phân biệt xuôi / lộn ngược dựa vào lượng
+  chữ đọc được với độ tin cao. Màn hình chỉ có nhãn ngắn một từ («Sign Players / OK / Shop») → «chưa biết» ở cả 4 hướng (giữ cách quay
+  cũ, không đoán). Mỗi lần xét lại tốn 2 lần đọc (~1 s trên Mac M-series; CPU Windows chưa đo) — chỉ khi màn hình đổi nhiều / cỡ ảnh đổi.
+- Khoá «chỉ một tiến trình báo cho gateway» (app cửa sổ + bản web cùng chạy): macOS / Linux dùng fcntl, Windows dùng msvcrt.
+- RapidOCR 3.x NHỚ thiết lập của lần gọi trước (sau một lần «chỉ dò khung», các lần đọc sau ra rỗng nếu không truyền lại) → mỗi lần gọi
+  tool truyền đủ thiết lập.
+- Chưa chạy thử trên máy Windows thật: những gì kiểm được trên Mac là bộ đọc chữ, đường dẫn `.venv\Scripts`, file `.bat` (xuống dòng CRLF —
+  `.gitattributes` giữ khi lấy repo về), tự chọn bộ đọc khi không có Vision (`app/tests/test_portable.py`).

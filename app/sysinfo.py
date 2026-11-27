@@ -9,6 +9,7 @@ kèm hành động cài đặt (pip install, hoặc brew/apt tuỳ OS).
 from __future__ import annotations
 import importlib.util, importlib.metadata as md
 import platform, shutil, subprocess, sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 VENV_PY = sys.executable
 
@@ -16,13 +17,17 @@ VENV_PY = sys.executable
 PACKAGES = [
     ("pymobiledevice3", "pymobiledevice3", "Chụp màn hình + đọc thông tin iPhone"),
     ("serial",          "pyserial",        "Điều khiển board ESP32 qua cổng serial"),
-    ("cv2",             "opencv-python",   "Nhận diện nút/con trỏ trên ảnh"),
+    ("cv2",             "opencv-python-headless",   "Nhận diện nút/con trỏ trên ảnh"),
     ("numpy",           "numpy",           "Xử lý ảnh"),
     ("PIL",             "pillow",          "Đọc/ghi ảnh"),
-    ("pytesseract",     "pytesseract",     "OCR đọc chữ trên màn (cần cả tesseract)"),
+    ("pytesseract",     "pytesseract",     "OCR dự phòng (cần cả tesseract) — tuỳ chọn"),
     ("webview",         "pywebview",       "Giao diện app desktop (cửa sổ native)"),
     ("esptool",         "esptool",         "Nạp/xoá firmware ESP32"),
 ]
+# Bộ đọc chữ: macOS dùng Apple Vision CÓ SẴN; Windows / Linux cần RapidOCR (xem ocr.py) — trên macOS không bắt buộc nên không liệt kê.
+if platform.system() != "Darwin":
+    PACKAGES.append(("rapidocr", "rapidocr", "Đọc chữ trên màn hình (Windows / Linux — macOS dùng Apple Vision có sẵn)"))
+    PACKAGES.append(("onnxruntime", "onnxruntime", "Chạy mô hình đọc chữ của RapidOCR (rapidocr KHÔNG tự cài gói này)"))
 
 # (tên lệnh, mô tả, {os: câu lệnh cài})
 TOOLS = [
@@ -31,7 +36,7 @@ TOOLS = [
         "Linux":   "curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh",
         "Windows": "winget install ArduinoSA.CLI",
     }),
-    ("tesseract", "Máy OCR đọc chữ trên màn hình", {
+    ("tesseract", "Bộ đọc chữ dự phòng (tuỳ chọn — chính là Apple Vision / RapidOCR)", {
         "Darwin":  "brew install tesseract tesseract-lang",
         "Linux":   "sudo apt install -y tesseract-ocr tesseract-ocr-vie",
         "Windows": "winget install UB-Mannheim.TesseractOCR",
@@ -39,7 +44,7 @@ TOOLS = [
     ("iproxy", "Chuyển cổng USB iPhone (tuỳ chọn)", {
         "Darwin":  "brew install libimobiledevice",
         "Linux":   "sudo apt install -y libimobiledevice-utils",
-        "Windows": "Cài iTunes (Apple Mobile Device Support)",
+        "Windows": "Cài ứng dụng «Apple Devices» (Microsoft Store) hoặc iTunes — driver USB cho iPhone",
     }),
 ]
 
@@ -60,7 +65,17 @@ def system_info():
         "has_brew": shutil.which("brew") is not None,
         "has_apt": shutil.which("apt") is not None or shutil.which("apt-get") is not None,
         "has_winget": shutil.which("winget") is not None,
+        "ocr": _ocr_engine(),
     }
+
+
+def _ocr_engine() -> str:
+    """Bộ đọc chữ app đang dùng (Apple Vision / RapidOCR / không có — kèm lý do)."""
+    try:
+        import ocr
+        return ocr.engine_name() if ocr.available() else "không có — " + ocr.why_unavailable()
+    except Exception as e:
+        return "lỗi: %s" % e
 
 
 def _pkg_version(pip_name):

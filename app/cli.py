@@ -145,7 +145,7 @@ def emit(tool, out: dict, ns) -> int:
 
 
 def mcp_config(show_token: bool = False) -> str:
-    farm = os.path.join(ROOT, "farm")
+    farm = os.path.join(ROOT, "farm.bat" if os.name == "nt" else "farm")      # Windows: farm.bat (./farm là script sh)
     lines = ["KẾT NỐI AI VỚI IPHONE FARM (MCP)", "",
              "1) Claude Code — chạy một lần trong terminal:",
              "     claude mcp add iphone-farm -- %s mcp" % farm, "",

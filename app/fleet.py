@@ -11,8 +11,8 @@ fleet.py — quản & điều khiển NHIỀU iPhone song song.
     python app/fleet.py shot         # chụp tất cả -> shots/fleet_<udid>.png
 """
 from __future__ import annotations
-import sys, time, threading
-sys.path.insert(0, __file__.rsplit("/", 1)[0])
+import os, sys, time, threading
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from serial.tools import list_ports
 from hands import Hands, UART_VIDPID
 from nav import Nav

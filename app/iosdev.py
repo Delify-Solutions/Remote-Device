@@ -14,9 +14,10 @@ from __future__ import annotations
 import os, re, json, subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PMD = os.path.join(ROOT, ".venv", "bin", "pymobiledevice3")
-if not os.path.exists(PMD):
-    PMD = "pymobiledevice3"
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import venvbin
+PMD = venvbin.tool("pymobiledevice3")          # trong .venv (Windows: .exe), không có thì tìm trong PATH
 
 _NOISE = re.compile(r"(urllib3|OpenSSL|LibreSSL|NotOpenSSLWarning|warnings\.warn)", re.I)
 

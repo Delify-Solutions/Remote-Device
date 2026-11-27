@@ -358,6 +358,54 @@ def main():
     finally:
         control.pytesseract = real_ct
 
+    print("== 7. RapidOCR — bộ đọc chữ trên Windows / Linux (chạy được cả trên Mac để đo) ==")
+    try:
+        import rapidocr  # noqa: F401
+        have_rapid = True
+    except Exception:
+        have_rapid = False
+    if not have_rapid:
+        print("  (BỎ QUA: máy này chưa cài rapidocr)")
+    else:
+        saved, env0 = dict(ocr._state), os.environ.get("IPF_OCR")
+        os.environ["IPF_OCR"] = "rapid"
+        ocr._state.update(tried=False, ok=False, engine="", error="")
+        try:
+            ok(ocr.available() and ocr.engine() == "rapid" and ocr.engine_name() == "RapidOCR", "IPF_OCR=rapid → dùng RapidOCR", ocr.why_unavailable())
+            pg, pb = draw([(60, 60, "Log In with Another KONAMI ID", (90, 160, 255)), (60, 200, "KONAMI ID / E-mail address", (255, 255, 255)),
+                           (60, 330, "Login", (255, 255, 255)), (500, 330, "Tiếp tục", (255, 255, 255)), (760, 330, "Hủy", (255, 255, 255))], size=(900, 420))
+            ok(inside(ocr.find(pg, "Login"), pb[2]) and inside(ocr.find(pg, "Tiếp tục"), pb[3]) and inside(ocr.find(pg, "Hủy"), pb[4], pad=12),
+               "tìm chữ: «Login» chọn dòng khớp NGUYÊN DÒNG (không nhầm sang «Log In with Another…»); chữ tiếng Việt khớp dù đọc ra không dấu",
+               (ocr.find(pg, "Login"), ocr.find(pg, "Tiếp tục"), ocr.find(pg, "Hủy"), [r["text"] for r in ocr.lines(pg)]))
+            part = ocr.find(pg, "KONAMI ID / E-mail")
+            ok(part is not None and pb[1][0] - 6 <= part[0] < (pb[1][0] + pb[1][2]) / 2 + 40, "hộp của RIÊNG phần chữ khớp trong một dòng dài (từ hộp từng ký tự)", (part, pb[1]))
+            rows = ocr._raw_cached(pg)
+            ok(any(r.get("cboxes") for r in rows) and all(r.get("cand") is None for r in rows), "mỗi dòng có hộp từng ký tự; không lẫn kiểu dòng của Vision")
+            for code, name in ((cv2.ROTATE_90_CLOCKWISE, "thuận"), (cv2.ROTATE_90_COUNTERCLOCKWISE, "ngược")):
+                side = cv2.rotate(pg, code)
+                H0, W0 = pg.shape[:2]
+                rp = (lambda x, y: (H0 - 1 - y, x)) if code == cv2.ROTATE_90_CLOCKWISE else (lambda x, y: (y, W0 - 1 - x))
+                b = pb[3]
+                p1, p2 = rp(b[0], b[1]), rp(b[2], b[3])
+                rb = (min(p1[0], p2[0]), min(p1[1], p2[1]), max(p1[0], p2[0]), max(p1[1], p2[1]))
+                ok(inside(ocr.find(side, "Tiếp tục"), rb, pad=12), "ảnh xoay %s 90°: vẫn tìm được «Tiếp tục», toạ độ theo ảnh xoay" % name, (ocr.find(side, "Tiếp tục"), rb))
+            got = [ocr.upright_turn(eyes.Eyes.rotate(ui, k)) for k in range(4)]
+            ok(got == [0, 3, 2, 1], "nhận chiều ảnh đủ 4 hướng (lộn ngược: RapidOCR đọc ra rác — so với bản xoay 180° mới biết)", got)
+            eyes.Eyes._turns.clear()
+            camr = Cam("may-rapid")
+            camr.feed = [eyes.Eyes.rotate(ui, 1)]
+            ok(np.array_equal(camr.screenshot(), ui), "Eyes.screenshot() quay thẳng ảnh bằng RapidOCR như với Vision")
+            ok(ocr.upright_turn(blank) is None, "màn hình không có chữ → chưa biết (chỉ dò khung chữ, không đọc cả 4 hướng)")
+            ocr._det_boxes(cv2.rotate(pg, cv2.ROTATE_180))            # một lần «chỉ dò khung» (use_rec=False)…
+            ok(len(ocr._observe_raw(pg)) >= 4, "…lần đọc SAU vẫn đọc ra chữ (RapidOCR 3.x nhớ thiết lập của lần gọi trước — đo thật: mọi ảnh sau đó ra rỗng)")
+        finally:
+            eyes.Eyes._turns.clear()
+            ocr._state.clear(); ocr._state.update(saved)
+            if env0 is None:
+                os.environ.pop("IPF_OCR", None)
+            else:
+                os.environ["IPF_OCR"] = env0
+
     print("== 6. Tắt Vision (IPF_OCR=tesseract) → như trước ==")
     code = ("import sys; sys.path.insert(0, %r); import ocr, numpy as np; im = np.zeros((80, 80, 3), np.uint8); "
             "print(ocr.available(), ocr.lines(im), ocr.find(im, 'x'), repr(ocr.text(im)), ocr.why_unavailable())" % APP)

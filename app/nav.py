@@ -13,10 +13,10 @@ Nên ta TÌM 1 lần vector move (ax,ay) click trúng mỗi nút, lưu lại, ph
     n.tap_move(ax, ay)       # di (ax,ay) từ góc rồi click
 """
 from __future__ import annotations
-import contextlib, math, random, sys, time
+import contextlib, math, os, random, sys, time
 
 import cv2
-sys.path.insert(0, __file__.rsplit("/", 1)[0])
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hands import Hands
 from eyes import Eyes, norm_text
 
@@ -75,7 +75,7 @@ class Frame:
 class Nav:
     _fr = Frame()         # hướng ảnh chụp ↔ hệ trục chuột của lần đưa con trỏ gần nhất (vuốt / lật trang dùng để đổi hướng kéo)
 
-    def __init__(self, port: str, udid: str):
+    def __init__(self, port: "str | None", udid: str):
         self.h = Hands(port, reset=False)
         self.e = Eyes(udid)
         self.h.wait_connected(15)
@@ -726,11 +726,11 @@ class Nav:
 
 
 if __name__ == "__main__":
-    # Dùng: python app/nav.py <udid> <ax> <ay> [out.png]
+    # Dùng: python app/nav.py <udid> <ax> <ay> [out.png] [cổng]   (cổng: /dev/cu.usbserial-… trên Mac, COM3… trên Windows; bỏ trống = tự dò)
     udid = sys.argv[1]
     ax = int(sys.argv[2]); ay = int(sys.argv[3])
     out = sys.argv[4] if len(sys.argv) > 4 else "shots/nav.png"
-    n = Nav("/dev/cu.usbserial-0001", udid)
+    n = Nav(sys.argv[5] if len(sys.argv) > 5 else None, udid)        # None → Hands tự dò cổng board (hands.find_port)
     print(f"tap_move({ax},{ay}) ->", n.tap_move(ax, ay))
     time.sleep(0.5)
     n.shot(out)

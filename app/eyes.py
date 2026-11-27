@@ -23,6 +23,7 @@ try:
     import pytesseract
 except ImportError:
     pytesseract = None
+pytesseract = ocr.usable_tesseract(pytesseract)     # có gói pip mà KHÔNG có chương trình tesseract (Windows sau setup.bat) → coi như không có
 
 
 def norm_text(s) -> str:
@@ -42,7 +43,8 @@ def text_has(haystack_norm: str, needle) -> bool:
         return False
     return n in haystack_norm or n.replace(" ", "") in haystack_norm.replace(" ", "")
 
-VENV_PMD = os.path.join(os.path.dirname(__file__), "..", ".venv", "bin", "pymobiledevice3")
+import venvbin
+VENV_PMD = venvbin.tool("pymobiledevice3")      # trong .venv (Windows: .exe)
 
 
 IMAGE_SIDE_MIN, IMAGE_SIDE_MAX = 8, 600      # cạnh nhỏ nhất / lớn nhất (điểm ảnh) của ảnh mẫu trong bước «bấm vào vùng ảnh»
@@ -476,10 +478,11 @@ class Eyes:
                 seen, broken = "", e
         if pytesseract is None:
             if broken is not None:                   # Vision hỏng giữa chừng mà không có tesseract đỡ: KHÔNG lặng lẽ trả «màn hình trống»
-                raise RuntimeError("Bộ đọc chữ của macOS (Vision) báo lỗi (%s) và máy không cài tesseract — không đọc được màn hình" % broken)
+                raise RuntimeError("Bộ đọc chữ (%s) báo lỗi (%s) và máy không cài tesseract — không đọc được màn hình" % (ocr.engine_name(), broken))
             if seen or (not psm and ocr.available()):
                 return seen
-            raise RuntimeError("Thiếu pytesseract (pip install pytesseract) + tesseract (brew)")
+            raise RuntimeError("Kiểu đọc một dòng cần tesseract: pip install pytesseract + chương trình tesseract (macOS: brew install tesseract; "
+                               "Windows: winget install UB-Mannheim.TesseractOCR)")
         if scale != 1:
             img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -507,7 +510,7 @@ class Eyes:
             return (int(hit[0]), int(hit[1]))
         if pytesseract is None:
             if broken is not None:                   # Vision hỏng giữa chừng mà không có tesseract đỡ: «không thấy chữ» ở đây là sai lý do
-                raise RuntimeError("Bộ đọc chữ của macOS (Vision) báo lỗi (%s) và máy không cài tesseract — không tìm được chữ trên màn hình" % broken)
+                raise RuntimeError("Bộ đọc chữ (%s) báo lỗi (%s) và máy không cài tesseract — không tìm được chữ trên màn hình" % (ocr.engine_name(), broken))
             if ocr.available():
                 return None
             raise RuntimeError("Thiếu pytesseract")
@@ -572,7 +575,7 @@ class Eyes:
             return seen
         if pytesseract is None:
             if broken is not None:
-                raise RuntimeError("Bộ đọc chữ của macOS (Vision) báo lỗi (%s) và máy không cài tesseract — không đọc được màn hình" % broken)
+                raise RuntimeError("Bộ đọc chữ (%s) báo lỗi (%s) và máy không cài tesseract — không đọc được màn hình" % (ocr.engine_name(), broken))
             return []
         scale = 2
         gray = cv2.cvtColor(cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC), cv2.COLOR_BGR2GRAY)

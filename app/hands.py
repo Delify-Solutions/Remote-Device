@@ -18,7 +18,7 @@ import os, sys, time
 import serial
 from serial.tools import list_ports
 
-sys.path.insert(0, __file__.rsplit("/", 1)[0])
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from quietserial import QuietSerial
 
 UART_VIDPID = {(0x10C4, 0xEA60), (0x1A86, 0x7523), (0x1A86, 0x55D4), (0x0403, 0x6001)}

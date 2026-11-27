@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from quietserial import QuietSerial
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # thư mục Remote-Device
-VENV_PY = os.path.join(ROOT, ".venv", "bin", "python")
+import venvbin
+VENV_PY = venvbin.python()                      # .venv/bin/python (macOS) hoặc .venv\\Scripts\\python.exe (Windows)
 ARDUINO_DATA = os.path.join(ROOT, ".arduino")
 ARDUINO_CFG = os.path.join(ARDUINO_DATA, "arduino-cli.yaml")
 FW_DIR = os.path.join(ROOT, "app", "firmware", "esp32_hid")

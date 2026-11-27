@@ -1,0 +1,11 @@
+# Gói Python cho bản Windows (setup.bat cài từ đây). Ghim theo bản đang chạy tốt trên Mac (2026-11-27); Python 3.9–3.12.
+pymobiledevice3==11.59.0           # chụp màn hình + mở app iPhone qua USB (fastshot dùng API bên trong của nó → ghim đúng bản)
+pyserial==3.5                      # board ESP32 qua cổng COM
+opencv-python-headless>=4.8,<6     # MỘT bản opencv duy nhất — RapidOCR cũng dùng bản headless
+numpy>=1.24,<2.3
+pillow>=10,<12
+pywebview>=6,<7                    # cửa sổ app (Windows: WebView2 — có sẵn trên Windows 11; Windows 10 có thể phải cài «WebView2 Runtime»)
+esptool>=4.7,<5                    # nạp / xoá firmware ESP32
+rapidocr==3.10.0                   # bộ đọc chữ (thay Apple Vision) — 3.x nhớ thiết lập giữa các lần gọi, app đã xử lý theo đúng bản này
+onnxruntime>=1.19,<1.23            # rapidocr KHÔNG tự kéo theo gói này — thiếu là không đọc được chữ
+pytesseract==0.3.13                # tuỳ chọn: chỉ dùng khi có cài thêm chương trình tesseract

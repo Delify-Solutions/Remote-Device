@@ -23,6 +23,7 @@ try:
     import pytesseract
 except ImportError:                                   # pragma: no cover
     pytesseract = None
+pytesseract = ocr.usable_tesseract(pytesseract)     # có gói pip mà không có chương trình tesseract → coi như không có (xem eyes.py)
 
 ENDPOINT_FILE = os.path.join(store.DATA_DIR, "control.json")      # cổng + khoá của máy chủ điều khiển (KHÔNG vào git)
 DEFAULT_PORT = 47821
@@ -134,7 +135,7 @@ class Claims:
 # ====================== đọc chữ kèm toạ độ ======================
 def ocr_lines(img, lang: str = Eyes.OCR_LANG, scale: int = 2, min_conf: float = 30.0, engine: str = "auto") -> list:
     """Các DÒNG chữ trên ảnh: [{text, x, y, w, h}] — (x,y) là TÂM dòng chữ, đơn vị pixel của ảnh gốc.
-    engine «auto»: Apple Vision (đọc được chữ trên nền game); Vision không có / không đọc ra dòng nào thì dùng tesseract như trước.
+    engine «auto»: Apple Vision (macOS) hoặc RapidOCR (Windows / Linux) — xem ocr.py; không có / không đọc ra dòng nào thì dùng tesseract như trước.
     engine «tesseract»: chỉ tesseract."""
     if engine != "tesseract":
         try:
@@ -1069,7 +1070,7 @@ class AppServer:
         return self.start(port)
 
     def info(self) -> dict:
-        farm = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "farm")
+        farm = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "farm.bat" if os.name == "nt" else "farm")
         return {"running": self.httpd is not None, "port": self.port, "token": self.token, "error": self.error,
                 "url": ("http://127.0.0.1:%d/mcp" % self.port) if self.port else None,
                 "farm": farm, "active": self.control.active(),

@@ -29,13 +29,16 @@ OKV, MISS, WARNV = ok("[ OK ]"), bad("[THIẾU]"), warn("[ ! ]")
 REQUIRED = [
     ("pymobiledevice3", "pymobiledevice3", "chụp màn hình + đọc AX của iPhone"),
     ("serial",          "pyserial",        "điều khiển board ESP32 qua cổng serial"),
-    ("cv2",             "opencv-python",   "nhận diện nút trên ảnh (template match)"),
+    ("cv2",             "opencv-python-headless",   "nhận diện nút trên ảnh (template match)"),
     ("numpy",           "numpy",           "xử lý ảnh"),
     ("PIL",             "pillow",          "đọc/ghi ảnh"),
     ("pytesseract",     "pytesseract",     "OCR đọc chữ trên màn (cần cả brew tesseract + tesseract-lang)"),
     ("webview",         "pywebview",       "giao diện app desktop (cửa sổ native)"),
     ("esptool",         "esptool",         "nạp/xoá firmware ESP32"),
 ]
+if platform.system() != "Darwin":      # macOS đọc chữ bằng Apple Vision có sẵn; nơi khác cần RapidOCR (xem ocr.py)
+    REQUIRED.append(("rapidocr", "rapidocr", "đọc chữ trên màn hình (Windows / Linux)"))
+    REQUIRED.append(("onnxruntime", "onnxruntime", "chạy mô hình đọc chữ của RapidOCR (rapidocr không tự cài)"))
 
 # VID:PID của các chip USB-serial hay gặp trên board ESP32
 KNOWN_UART = {
