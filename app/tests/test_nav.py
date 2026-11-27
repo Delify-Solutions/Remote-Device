@@ -21,6 +21,7 @@ REAL_SLEEP = time.sleep                     # (các quãng nghỉ của code b�
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
+os.environ["IPF_NO_TELEGRAM"] = "1"            # app có thể đã cấu hình Telegram thật: kiểm thử không bao giờ bắn tin
 
 import cv2
 import numpy as np

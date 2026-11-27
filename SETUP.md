@@ -732,3 +732,44 @@ khi bỏ dấu; mô hình mặc định Trung + Anh đọc ra «Tiép tyc» — 
   tool truyền đủ thiết lập.
 - Chưa chạy thử trên máy Windows thật: những gì kiểm được trên Mac là bộ đọc chữ, đường dẫn `.venv\Scripts`, file `.bat` (xuống dòng CRLF —
   `.gitattributes` giữ khi lấy repo về), tự chọn bộ đọc khi không có Vision (`app/tests/test_portable.py`).
+
+## 10. Báo cho admin qua Telegram, kiểm màn hình từng bước, AI xử lý quảng cáo (2026-11-27)
+
+Yêu cầu của chủ dự án:
+- Trước mỗi bước, tool xem màn hình có khớp ảnh mẫu của bước không.
+- Không khớp thì chờ, rồi hỏi AI. Nếu là quảng cáo / hộp thông báo, AI chỉ nút X / «Bỏ qua» để tool bấm.
+- AI không xử lý được thì máy tạm dừng và bắn Telegram. Admin vào xử lý tay rồi bấm «Tiếp tục».
+- AI chọn được nhà cung cấp (OpenAI / Anthropic) và tên model trong cài đặt của tool.
+- Lúc làm đơn của khách vẫn gửi ảnh lên AI (chủ dự án quyết định).
+
+Làm theo 3 phần. Phần 1 (Telegram) đã xong; phần 2 (ảnh mẫu + tạm dừng tại bước) và phần 3 (AI) ghi tiếp bên dưới khi xong.
+
+### Thông báo Telegram (`app/notify.py`)
+- Cài đặt: trang «Nhóm & Kịch bản» → nút **Telegram**. Nhập mã bot (tạo ở @BotFather) và chat id (người, nhóm `-100…` hay `@kênh`).
+  Chọn loại sự kiện được bắn. Lưu xong tool tự gửi một tin thử. Lưu trong `app/data/settings.json` (không vào git); giao diện không bao
+  giờ nhận lại mã bot, chỉ phần số đầu.
+- 4 loại sự kiện, mặc định bật cả 4:
+  - **Máy dừng chờ admin**: màn hình lạ AI không xử lý được (phần 2 / 3).
+  - **Đơn cần đối soát**: máy nhận đơn dừng, GIỮ màn hình sau đơn của khách.
+  - **Bước lỗi / kịch bản dừng**: kịch bản dừng ở bước lỗi, hoặc máy nhận đơn dừng vì lỗi cấu hình / gateway.
+  - **Board / Bluetooth mất kết nối**: hai nguồn.
+    - Máy đang chạy: bước lỗi vì board / Bluetooth, hoặc không mở được máy vì không thấy board.
+    - Máy nhận đơn đang CHỜ ĐƠN (không chạy bước nào): «chưa sẵn sàng» 2 lần kiểm liền (khoảng 15–30 giây) vì Bluetooth chưa nối / board không trả
+      lời thì báo một lần; sẵn sàng lại rồi mất lại thì báo lại.
+    - Máy đang rảnh: luồng nền cứ 20 giây HỎI THẲNG board (lệnh `status`). Chỉ hỏi máy đã mở phiên trong chính tiến trình này, đang
+      rảnh, không ai đang dùng, không đang nạp / quét. Cổng serial mở độc quyền nên mỗi board chỉ một tiến trình hỏi được, không báo trùng.
+    - Chỉ báo khi trạng thái XẤU ĐI (board không trả lời / cổng hỏng, hoặc Bluetooth đang nối thì rớt) và giữ đủ 2 nhịp liền. Không báo
+      trạng thái lúc mới mở, không báo lại khi vẫn rớt.
+    - Người vận hành vừa tự làm đổi trạng thái thì không báo: khởi động lại board (2 phút), huỷ kết nối BT (thời gian giữ + 90 giây),
+      gán lại máy. Phiên bị đóng (quét lại, nạp firmware) thì quên trạng thái cũ, mở lại thì học lại từ đầu.
+    - Máy chưa mở phiên lần nào từ lúc mở app (chưa chạy / chưa thử gì) thì không được hỏi (không tranh cổng serial với tiến trình khác).
+- Mỗi tin có: loại sự kiện, tên máy, nhóm, kịch bản, bước (số thứ tự + mô tả đã che dữ liệu bí mật), lý do, giờ.
+- Gửi trong một luồng nền: Telegram chậm hay lỗi không làm chậm / hỏng máy đang chạy. Cùng một tin của cùng máy lặp lại trong 10 phút
+  thì chỉ gửi một lần. Gửi ảnh lỗi thì vẫn báo bằng chữ. Lời báo lỗi không bao giờ chứa mã bot.
+- Không báo khi: bước «bỏ qua nếu lỗi» hỏng; người vận hành bấm Dừng (kịch bản). Có báo khi bấm «Dừng ngay» giữa một đơn của khách
+  (máy bị giữ để đối soát — admin cần biết).
+- Chế độ lặp: vòng lỗi chưa phải vòng cuối thì tin ghi «máy chạy tiếp vòng sau» (không phải «kịch bản dừng»).
+- Tin «Đơn cần đối soát» kèm lý do của tool (vd «Nạp được 1/2 gói — …»), không chứa dữ liệu của khách.
+- Gửi không được (mạng / hàng chờ đầy) thì lần sau cùng tin đó vẫn được gửi (không bị coi là trùng).
+- Kiểm thử đặt `IPF_NO_TELEGRAM=1`: không bao giờ gửi tin thật (app có thể đã cấu hình Telegram thật).
+- Kiểm thử: `./.venv/bin/python app/tests/test_notify.py`, gồm gửi đi, lọc loại, gộp tin trùng, ảnh, che mã bot, nối vào bộ chạy, luồng xem board.

@@ -2434,6 +2434,45 @@ async function gatewaySettings() {
   await loadGateway();
 }
 
+// Thông báo Telegram cho admin: mã bot + chat id + loại sự kiện được bắn. Mã bot không bao giờ được gửi ngược về giao diện.
+async function telegramSettings() {
+  let c = {};
+  try { c = await API().telegram_get(); } catch (e) {}
+  const on = new Set(c.events || []);
+  const r = await askForm("Thông báo Telegram",
+    "Tạo bot ở @BotFather → lấy mã bot. Chat id: nhắn cho bot một tin rồi mở api.telegram.org/bot<mã>/getUpdates (nhóm thì thêm bot vào nhóm, id bắt đầu bằng -100). Lưu trên máy này.", [
+    { key: "token", label: "Mã bot", type: "password", value: "",
+      placeholder: c.has_token ? `để trống = giữ mã đang lưu (${c.token_hint})` : "123456789:AA…" },
+    { key: "chat", label: "Chat id nhận thông báo", value: c.chat || "", placeholder: "123456789 hoặc -100… hoặc @ten_kenh" },
+    ...(c.all_events || []).map(ev => ({ key: "ev_" + ev.key, label: ev.label, type: "select", value: on.has(ev.key) ? "1" : "0",
+                                          options: [{ value: "1", label: "Có báo" }, { value: "0", label: "Không báo" }] })),
+  ]);
+  if (!r) return;
+  // không tải được danh sách loại sự kiện → gửi null (= giữ nguyên lựa chọn đã lưu), không gửi [] (= tắt hết)
+  const events = c.all_events ? c.all_events.filter(ev => r["ev_" + ev.key] === "1").map(ev => ev.key) : null;
+  try {
+    const res = await API().telegram_save(r.token, r.chat, events);
+    if (!res || !res.ok) { toast("Chưa lưu: " + ((res && res.error) || "?"), "bad"); return; }
+    if (res.has_token && res.chat) {
+      const t = await API().telegram_test();
+      if (t && t.ok) toast("Đã lưu — đã gửi tin thử tới Telegram", "ok");
+      else toast("Đã lưu nhưng gửi thử KHÔNG được: " + ((t && t.error) || "?"), "bad");
+    } else toast("Đã lưu — còn thiếu " + (res.has_token ? "chat id" : "mã bot") + " nên chưa gửi thông báo được", "warn");
+  } catch (e) { toast("Lỗi: " + e, "bad"); }
+  loadTelegram();
+}
+
+async function loadTelegram() {
+  const dot = $("#tg-dot");
+  if (!dot) return;
+  try {
+    const c = await API().telegram_get();
+    const ready = c.has_token && c.chat;
+    dot.className = "gw-dot " + (ready ? (c.last_error ? "bad" : "ok") : "");
+    dot.title = ready ? (c.last_error ? "Lần gửi gần nhất lỗi: " + c.last_error : `Đang bật · đã gửi ${c.sent} tin từ lúc mở app`) : "Chưa cấu hình";
+  } catch (e) {}
+}
+
 async function importGwSteps(btn) {
   if (!GROUP || GROUP.mode !== "api") return;
   const code = $("#group-pool").value;
@@ -2980,6 +3019,9 @@ function init() {
     GROUP.api.pool = e.target.value; GW_POOL = null; loadGwPool();
   };
   $("#btn-gw-settings").onclick = gatewaySettings;
+  $("#btn-tg-settings").onclick = telegramSettings;
+  loadTelegram();
+  setInterval(loadTelegram, 30000);                  // chấm trạng thái: lần gửi gần nhất lỗi thì đỏ
   $("#btn-gw-import").onclick = (e) => importGwSteps(e.currentTarget);
   $("#btn-group-run").onclick = (e) => runGroup(e.currentTarget);
   $("#btn-group-stop").onclick = (e) => stopGroup(e.currentTarget);

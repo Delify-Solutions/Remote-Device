@@ -37,6 +37,7 @@ class Runner:
     # nhịp (giây) — test rút ngắn lại
     POLL_IDLE = 4.0           # không có đơn → bao lâu hỏi lại
     NOT_READY_WAIT = 15.0     # máy chưa sẵn sàng / gateway lỗi → bao lâu thử lại
+    NOT_READY_ALERT = 2       # chưa sẵn sàng liền chừng này lần (~30 giây) thì báo admin (một lần cho tới khi sẵn sàng lại)
     BOARD_CHECK_EVERY = 300.0  # lúc RẢNH (chưa nhận đơn) cứ chừng này giây kiểm sức khoẻ board ESP32 một lần (RAM, đơ…)
     POOL_REFRESH = 60.0       # bao lâu tải lại cấu hình pool
     HEARTBEAT_EVERY = 25.0
@@ -65,6 +66,21 @@ class Runner:
         self.history = None                     # history.History: «máy nào đang chạy bước nào» + lịch sử theo máy / theo đơn (None = không ghi)
         self._hb = None
         self._hb_wake = threading.Event()
+        # (loại, tên máy, các dòng nội dung, ảnh JPEG | None) -> None: bắn thông báo cho admin (notify.Telegram.notify). None = không bắn.
+        self.alert = None
+
+    def _alert(self, name, event, text, w=None, photo=None, step=None):
+        """Báo cho admin (Telegram) — không bao giờ làm hỏng máy đang chạy. Nội dung là lời tool tự tạo (đã che biến bí mật)."""
+        if self.alert is None:
+            return
+        w = w or self.workers.get(name) or {}
+        where = " · ".join(x for x in ("Nhóm: %s" % w["group_name"] if w.get("group_name") else "",
+                                       "Kịch bản: %s" % w["script_name"] if w.get("script_name") else "") if x)
+        lines = [where, ("Bước: %s" % step) if step else "", "Lý do: %s" % text]
+        try:
+            self.alert(event, name, [x for x in lines if x], photo)
+        except Exception:
+            pass
 
     # ====================== nhật ký ======================
     def _tracker(self, name):
@@ -338,6 +354,7 @@ class Runner:
             if w.get("mode") == "api":
                 w["hold"] = "lỗi không mong đợi — %s" % e
             self._log(name, "Worker dừng vì lỗi không mong đợi: %s" % e, "bad")
+            self._alert(name, "review" if w.get("hold") else "failed", "lỗi không mong đợi — %s" % e, w)
         finally:
             if tr is not None:
                 tr.run_end(w.get("status") or "")
@@ -354,11 +371,14 @@ class Runner:
         steps = group.get("steps", [])
         if not steps:
             w["status"] = "nhóm chưa có bước nào"
+            self._alert(name, "failed", "kịch bản chưa có bước nào", w)
             return
         try:
             nav = self._session(name)
         except Exception as e:
             w["status"] = "lỗi mở máy: " + str(e)
+            import notify
+            self._alert(name, "link" if notify.link_trouble(e) else "failed", "không mở được máy — %s" % e, w)
             return
         self._seen_nav(w, nav)
         count = 0
@@ -386,9 +406,20 @@ class Runner:
                 oks = sum(1 for r in res if r.get("ok"))
                 w["last_ok"] = (oks == len(res)) if res else True
                 w["last_msg"] = f"{oks}/{len(res)} bước OK"
+                bad = res[-1] if res and not res[-1].get("ok") and not steps[res[-1]["i"]].get("optional") else None
+                if bad is not None and not stop.is_set():
+                    import notify
+                    st = steps[bad["i"]]
+                    last = mode == "once" or (mode == "loop" and loops > 0 and count >= loops)
+                    self._alert(name, "link" if notify.link_trouble(bad.get("msg")) else "failed",
+                                "%s (%s)" % (apimode.observed_why(st, bad.get("msg")),
+                                             "kịch bản dừng ở bước này" if last else "vòng %d dừng ở bước này, máy chạy tiếp vòng sau" % count), w,
+                                step="%d/%d · %s" % (bad["i"] + 1, len(steps), apimode.observed_what(st, {})))
             except Exception as e:
                 w["last_ok"] = False
                 w["last_msg"] = str(e)
+                if not stop.is_set():
+                    self._alert(name, "failed", "lỗi khi chạy kịch bản — %s" % e, w)
             if stop.is_set():
                 break
             if mode == "once":
@@ -417,6 +448,8 @@ class Runner:
             status("DỪNG: " + text)
             w["hold"] = text if hold else None
             say("Máy dừng: " + text, "bad")
+            import notify
+            self._alert(name, "review" if hold else ("link" if notify.link_trouble(text) else "failed"), text, w)
 
         if not pool_code:
             return halt("nhóm chưa chọn pool của gateway")
@@ -437,6 +470,7 @@ class Runner:
         board_checked, board_errors = 0.0, 0     # lần kiểm board ESP32 gần nhất (0 = chưa kiểm) / số lần liền board không dùng được
         clean = False             # đã KIỂM là game đang ở trạng thái chưa đăng nhập chưa
         probe_errors = 0
+        not_ready = 0             # số lần liền máy «chưa sẵn sàng» (xem NOT_READY_ALERT)
         faults = 0
         opts = {"login_wait": api["login_wait"], "purchase_wait": api["purchase_wait"], "otp_wait": self.OTP_WAIT,
                 "clear_wait": self.CLEAR_WAIT}
@@ -498,11 +532,19 @@ class Runner:
                 problem = str(e)
             if problem:
                 status("Chưa sẵn sàng: " + problem)
+                # Máy đang CHỜ ĐƠN không chạy bước nào nên không có «bước lỗi» để báo: chưa sẵn sàng LIỀN NOT_READY_ALERT lần thì báo admin
+                # một lần (board / Bluetooth → «mất kết nối», còn lại → «bước lỗi / kịch bản dừng»); sẵn sàng lại thì lần sau báo lại được.
+                not_ready += 1
+                if not_ready == self.NOT_READY_ALERT:
+                    import notify
+                    self._alert(name, "link" if notify.link_trouble(problem) else "failed",
+                                "máy nhận đơn chưa sẵn sàng (không nhận đơn được): %s" % problem, w)
                 if time.time() - board_checked > 60:        # có thể do board ESP32 đơ: thử cứu (đang rảnh, chưa nhận đơn nào)
                     board_checked = time.time()
                     self._board_check(nav, say)
                 stop.wait(self.NOT_READY_WAIT)
                 continue
+            not_ready = 0
             if not kb_checked:
                 status("Kiểm tra bàn phím tiếng Anh…")
                 try:
@@ -605,8 +647,8 @@ class Runner:
             # Đơn cần đối soát: DỪNG và giữ nguyên màn hình cho người kiểm tra (không tự đăng xuất).
             # Lần «Chạy lại» sau đó sẽ tự đăng xuất + kiểm game sạch trước khi nhận đơn mới.
             if outcome.result == "review":
-                return halt("đơn %s cần đối soát — kiểm tra máy rồi bấm Chạy lại (máy sẽ tự đăng xuất trước khi nhận đơn mới)"
-                            % (job.get("ref") or job["id"]), hold=True)
+                return halt("đơn %s cần đối soát%s — kiểm tra máy rồi bấm Chạy lại (máy sẽ tự đăng xuất trước khi nhận đơn mới)"
+                            % (job.get("ref") or job["id"], (" (%s)" % outcome.message) if outcome.message else ""), hold=True)
             if outcome.halt:
                 return halt("%s — kiểm tra máy rồi bấm Chạy lại" % outcome.message, hold=True)
             if abort.is_set():

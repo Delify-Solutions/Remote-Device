@@ -1150,14 +1150,19 @@ def shot_jpeg(nav):
 
 def preflight(nav):
     """Máy có sẵn sàng nhận đơn không? Trả None nếu ổn, hoặc lý do (chuỗi)."""
-    ok = False
+    ok, heard = False, False
     for _ in range(3):                    # phản hồi status đầu tiên đôi khi còn là giá trị cũ
-        if "ble=connected" in str(nav.h.send("status") or ""):
+        try:
+            r = str(nav.h.send("status") or "")
+        except Exception as e:            # cổng serial hỏng / board đã rút
+            return "board ESP32 không trả lời — cổng serial lỗi (%s)" % e
+        heard = heard or bool(r)
+        if "ble=connected" in r:
             ok = True
             break
         time.sleep(0.4)
     if not ok:
-        return "Bluetooth chưa nối với iPhone"
+        return "Bluetooth chưa nối với iPhone" if heard else "board ESP32 không trả lời (kiểm tra cáp USB / nguồn của board)"
     try:
         nav.e.screenshot()
     except Exception:

@@ -104,6 +104,7 @@
     json: JSON.stringify({ mcpServers: { "iphone-farm": { command: "/duong/dan/Remote-Device/farm", args: ["mcp"] } } }, null, 2),
     tools: AI_TOOLS.map(([name, cli, help, read_only]) => ({ name, cli, help, read_only })),
   });
+  const TG = { token: "", chat: "", events: ["paused", "review", "failed", "link"] };
   window.pywebview = { api: {
     sys_overview: () => P(OV),
     sys_install_pip: (n) => P({ ok: true, log: "Collecting pytesseract…\nSuccessfully installed pytesseract-0.3.13" }),
@@ -175,6 +176,13 @@
     gateway_get: () => P({ url: GWCFG.url, has_key: !!GWCFG.key, key_hint: GWCFG.key ? GWCFG.key.slice(0, 8) + "…" : "" }),
     gateway_save: (url, key) => { GWCFG.url = url; if (key) GWCFG.key = key; return P({ ok: true, key: "iPhone Farm (demo)" }); },
     gateway_test: () => P({ ok: true, key: "iPhone Farm (demo)" }),
+    telegram_get: () => P({ has_token: !!TG.token, token_hint: TG.token ? TG.token.split(":")[0] + ":…" : "", chat: TG.chat, events: TG.events,
+                            all_events: [{ key: "paused", label: "Máy dừng chờ admin" }, { key: "review", label: "Đơn cần đối soát" },
+                                         { key: "failed", label: "Bước lỗi / kịch bản dừng" }, { key: "link", label: "Board / Bluetooth mất kết nối" }],
+                            last_error: "", sent: 0 }),
+    telegram_save: (token, chat, events) => { if (token) TG.token = token; if (chat != null) TG.chat = chat; if (events) TG.events = events;
+                                             return P({ ok: true, has_token: !!TG.token, chat: TG.chat, events: TG.events }); },
+    telegram_test: () => P(TG.token && TG.chat ? { ok: true, error: "" } : { ok: false, error: "chưa nhập mã bot và chat id" }),
     gateway_sync: () => P({ configured: !!GWCFG.key, ok: GWCFG.key ? true : null, at: Date.now() / 1000, error: "", devices: 2, idle: 1, scripts: 1, sent: 1 }),
     gateway_pools: () => P(GWCFG.url && GWCFG.key ? { ok: true, pools: GWPOOLS } : { ok: false, error: "Chưa cấu hình", pools: [] }),
     gateway_pool: (code) => P(code === "efootball-ios" ? JSON.parse(JSON.stringify(GWPOOL)) : { ok: false, error: "Không có pool này." }),

@@ -14,6 +14,7 @@ import base64, io, json, os, shutil, sys, tempfile, threading, time, urllib.erro
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
+os.environ["IPF_NO_TELEGRAM"] = "1"            # app có thể đã cấu hình Telegram thật: kiểm thử không bao giờ bắn tin
 sys.path.insert(0, HERE)
 
 import cv2

@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import cv2
 import webview
 
-import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth, presence, history
+import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth, presence, history, notify
 from nav import Nav
 from hands import Hands
 from eyes import Eyes
@@ -177,6 +177,7 @@ WEB_SAFE_WITH_CUSTOMERS = frozenset((
     "get_flows", "groups_list", "group_save", "group_add_device", "group_remove_device",
     "group_run", "group_stop", "machine_run", "machine_pause", "machine_resume", "machine_stop", "machine_ack", "stop_all",
     "run_status", "run_log", "history_live", "history_machine", "history_orders", "history_order", "gateway_get", "gateway_test", "gateway_pools", "gateway_pool", "gateway_sync", "ai_info",
+    "telegram_get",                                                                    # chỉ đọc, không có mã bot
 ))
 
 
@@ -215,6 +216,9 @@ def _gateway():
 RUNNER = Runner(MGR.session, gateway_factory=_gateway, journal=apimode.Journal(store.DATA_DIR),
                 on_log=lambda entry: _push("window.__runLog && window.__runLog(%s)" % json.dumps(entry)))
 RUNNER.history = HISTORY
+# Thông báo Telegram cho admin (máy dừng chờ admin, đơn cần đối soát, bước lỗi, board / Bluetooth mất kết nối) — xem notify.py
+TELEGRAM = notify.Telegram(store.get_settings)
+RUNNER.alert = TELEGRAM.notify
 def _ident_now(name):
     """iPhone + cổng board mà tên `name` sẽ DÙNG THẬT nếu chạy ngay bây giờ: phiên đã mở sẵn (nếu có), không thì theo bảng gán."""
     nav = MGR.sessions.get(name)
@@ -370,6 +374,93 @@ def _presence_tool():
 # Luồng tự báo cho gateway: máy nào rảnh ở kịch bản nào + danh mục kịch bản (chạy trong main()).
 PRESENCE = presence.Reporter(_gateway, _presence_facts, _presence_tool)
 _PRESENCE_LOCK = None           # tệp khoá đang giữ: mỗi bản cài chỉ MỘT tiến trình được báo cho gateway
+
+
+LINK_EVERY = 20.0               # giây: nhịp hỏi board của các máy đang mở (rảnh) xem board / Bluetooth còn không
+LINK_CONFIRM = 2                # phải thấy trạng thái MỚI chừng này nhịp liền mới tin (board vừa khởi động lại / BLE đang nối lại thì chập chờn)
+_LINK = {}                      # tên máy -> {"base": (board trả lời?, Bluetooth đã nối?), "cand": trạng thái mới đang chờ xác nhận, "n": số nhịp, "quiet": đến lúc}
+_LINK_LOCK = threading.Lock()
+
+
+def _link_quiet(names=None, secs=120.0):
+    """Người vận hành VỪA tự làm board / Bluetooth đổi trạng thái (khởi động lại board, huỷ kết nối BT, nạp firmware, gán máy, quét lại):
+    trong `secs` giây tới không báo «mất kết nối» cho các máy đó (None = mọi máy), và quên trạng thái cũ để học lại từ đầu."""
+    until = time.time() + secs
+    with _LINK_LOCK:
+        for n in (list(_LINK) if names is None else names):
+            _LINK[n] = {"base": None, "cand": None, "n": 0, "quiet": until}
+        if names is None:
+            _LINK["*"] = {"quiet": until}
+
+
+def _link_probe(name):
+    """Hỏi board của máy `name` NGAY (chỉ khi máy đã có phiên mở trong tiến trình này, đang rảnh, không ai đang dùng): trả (board trả lời?,
+    Bluetooth đã nối?) hoặc None = lúc này không hỏi được (không đụng vào máy đang chạy / đang được điều khiển / đang nạp, quét)."""
+    nav = MGR.sessions.get(name)
+    if nav is None or RUNNER.is_running(name) or not MGR.scan_idle.is_set() or "*" in MAINT:
+        return None
+    if getattr(getattr(nav, "h", None), "port", None) in MAINT:
+        return None
+    with _Using(name, board_only=True) as why:
+        if why:
+            return None
+        try:
+            st = nav.h.status()
+        except Exception:
+            return (False, None)                     # cổng serial hỏng / đã rút
+        if not st:
+            return (False, None)                     # board không trả lời
+        _note_ble(name, st)
+        return (True, "ble=connected" in st)
+
+
+def _link_watch(probe=None, alert=None, names=None, now=None):
+    """Một nhịp: hỏi board của các máy đang mở, trạng thái XẤU ĐI (board không trả lời / Bluetooth rớt) giữ đủ LINK_CONFIRM nhịp thì báo một
+    lần. Không báo trạng thái lúc mới mở, không báo khi người vận hành vừa tự làm đổi (xem _link_quiet). Trả bảng trạng thái (để test)."""
+    probe = probe or _link_probe
+    alert = alert or RUNNER._alert
+    now = time.time() if now is None else now
+    if names is None:
+        names = list(MGR.sessions)
+        with _LINK_LOCK:                        # phiên đã đóng (quét lại, nạp firmware…): quên trạng thái cũ, mở lại thì học lại từ đầu
+            for n in [n for n in _LINK if n != "*" and n not in names]:
+                del _LINK[n]
+    for n in names:
+        obs = probe(n)
+        if obs is None:
+            continue
+        with _LINK_LOCK:
+            rec = _LINK.setdefault(n, {"base": None, "cand": None, "n": 0, "quiet": 0.0})
+            quiet = now < max(rec.get("quiet") or 0.0, (_LINK.get("*") or {}).get("quiet") or 0.0)
+            if rec["base"] is None or obs == rec["base"]:
+                rec.update(base=obs, cand=None, n=0)
+                continue
+            if obs == rec["cand"]:
+                rec["n"] += 1
+            else:
+                rec["cand"], rec["n"] = obs, 1
+            if rec["n"] < LINK_CONFIRM:
+                continue
+            old = rec["base"]
+            rec.update(base=obs, cand=None, n=0)
+        if quiet:
+            continue
+        if old[0] and not obs[0]:
+            alert(n, "link", "board ESP32 của máy không còn trả lời (rút cáp USB / mất nguồn / board treo?)")
+        elif obs[0] and old[1] is True and obs[1] is False:
+            alert(n, "link", "Bluetooth giữa board ESP32 và iPhone bị rớt")
+    return _LINK
+
+
+def _start_link_watch():
+    def loop():
+        while True:
+            time.sleep(LINK_EVERY)
+            try:
+                _link_watch()
+            except Exception:
+                pass
+    threading.Thread(target=loop, name="link-watch", daemon=True).start()
 
 
 def _start_presence():
@@ -616,6 +707,7 @@ class Api:
                 pass
 
             MGR.board_map = {}                      # buộc quét lại để mapping mới có hiệu lực
+            _link_quiet()                           # gán lại máy: mọi phiên / board sắp đổi → không báo «mất kết nối» nhầm
             return {"ok": True, "board": board_name, "udid": udid, "label": label,
                     "name": best.get("name"), "model": best.get("model"), "ios": best.get("ios"),
                     "shot": shot, "ranked": ranked_out}
@@ -822,6 +914,7 @@ class Api:
 
     def board_restart(self, name):
         """KHỞI ĐỘNG LẠI board ESP32 (lệnh `reset`); Bluetooth rớt vài giây rồi iPhone đã ghép tự nối lại."""
+        _link_quiet([name], 120)                    # người vận hành tự làm board / Bluetooth rớt: không báo «mất kết nối»
         def run(hands):
             r = boardhealth.restart(hands)
             if not r["ok"]:
@@ -836,6 +929,11 @@ class Api:
 
     def board_disconnect_bt(self, name, hold=30):
         """HUỶ kết nối Bluetooth với iPhone đang nối; board ngừng quảng bá `hold` giây rồi iPhone đã ghép tự nối lại."""
+        try:
+            secs = max(0, int(hold))
+        except (TypeError, ValueError):
+            secs = 30
+        _link_quiet([name], secs + 90)              # người vận hành tự huỷ Bluetooth: không báo «mất kết nối» cho tới khi iPhone nối lại
         def run(hands):
             r = boardhealth.disconnect_bt(hands, int(hold))
             if not r["ok"]:
@@ -1247,6 +1345,36 @@ class Api:
         except GatewayError as e:
             return {"ok": False, "error": e.vi(), "pools": []}
 
+    # ---- thông báo Telegram cho admin ----
+    def telegram_get(self):
+        c = TELEGRAM.config()
+        tok = c["token"]
+        return {"has_token": bool(tok), "token_hint": (tok.split(":")[0] + ":…") if tok else "", "chat": c["chat"],
+                "events": c["events"], "all_events": [{"key": k, "label": v} for k, v in notify.EVENTS.items()],
+                "last_error": TELEGRAM.last_error, "sent": TELEGRAM.sent}
+
+    def telegram_save(self, token=None, chat=None, events=None):
+        """Lưu cấu hình Telegram. `token` để trống = giữ mã bot đang lưu. Trả cấu hình mới (không bao giờ trả mã bot)."""
+        patch = {}
+        tok = str(token or "").strip()
+        if tok:
+            if not re.match(r"^\d{5,}:[A-Za-z0-9_-]{20,}$", tok):
+                return {"ok": False, "error": "Mã bot không đúng dạng — lấy ở @BotFather, dạng 123456789:AA…"}
+            patch["telegram_token"] = tok
+        if chat is not None:
+            ch = str(chat).strip()
+            if ch and not re.match(r"^(-?\d{3,}|@[A-Za-z0-9_]{4,})$", ch):
+                return {"ok": False, "error": "Chat id phải là số (vd 123456789, nhóm thì -100…) hoặc @tên_kênh"}
+            patch["telegram_chat"] = ch
+        if events is not None:
+            patch["telegram_events"] = [e for e in (events or []) if e in notify.EVENTS]
+        store.save_settings(patch)
+        return dict(self.telegram_get(), ok=True)
+
+    def telegram_test(self):
+        ok, err = TELEGRAM.send_now("✅ iPhone Farm: thử thông báo — nếu bạn đọc được tin này thì cấu hình Telegram đã đúng.")
+        return {"ok": ok, "error": err}
+
     # ---- cầu nối cho AI (MCP) + dòng lệnh `farm` ----
     def ai_info(self):
         s = store.get_settings()
@@ -1308,6 +1436,8 @@ def main(argv=None):
         # (cầu nối AI mở ngay dưới đây cũng gọi được «chạy nhóm»).
         RUNNER.allow_api = False
     api = Api()
+    # Xem board / Bluetooth của các máy ĐANG MỞ trong tiến trình này (cổng serial mở độc quyền: mỗi board chỉ một tiến trình hỏi được → không báo trùng)
+    _start_link_watch()
     # Máy chủ điều khiển cho AI (MCP) + lệnh `farm`: chỉ nghe trên máy này (127.0.0.1), cần khoá.
     CONTROL = control.AppServer(control.AppHost(MGR, RUNNER, api, CLAIMS))
     settings = store.get_settings()
