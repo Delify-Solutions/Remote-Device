@@ -225,11 +225,12 @@ class Tracker:
             pass
 
     # ---------- giai đoạn + bước ----------
-    def phase(self, label: str | None, total: int | None = None):
-        """Sắp chạy một DANH SÁCH bước (một giai đoạn của đơn, hoặc cả kịch bản thường): từ đây các bước được đếm 1…total."""
+    def phase(self, label: str | None, total: int | None = None, start: int = 0):
+        """Sắp chạy một DANH SÁCH bước (một giai đoạn của đơn, hoặc cả kịch bản thường): từ đây các bước được đếm 1…total
+        (chạy tiếp từ bước thứ `start` — 0 là đầu — thì đếm từ start+1)."""
         try:
             with self.lock:
-                self.phase_ = {"label": _clip(label, 60) if label else None, "total": int(total) if total else None, "i": 0}
+                self.phase_ = {"label": _clip(label, 60) if label else None, "total": int(total) if total else None, "i": max(0, int(start or 0))}
         except Exception:
             pass
 

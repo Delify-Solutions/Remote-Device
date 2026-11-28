@@ -696,12 +696,13 @@ def said(step: dict, vars: dict) -> str:
     return observed_what(step, vars) if _literal_typed(step) else _describe(step, vars)
 
 
-def watch_phase(nav, label, total=None):
-    """Báo cho bộ theo dõi của máy (nav.observer — xem history.Tracker): sắp chạy một DANH SÁCH bước (giai đoạn `label`, `total` bước)."""
+def watch_phase(nav, label, total=None, start=0):
+    """Báo cho bộ theo dõi của máy (nav.observer — xem history.Tracker): sắp chạy một DANH SÁCH bước (giai đoạn `label`, `total` bước),
+    bắt đầu từ bước thứ `start` (0 = đầu; «chạy tiếp từ bước N» thì các bước được đếm tiếp từ N)."""
     obs = getattr(nav, "observer", None)
     if obs is not None:
         try:
-            obs.phase(label, total)
+            obs.phase(label, total, start) if start else obs.phase(label, total)
         except Exception:
             pass
 

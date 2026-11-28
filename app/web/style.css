@@ -529,6 +529,37 @@ html.ipf-menu-off.layout-navbar-fixed .layout-navbar.navbar-detached { inline-si
 .flow-step.is-ok .flow-node { border-color: var(--bs-success); background: var(--bs-success); color: #fff; }
 .flow-step.is-bad .flow-node { border-color: var(--bs-danger); background: var(--bs-danger); color: #fff; }
 .flow-step.is-run .flow-node { border-color: var(--bs-primary); color: var(--bs-primary); }
+/* TIẾN ĐỘ của máy đang / vừa chạy kịch bản (khác kết quả «thử»: trạm chỉ đổi viền, bước đang làm thì tô kín và nhịp nhẹ) */
+.flow-step.run-done .flow-node { border-color: var(--bs-success); color: var(--bs-success); }
+.flow-step.run-done::before { background: var(--bs-success); }
+.flow-step.run-skip .flow-node { border-color: var(--bs-warning); color: var(--bs-warning); border-style: dashed; }
+.flow-step.run-bad { background: color-mix(in srgb, var(--bs-danger) 8%, transparent); }
+.flow-step.run-bad .flow-node { border-color: var(--bs-danger); color: var(--bs-danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bs-danger) 22%, transparent); }
+.flow-step.run-now { background: color-mix(in srgb, var(--bs-primary) 9%, transparent); }
+.flow-step.run-now .flow-node { border-color: var(--bs-primary); background: var(--bs-primary); color: #fff; animation: run-pulse 1.6s ease-in-out infinite; }
+.flow-step.run-paused .flow-node { border-color: var(--bs-warning); background: var(--bs-warning); animation: none; }
+@keyframes run-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--bs-primary) 45%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+@media (prefers-reduced-motion: reduce) { .flow-step.run-now .flow-node { animation: none; } }
+.run-prog { display: grid; gap: .45rem; margin: 0 0 .9rem; }
+.run-prog-row { border: 1px solid var(--bs-border-color); border-left: 3px solid var(--bs-secondary-color); border-radius: .5rem; padding: .5rem .65rem; }
+.run-prog-row.on { border-left-color: var(--bs-primary); }
+.run-prog-row.warn { border-left-color: var(--bs-warning); }
+.run-prog-row.bad { border-left-color: var(--bs-danger); background: color-mix(in srgb, var(--bs-danger) 5%, transparent); }
+.run-prog-row.ok { border-left-color: var(--bs-success); }
+.run-prog-row.watched { box-shadow: 0 0 0 1px color-mix(in srgb, var(--bs-primary) 40%, transparent); }
+.run-prog-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .55rem; font-size: .88rem; }
+.run-prog-name { border: 0; background: none; padding: 0; font-weight: 600; color: var(--bs-heading-color); cursor: pointer; }
+.run-prog-name:hover, .run-prog-name:focus-visible { text-decoration: underline; }
+.run-prog-state { min-width: 0; overflow-wrap: anywhere; color: var(--bs-body-color); }
+.run-prog-step { border: 0; background: none; padding: 0; color: var(--bs-primary); font-weight: 600; cursor: pointer; font-variant-numeric: tabular-nums; }
+.run-prog-row.bad .run-prog-step { color: var(--bs-danger); }
+.run-prog-step:hover, .run-prog-step:focus-visible { text-decoration: underline; }
+.run-prog-what { color: var(--bs-secondary-color); }
+.run-prog-why { color: var(--bs-secondary-color); font-size: .82rem; }
+.run-prog-row.bad .run-prog-why { color: var(--bs-danger); }
+.run-bar { flex: 1 0 100%; height: 3px; border-radius: 3px; background: var(--bs-border-color); overflow: hidden; margin-top: .15rem; }
+.run-bar i { display: block; height: 100%; background: var(--bs-success); transition: width .3s; }
+.run-prog-acts { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .45rem; }
 .flow-body { min-width: 0; padding-top: .16rem; cursor: pointer; }
 .flow-line { display: flex; align-items: flex-start; gap: .5rem; font-size: .92rem; color: var(--bs-body-color); line-height: 1.4; }
 .flow-ico { margin-top: .12rem; font-size: 1.05rem; flex: 0 0 auto; color: var(--bs-secondary-color); }

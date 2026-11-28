@@ -33,6 +33,18 @@ from gateway import GatewayError, call_retry
 RESULT_LABEL = {"done": "HOÀN TẤT", "failed": "THẤT BẠI (chưa nạp)", "review": "CHỜ ĐỐI SOÁT"}
 
 
+
+def steps_sig(steps):
+    """«Dấu» của danh sách bước (loại + chữ / phím / app của từng bước, băm FNV-1a 32 bit trên các đơn vị UTF-16) — giao diện tính
+    đúng như vậy (stepsSig trong web/app.js) để biết kịch bản có bị sửa khác đi kể từ lượt chạy không. Băm để chữ của bước không đi
+    ra ngoài qua trạng thái chạy."""
+    s = "\n".join("%s\x1f%s" % (st.get("type"), st.get("text") or st.get("name") or st.get("app") or st.get("keys") or "")
+                  for st in steps if isinstance(st, dict))
+    b, h = s.encode("utf-16-le"), 0x811c9dc5
+    for k in range(0, len(b), 2):
+        h = ((h ^ (b[k] | (b[k + 1] << 8))) * 0x01000193) & 0xffffffff
+    return "%08x" % h
+
 class Runner:
     # nhịp (giây) — test rút ngắn lại
     POLL_IDLE = 4.0           # không có đơn → bao lâu hỏi lại
@@ -258,6 +270,9 @@ class Runner:
             "iter": w["iter"], "status": w["status"],
             "last_ok": w.get("last_ok"), "last_msg": w.get("last_msg"), "hold": (w.get("hold") if not alive else None),
             "job": w.get("job_ref"), "counts": dict(w["counts"]),
+            # tiến độ của lượt chạy kịch bản (1 lần / lặp) gần nhất: máy đang ở bước nào, bước nào xong / lỗi — còn giữ sau khi máy dừng
+            # để giao diện tô lên lộ trình và đưa nút «Chạy tiếp từ bước N». Mỗi lần cập nhật là một dict MỚI (không sửa tại chỗ).
+            "prog": w.get("prog"),
         }
 
     def status(self):
@@ -368,9 +383,19 @@ class Runner:
         return (w.get("hold") or None) if (w and not w["thread"].is_alive()) else None
 
     # ====================== điều khiển ======================
-    def start_machine(self, name, group, script=None):
+    def start_machine(self, name, group, script=None, start_at=0):
         """Cho máy `name` chạy: nhóm nhận đơn API → chạy chế độ API; còn lại chạy KỊCH BẢN `script` của nhóm (cách chạy 1 lần / lặp N vòng
-        nằm trong kịch bản). Máy đang chạy việc gì (kể cả của nhóm / kịch bản khác) → False: một máy chỉ chạy MỘT kịch bản một lúc."""
+        nằm trong kịch bản). Máy đang chạy việc gì (kể cả của nhóm / kịch bản khác) → False: một máy chỉ chạy MỘT kịch bản một lúc.
+        start_at: (chỉ kịch bản 1 lần / lặp) vòng ĐẦU bắt đầu từ bước thứ start_at (0 = đầu) — «chạy tiếp từ bước N» sau khi máy dừng vì
+        lỗi; các vòng sau (lặp) chạy từ đầu. Chế độ nhận đơn không nhận start_at (không bao giờ nhảy vào giữa đơn của khách) → False."""
+        if isinstance(start_at, bool):
+            return False
+        try:
+            start_at = int(start_at or 0)
+        except (TypeError, ValueError):
+            return False
+        if start_at and (group.get("mode") == "api" or (script and script.get("mode") == "orders")):
+            return False
         if script and script.get("mode") == "orders" and group.get("mode") != "api":
             # KỊCH BẢN NHẬN ĐƠN: từ đây nó là một lần chạy «api» đúng nghĩa — cùng vòng xin đơn, cùng sổ đơn, cùng luật «dừng chờ kiểm tra»,
             # cùng lệnh cấm ở bản web. Chuyển TRƯỚC mọi phép kiểm bên dưới để không phép kiểm nào của chế độ nhận đơn bị bỏ sót.
@@ -401,6 +426,8 @@ class Runner:
                     group = dict(group, steps=list(script.get("steps") or []), mode="loop" if script.get("mode") == "loop" else "once", loops=script.get("loops", 0))
                 elif not group.get("steps"):
                     return False                      # không có kịch bản nào để chạy (nhóm thật luôn truyền `script`; `steps` trần chỉ còn ở dữ liệu thử)
+                if start_at and not 0 < start_at < len(group.get("steps") or []):
+                    return False                      # «chạy từ bước N» mà kịch bản không có bước N
             mode = group.get("mode", "loop")
             w = {"stop": threading.Event(), "abort": threading.Event(), "pause": threading.Event(), "paused": False, "name": name,
                  "udid": udid, "port": port,
@@ -409,7 +436,11 @@ class Runner:
                  "carry_hold": (held.get("hold") if held is not None else None),
                  "group_id": group.get("id"), "mode": mode,
                  "group_name": group.get("name"), "script_id": (script or {}).get("id"), "script_name": (script or {}).get("name"),
-                 "iter": 0, "status": "chuẩn bị", "last_ok": None, "last_msg": None,
+                 "iter": 0, "status": "chuẩn bị", "last_ok": None, "last_msg": None, "start_at": start_at,
+                 # tiến độ lượt trước của CHÍNH kịch bản này được giữ cho tới khi vòng mới thật sự bắt đầu: «chạy tiếp» mà không mở được máy
+                 # (board mất kết nối…) thì dải tiến độ + nút «Chạy tiếp từ bước N» vẫn còn
+                 "prog": (held.get("prog") if held is not None and held.get("group_id") == group.get("id")
+                          and held.get("script_id") == (script or {}).get("id") else None),
                  "job_id": None, "job_ref": None, "pool": None, "counts": {"done": 0, "failed": 0, "review": 0}}
             target = self._run_api if mode == "api" else self._run
             t = threading.Thread(target=self._guard, args=(target, name, dict(group), w), daemon=True)
@@ -524,6 +555,31 @@ class Runner:
             return
         self._seen_nav(w, nav)
         count = 0
+        start = int(w.get("start_at") or 0)
+        types = steps_sig(steps)          # «dấu» các bước: giao diện chỉ tô tiến độ / cho «chạy tiếp» khi kịch bản chưa bị sửa khác đi
+        if start:
+            self._log(name, "Chạy tiếp từ bước %d/%d (bỏ qua %d bước đầu)" % (start + 1, len(steps), start))
+
+        def track(i, ok, msg):
+            """Tiến độ của vòng đang chạy (xem _snap «prog»): bước đang làm, bước xong, bước lỗi, bước kế tiếp sẽ chạy nếu «chạy tiếp»."""
+            p = dict(w.get("prog") or {})
+            if ok is None:
+                p["at"] = i
+            else:
+                p["at"] = None
+                st = steps[i]
+                if not ok and stop.is_set():                  # bị bấm Dừng (kể cả lúc đang chờ admin): bước chưa làm, không phải bước lỗi
+                    pass
+                elif ok:
+                    p["done"] = p.get("done", []) + [i]
+                    p["next"] = i + 1
+                elif st.get("optional"):                       # «bỏ qua nếu lỗi»: trượt nhưng vẫn đi tiếp
+                    p["skip"] = p.get("skip", []) + [i]
+                    p["next"] = i + 1
+                else:
+                    p["bad"] = i
+                    p["msg"] = apimode.observed_why(st, msg)      # lời đã che (không lộ chữ gõ / biến bí mật)
+            w["prog"] = p
 
         def gate():
             """Gọi trước mỗi bước: đang yêu cầu tạm dừng thì đứng đây (không chạm vào máy) cho tới khi tiếp tục hoặc bị dừng."""
@@ -543,11 +599,14 @@ class Runner:
             count += 1
             w["iter"] = count
             w["status"] = f"đang chạy · vòng {count}"
+            s0 = start if count == 1 else 0                    # chỉ vòng ĐẦU chạy từ bước đã chọn; vòng sau của kịch bản lặp chạy từ đầu
+            w["prog"] = {"n": len(steps), "types": types, "iter": count, "start": s0, "at": None, "done": [], "skip": [], "bad": None,
+                         "msg": "", "next": s0}
             try:
-                res = engine.run_flow(nav, steps, stop_check=lambda: stop.is_set(), pause_gate=gate)
+                res = engine.run_flow(nav, steps, stop_check=lambda: stop.is_set(), pause_gate=gate, start=s0, on_step=track)
                 oks = sum(1 for r in res if r.get("ok"))
                 w["last_ok"] = (oks == len(res)) if res else True
-                w["last_msg"] = f"{oks}/{len(res)} bước OK"
+                w["last_msg"] = f"{oks}/{len(res)} bước OK" + (f" (chạy từ bước {s0 + 1})" if s0 else "")
                 bad = res[-1] if res and not res[-1].get("ok") and not steps[res[-1]["i"]].get("optional") else None
                 if bad is not None and not stop.is_set():
                     import notify
@@ -560,8 +619,15 @@ class Runner:
             except Exception as e:
                 w["last_ok"] = False
                 w["last_msg"] = str(e)
+                p = dict(w.get("prog") or {})
+                if p.get("at") is not None:                     # lỗi giữa một bước → bước đó là bước lỗi (chạy tiếp thì làm lại bước đó)
+                    p["bad"], p["msg"] = p["at"], apimode.observed_why(steps[p["at"]], ("lỗi khi chạy bước — %s" % e)[:300])
+                w["prog"] = p
                 if not stop.is_set():
                     self._alert(name, "failed", "lỗi khi chạy kịch bản — %s" % e, w)
+            p = w.get("prog")
+            if p and p.get("at") is not None:                   # dừng / huỷ giữa chừng: không còn bước nào «đang chạy»
+                w["prog"] = dict(p, at=None)
             if stop.is_set():
                 break
             if mode == "once":

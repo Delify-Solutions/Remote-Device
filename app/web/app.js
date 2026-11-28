@@ -1514,6 +1514,7 @@ function renderSteps() {
   if (!sc && !total && pal) { pal.hidden = false; $("#btn-step-add").setAttribute("aria-expanded", "true"); }   // kịch bản trống: mở sẵn bảng chọn
   renderApiUi();
   updateDirty();
+  paintProgress();
 }
 
 function fixedStation(no, kind) {      // trạm do TOOL tự làm với gateway — không phải bước bấm trên máy nên không sửa / xoá được
@@ -1604,8 +1605,10 @@ function stepItem(l, s, i, no) {
   const [kind, icon] = stepKind(s.type);
   const res = STEP_RES.get(s);
   const editable = s.type !== "home";
+  const fromOk = !!progScript();                          // kịch bản 1 lần / lặp: chạy từ bước này + tô tiến độ của máy đang chạy
   const li = document.createElement("li");
   li.className = "flow-step" + (kind ? " k-" + kind : "") + (res ? (res.ok ? " is-ok" : " is-bad") : "");
+  if (fromOk) li.dataset.si = String(i);
   li.innerHTML = `
     <span class="flow-node" aria-hidden="true">${res ? `<i class="ti ${res.ok ? "tabler-check" : "tabler-x"}"></i>` : no}</span>
     <div class="flow-body" ${editable ? `data-op="edit" role="button" tabindex="0" title="Bấm để sửa bước này"` : `style="cursor:default"`}>
@@ -1614,6 +1617,7 @@ function stepItem(l, s, i, no) {
     </div>
     <div class="flow-ops">
       <button data-op="test" title="Chạy thử bước này" aria-label="Chạy thử bước ${no}"><i class="ti tabler-player-play"></i></button>
+      ${fromOk ? `<button data-op="from" title="Chạy kịch bản trên máy đang chọn, BẮT ĐẦU từ bước này (bỏ qua các bước trước)" aria-label="Chạy kịch bản từ bước ${no}"><i class="ti tabler-player-track-next"></i></button>` : ""}
       ${SCREEN_TYPES.includes(s.type) ? `<button data-op="screen" class="${screenOn(s) ? "on" : ""}" title="${s.screen ? (screenOn(s) ? "Có ảnh mẫu — kiểm màn hình trước khi làm" : "Có ảnh mẫu nhưng đang TẮT kiểm màn hình") : "Chưa có ảnh mẫu (chạy thử bước thành công để tự có)"}" aria-label="Bước ${no}: ảnh mẫu"><i class="ti ${s.screen ? "tabler-photo-check" : "tabler-photo"}"></i></button>` : ""}
       <button data-op="opt" class="${s.optional ? "on" : ""}" aria-pressed="${s.optional ? "true" : "false"}" title="Bỏ qua nếu lỗi: bước này trượt (vd không thấy chữ) thì vẫn chạy tiếp bước sau" aria-label="Bước ${no}: bỏ qua nếu lỗi"><i class="ti tabler-arrow-forward-up"></i></button>
       <button data-op="up" title="Đưa lên" aria-label="Đưa bước ${no} lên" ${i === 0 ? "disabled" : ""}><i class="ti tabler-chevron-up"></i></button>
@@ -1622,6 +1626,8 @@ function stepItem(l, s, i, no) {
     </div>
     <button class="flow-ins" data-op="ins" title="Chèn một bước vào sau bước ${no}" aria-label="Chèn một bước vào sau bước ${no}">+</button>`;
   $('[data-op=opt]', li).onclick = () => { if (s.optional) delete s.optional; else s.optional = true; renderSteps(); };
+  const from = $('[data-op=from]', li);
+  if (from) from.onclick = () => { if (!SEL) { toast("Chọn máy ở khung màn hình trước", "warn"); return; } runFrom(SEL, list.indexOf(s)); };
   const scr = $('[data-op=screen]', li);
   if (scr) scr.onclick = () => screenPrompt(s);
   $('[data-op=up]', li).onclick = () => { const k = list.indexOf(s); if (k > 0) { [list[k - 1], list[k]] = [list[k], list[k - 1]]; renderSteps(); } };
@@ -2175,6 +2181,129 @@ async function stopScript(btn) {
     toast("Đã yêu cầu dừng kịch bản này", "");
   } catch (e) { toast("Lỗi: " + e, "bad"); }
   busy(btn, false);
+  pollStatus();
+}
+
+/* ---- TIẾN ĐỘ của máy chạy kịch bản (1 lần / lặp): máy đang ở bước nào, dừng ở bước nào, «Chạy tiếp từ bước N» ----
+   Backend giữ tiến độ lượt chạy gần nhất của mỗi máy (run_status → prog: {n, types, iter, at, done, skip, bad, msg, next}).
+   Kịch bản nhận đơn không có (không nhảy vào giữa đơn của khách) — theo dõi đơn ở trang «Theo dõi». */
+function progScript() {                // kịch bản đang mở trong trình sửa nếu nó chạy 1 lần / lặp, không thì null
+  const sc = (GROUP && GROUP.mode !== "api" && GROUP_SUB === "script") ? currentScript() : null;
+  return sc && sc.mode !== "orders" ? sc : null;
+}
+function progOf(n, sc) {               // trạng thái chạy của máy n nếu lượt gần nhất của nó là kịch bản sc (có tiến độ), không thì null
+  const st = RUN_STATUS[n];
+  return st && st.prog && GROUP && st.group_id === GROUP.id && st.script_id === sc.id ? st : null;
+}
+// «Dấu» của danh sách bước — tính ĐÚNG như runner.steps_sig (loại + chữ / phím / app, FNV-1a 32 bit trên đơn vị UTF-16)
+function stepsSig(steps) {
+  const s = steps.map(x => `${x.type}\x1f${x.text || x.name || x.app || x.keys || ""}`).join("\n");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
+  return h.toString(16).padStart(8, "0");
+}
+function progStepName(sc, i) {
+  const s = sc.steps[i];
+  return s ? `${STEP_LABEL[s.type] || s.type} ${stepText(s)}`.trim() : "";
+}
+function progRowHtml(n, sc, watched) {
+  const st = RUN_STATUS[n], p = st.prog;
+  const same = p.types === stepsSig(sc.steps) && p.n === sc.steps.length;   // kịch bản chưa bị sửa khác đi kể từ lượt chạy đó
+  const N = p.n || 0;                                                  // số bước của LƯỢT CHẠY đó (kịch bản đã sửa thì có thể khác bây giờ)
+  const done = (p.done || []).length, loop = st.mode === "loop" ? ` · vòng ${p.iter || 1}` : "";
+  const name = `<button class="run-prog-name" data-prog-watch="${esc(n)}" title="Tô tiến độ của máy này lên các bước">${esc(monName(n))}</button>`;
+  const go = (i, label) => `<button class="run-prog-step" data-prog-goto="${i}" title="Xem bước ${i + 1}">${label}</button>`;
+  const bar = `<span class="run-bar" aria-hidden="true"><i style="width:${N ? Math.round(100 * Math.min(done, N) / N) : 0}%"></i></span>`;
+  const idle = !st.running && !st.parked && !isHeld(st);
+  let state = "", acts = "", cls = "";
+  if (st.running) {
+    cls = st.paused ? "warn" : "on";
+    const at = p.at != null ? p.at : (st.paused && (p.next || 0) < N ? (p.next || 0) : null);   // tạm dừng GIỮA hai bước: chờ trước bước kế
+    state = at != null ? `${st.paused ? (p.at != null ? "tạm dừng ở" : "tạm dừng trước") : "đang làm"} ${go(at, "bước " + (at + 1) + "/" + N)}${same ? ` <span class="run-prog-what">${esc(progStepName(sc, at))}</span>` : ""}`
+                       : `đang chạy · xong ${done}/${N} bước`;
+    state += loop;
+  } else if (p.bad != null) {
+    cls = "bad";
+    state = `dừng ở ${go(p.bad, "bước " + (p.bad + 1) + "/" + N)}${p.msg ? ` <span class="run-prog-why">${esc(p.msg)}</span>` : ""}`;
+    if (idle && same) acts = `<button class="btn btn-sm btn-success" data-prog-from="${esc(n)}" data-i="${p.bad}" title="Chạy lại bước lỗi rồi đi tiếp — màn hình máy phải đang ở đúng chỗ của bước này">Chạy tiếp từ bước ${p.bad + 1}</button>`
+      + (p.bad + 1 < N ? `<button class="btn btn-sm btn-label-secondary" data-prog-from="${esc(n)}" data-i="${p.bad + 1}" title="Bạn đã làm tay bước ${p.bad + 1} trên máy: bỏ qua nó, chạy từ bước sau">Bỏ qua, chạy từ bước ${p.bad + 2}</button>` : "")
+      + `<button class="btn btn-sm btn-label-secondary" data-prog-from="${esc(n)}" data-i="0">Chạy lại từ đầu</button>`;
+  } else if ((p.next || 0) < N) {
+    cls = "mut";
+    state = `đã dừng trước ${go(p.next || 0, "bước " + ((p.next || 0) + 1) + "/" + N)} · xong ${done} bước`;
+    if (idle && same) acts = `<button class="btn btn-sm btn-success" data-prog-from="${esc(n)}" data-i="${p.next || 0}">Chạy tiếp từ bước ${(p.next || 0) + 1}</button>`;
+  } else {
+    cls = "ok";
+    state = `chạy xong ${N}/${N} bước${(p.skip || []).length ? ` (${p.skip.length} bước «bỏ qua nếu lỗi» bị trượt)` : ""}`;
+  }
+  if (!same) state += ` <span class="run-prog-why">— kịch bản đã sửa sau lượt chạy này, số bước có thể lệch (dùng nút «Chạy từ bước này» ở từng bước)</span>`;
+  else if (!idle && !st.running) state += ` <span class="run-prog-why">— máy đang dừng / chờ kiểm tra, xử lý ở dải máy phía trên</span>`;
+  return `<div class="run-prog-row ${cls}${watched ? " watched" : ""}" data-row="${esc(n)}"><div class="run-prog-main">${name}<span class="run-prog-state">${state}</span>${bar}</div>${acts ? `<div class="run-prog-acts">${acts}</div>` : ""}</div>`;
+}
+// Gọi sau mỗi lần vẽ lộ trình và mỗi nhịp hỏi trạng thái: chỉ đổi lớp CSS của các trạm (không vẽ lại lộ trình → không mất chỗ đang sửa).
+function paintProgress() {
+  const box = $("#run-prog"), ol = $("#steps");
+  if (!box || !ol) return;
+  const sc = GROUP_PAGE === "detail" ? progScript() : null;
+  const names = sc ? GROUP.devices.filter(n => progOf(n, sc)) : [];
+  const watch = names.includes(SEL) ? SEL : (names.find(n => RUN_STATUS[n].running) || names[0] || null);   // máy được tô lên lộ trình
+  const st = watch ? RUN_STATUS[watch] : null, p = st ? st.prog : null;
+  const same = !!(p && sc && p.types === stepsSig(sc.steps) && p.n === sc.steps.length);
+  $$("li[data-si]", ol).forEach(li => {
+    const at = p && p.at != null ? p.at : (st && st.paused ? p.next : null);       // tạm dừng giữa hai bước → tô bước sắp làm
+    const i = Number(li.dataset.si), now = same && st.running && at === i;
+    li.classList.toggle("run-now", now);
+    li.classList.toggle("run-paused", now && !!st.paused);
+    li.classList.toggle("run-bad", same && !now && p.bad === i);
+    li.classList.toggle("run-done", same && !now && (p.done || []).includes(i));
+    li.classList.toggle("run-skip", same && !now && (p.skip || []).includes(i));
+  });
+  box.hidden = !names.length;
+  // vẽ lại TỪNG DÒNG khi chính dòng đó đổi: máy A đang chạy (đổi mỗi nhịp) không làm mất nút «Chạy tiếp» đang rê chuột của máy B
+  const rows = new Map([...box.children].map(el => [el.dataset.row, el]));
+  let prev = null;
+  names.forEach(n => {
+    const html = progRowHtml(n, sc, n === watch && names.length > 1);
+    let el = rows.get(n);
+    rows.delete(n);
+    if (!el || el.dataset.sig !== html) {
+      const t = document.createElement("div"); t.innerHTML = html;
+      const fresh = t.firstElementChild; fresh.dataset.sig = html;
+      bindProgRow(fresh, ol);
+      if (el) el.replaceWith(fresh);
+      el = fresh;
+    }
+    const want = prev ? prev.nextElementSibling : box.firstElementChild;
+    if (want !== el) box.insertBefore(el, want);
+    prev = el;
+  });
+  rows.forEach(el => box.removeChild(el));               // máy không còn tiến độ của kịch bản này
+}
+function bindProgRow(row, ol) {
+  $$("[data-prog-from]", row).forEach(b => b.onclick = () => runFrom(b.dataset.progFrom, Number(b.dataset.i)));
+  $$("[data-prog-goto]", row).forEach(b => b.onclick = () => { const li = $(`li[data-si="${b.dataset.progGoto}"]`, ol); if (li) li.scrollIntoView({ block: "center", behavior: "smooth" }); });
+  $$("[data-prog-watch]", row).forEach(b => b.onclick = () => {
+    const n = b.dataset.progWatch, sel = $("#flow-device");
+    if (sel && [...sel.options].some(o => o.value === n)) { sel.value = n; SEL = n; paintProgress(); }
+    else toast(`Máy ${monName(n)} không có trong danh sách máy ở khung màn hình (chưa thấy board) — không tô lên các bước được`, "warn");
+  });
+}
+// Chạy kịch bản đang mở trên máy `name`, BẮT ĐẦU từ bước thứ i (0 = bước 1) — sau khi máy dừng vì lỗi, xử lý tay xong thì chạy tiếp.
+async function runFrom(name, i) {
+  const sc = progScript();
+  if (!GROUP || !sc || !(i >= 0 && i < sc.steps.length)) return;
+  const st = RUN_STATUS[name];
+  if (st && (st.running || st.parked)) { toast(`Máy ${monName(name)} đang ${st.running ? "chạy" : "dừng để xử lý tay"} — dừng / bấm Tiếp tục trên máy đó trước`, "warn"); return; }
+  if (isHeld(st)) { toast(`Máy ${monName(name)} đang dừng chờ kiểm tra — xác nhận «Đã kiểm tra xong» trước`, "warn"); return; }
+  const N = sc.steps.length;
+  if (!confirmBox(i ? `Chạy kịch bản «${sc.name}» trên máy ${monName(name)} từ bước ${i + 1}/${N}?\n\nBước ${i + 1}: ${progStepName(sc, i)}\n\nBỏ qua ${i} bước đầu — màn hình máy phải đang ở đúng chỗ của bước ${i + 1}.${sc.mode === "loop" ? `\nCác vòng sau chạy lại từ bước 1; số vòng đếm lại từ đầu${Number(sc.loops) > 0 ? ` (${Number(sc.loops)} vòng)` : ""}.` : ""}`
+                    : `Chạy lại kịch bản «${sc.name}» trên máy ${monName(name)} từ bước 1?`)) return;
+  if (!(await saveGroupSilent())) { toast("Lỗi lưu nhóm — chưa chạy", "bad"); return; }
+  try {
+    const r = await API().machine_run(GROUP.id, name, sc.id, i);
+    if (r && r.ok) { log(`▶ Chạy «${GROUP.name} · ${sc.name}» trên ${name} từ bước ${i + 1}/${N}`); toast(`Máy ${monName(name)} chạy từ bước ${i + 1}`, "ok"); }
+    else toast((r && r.error) || "Lỗi không rõ", "bad");
+  } catch (e) { toast("Lỗi: " + e, "bad"); }
   pollStatus();
 }
 // «@giai đoạn» (chế độ API) hoặc id kịch bản (loop/once) có thật trong nhóm đang mở không
@@ -2911,6 +3040,7 @@ async function pollStatus(force = true) {
   const sig = JSON.stringify(Object.keys(RUN_STATUS).sort().map(n => { const x = RUN_STATUS[n]; return [n, x.running, x.paused, x.pause_requested, x.stopping, x.group_id, x.script_id, x.status, x.last_msg, x.hold, x.parked, x.counts]; }));
   const changed = sig !== RUN_SIG || force;
   RUN_SIG = sig;
+  if (active && active.id === "view-flows") paintProgress();     // tiến độ từng bước: mỗi nhịp, chỉ đổi lớp CSS / dải tiến độ (không vẽ lại lộ trình)
   if (!changed) return;
   if (active && active.id === "view-devices") { renderDevices(); renderIOS(); }
   if (active && active.id === "view-flows") {
@@ -3064,7 +3194,7 @@ function init() {
   $("#group-add-dev").onchange = (e) => { const v = e.target.value; if (v) { addMember(v); e.target.value = ""; } };
 
   // màn hình thử
-  $("#flow-device").onchange = (e) => { SEL = e.target.value || null; };
+  $("#flow-device").onchange = (e) => { SEL = e.target.value || null; paintProgress(); };     // máy đang chọn có tiến độ của kịch bản này → tô nó lên lộ trình
   $("#btn-shot").onclick = (e) => shot(e.currentTarget);
   $("#btn-ble").onclick = (e) => bleStatus(e.currentTarget);
   $$(".mon-tab").forEach(b => b.onclick = () => setMonTab(b.dataset.monTab));

@@ -116,7 +116,7 @@ def main():
     ok(not refs, "không có hàm / biến nào bị gọi mà không tồn tại, không tệp JS nào nạp lỗi", refs)
     syntax = [e for e in errs if "SyntaxError" in e]
     ok(not syntax, "không có lỗi cú pháp", syntax)
-    names = ["loadAiScreen", "loadTelegram", "alertsBadge", "loadAlerts", "renderTelegram", "renderAiProviders", "showView", "init"]
+    names = ["loadAiScreen", "loadTelegram", "alertsBadge", "loadAlerts", "renderTelegram", "renderAiProviders", "showView", "init", "paintProgress", "runFrom"]
     # kiểm ở phía node (không qua vm.run): hàm khai báo kiểu `function x()` ở cấp tệp là thuộc tính của ngữ cảnh vm
     probe = HARNESS.replace("setTimeout(() => {\n  run(\"init\"",
                             "process.stdout.write('MISSING[' + %s.filter(n => typeof ctx[n] !== 'function').join(',') + ']\\n');\nsetTimeout(() => {\n  run(\"init\"" % json.dumps(names), 1)

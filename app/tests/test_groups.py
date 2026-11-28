@@ -132,7 +132,7 @@ def main():
         class FakeNav: pass
         R0 = runner.Runner(lambda n: FakeNav())
         real_run_flow = runner.engine.run_flow
-        runner.engine.run_flow = lambda nav, steps, stop_check=None, pause_gate=None: (ran.append([s["type"] for s in steps]) or [{"ok": True}] * len(steps))
+        runner.engine.run_flow = lambda nav, steps, stop_check=None, pause_gate=None, **kw: (ran.append([s["type"] for s in steps]) or [{"ok": True}] * len(steps))
         grp = {"id": "G", "name": "Nhóm G", "devices": ["M1", "M2"], "mode": "once"}
         scr_once = {"id": "so", "name": "Một lần", "steps": [home, tap], "mode": "once", "loops": 1}
         scr_loop3 = {"id": "sl", "name": "Ba vòng", "steps": [home], "mode": "loop", "loops": 3}
@@ -199,6 +199,80 @@ def main():
             ok(RP.running_names() == [], "Dừng tất cả → mọi máy dừng, kể cả máy đang tạm dừng", RP.running_names())
             ok(RP.is_parked("P2") and not RP.is_parked("P1"), "Dừng tất cả không tự bỏ trạng thái «đang dừng để xử lý tay» của máy (người bấm Tiếp tục mới bỏ)")
             RP.resume_machine("P2")
+
+            print("\n== 7b. Tiến độ từng bước (máy đang ở bước nào) + «chạy tiếp từ bước N» sau khi dừng vì lỗi ==")
+            fail_on, seq = {"bad"}, []
+            runner.engine.run_step = lambda nav, step, log=None: (seq.append(step.get("name")) or
+                                                                  ((False, "không thấy chữ «X»") if step.get("name") in fail_on else (True, "ok")))
+            kk = lambda nm, **kw: dict({"type": "key", "name": nm}, **kw)
+            scr5 = {"id": "s5", "name": "Năm bước", "steps": [kk("a"), kk("b"), kk("bad"), kk("d"), kk("e")], "mode": "once", "loops": 1}
+            RG = runner.Runner(lambda n: FakeNav())
+            pr = lambda: RG.status()["G1"]["prog"]
+            ok(RG.start_machine("G1", grp, scr5) is True, "chạy kịch bản 5 bước")
+            RG.workers["G1"]["thread"].join(5)
+            p = pr()
+            ok(seq == ["a", "b", "bad"] and p["n"] == 5 and p["done"] == [0, 1] and p["bad"] == 2 and p["next"] == 2 and p["at"] is None
+               and "không thấy" in p["msg"] and p["types"] == runner.steps_sig(scr5["steps"]) and p["start"] == 0,
+               "dừng vì lỗi ở bước 3 → tiến độ (còn giữ sau khi máy dừng): bước 1–2 xong, bước 3 lỗi kèm lý do", (seq, p))
+            real_session = RG._session
+            RG._session = lambda n: (_ for _ in ()).throw(RuntimeError("board mất kết nối"))
+            ok(RG.start_machine("G1", grp, scr5, start_at=2) is True, "bấm «Chạy tiếp từ bước 3» lúc board mất kết nối → có khởi động")
+            RG.workers["G1"]["thread"].join(5)
+            ok((pr() or {}).get("bad") == 2 and "lỗi mở máy" in RG.status()["G1"]["status"],
+               "…không mở được máy → tiến độ cũ (dừng ở bước 3) VẪN CÒN, nút «Chạy tiếp» không biến mất", (pr(), RG.status()["G1"]["status"]))
+            RG.start_machine("G1", grp, dict(scr5, id="khac")); RG.workers["G1"]["thread"].join(5)
+            ok(RG.status()["G1"]["prog"] is None, "chạy KỊCH BẢN KHÁC (không mở được máy) → không mang tiến độ của kịch bản cũ sang", RG.status()["G1"]["prog"])
+            RG._session = real_session
+            RG.start_machine("G1", grp, scr5); RG.workers["G1"]["thread"].join(5)             # lại dừng ở bước 3 như cũ
+            fail_on.clear(); seq.clear()                                  # «xử lý tay» xong → chạy tiếp từ bước 3
+            ok(RG.start_machine("G1", grp, scr5, start_at=2) is True, "«Chạy tiếp từ bước 3» → chạy được")
+            RG.workers["G1"]["thread"].join(5)
+            p = pr()
+            ok(seq == ["bad", "d", "e"] and p["start"] == 2 and p["done"] == [2, 3, 4] and p["bad"] is None and p["next"] == 5,
+               "chạy tiếp từ bước 3 → KHÔNG làm lại bước 1–2; bước 3→5 xong", (seq, p))
+            ok("(chạy từ bước 3)" in RG.status()["G1"]["last_msg"] and RG.status()["G1"]["status"] == "xong", "kết quả ghi rõ chạy từ bước 3", RG.status()["G1"])
+            fail_on.add("b"); seq.clear()                                 # bước «bỏ qua nếu lỗi» trượt: ghi là bỏ qua, đi tiếp
+            RG.start_machine("G1", grp, dict(scr5, steps=[kk("a"), kk("b", optional=True), kk("c")])); RG.workers["G1"]["thread"].join(5)
+            p = pr()
+            ok(p["skip"] == [1] and p["done"] == [0, 2] and p["bad"] is None and p["next"] == 3, "bước «bỏ qua nếu lỗi» trượt → ghi «bỏ qua», không phải bước lỗi", p)
+            fail_on.clear(); seq.clear()                                  # bấm Dừng làm bước đang dở trả «không làm được» → KHÔNG phải bước lỗi
+            runner.engine.run_step = lambda nav, step, log=None: (seq.append(step.get("name")),
+                                                                  (RG.stop_machine("G1"), (False, "đã dừng theo yêu cầu (máy đang chờ admin xử lý màn hình lạ)"))[1]
+                                                                  if step.get("name") == "b" else (True, "ok"))[1]
+            RG.start_machine("G1", grp, dict(scr5, steps=[kk("a"), kk("b"), kk("c")])); RG.workers["G1"]["thread"].join(5)
+            p = pr()
+            ok(p["bad"] is None and p["next"] == 1 and p["done"] == [0], "bấm Dừng lúc máy đang chờ admin ở bước 2 → ghi «đã dừng trước bước 2», không tô đỏ là bước lỗi", p)
+            runner.engine.run_step = lambda nav, step, log=None: (seq.append(step.get("name")) or
+                                                                  ((False, "không thấy chữ «X»") if step.get("name") in fail_on else (True, "ok")))
+            ok(RG.start_machine("G1", grp, scr5, start_at=5) is False and RG.start_machine("G1", grp, scr5, start_at=-1) is False,
+               "chạy từ bước không có trong kịch bản (6 / âm) → không chạy")
+            ok(RG.start_machine("G1", grp, dict(scr5, mode="orders", orders={}), start_at=1) is False
+               and RG.start_machine("G1", dict(grp, mode="api", api={"pool": "p"}), None, start_at=1) is False,
+               "kịch bản / nhóm NHẬN ĐƠN không bao giờ chạy từ giữa (không nhảy vào giữa đơn của khách)")
+            ok(RG.start_machine("G1", grp, scr5, start_at="abc") is False and RG.start_machine("G1", grp, scr5, start_at=True) is False,
+               "bộ chạy tự kiểm số bước lạ (chữ / True) → không chạy, không ném lỗi")
+            import shutil, subprocess, json as _json, re as _re
+            node = shutil.which("node")
+            if node:                                                      # «dấu» các bước: giao diện (stepsSig) tính GIỐNG HỆT bộ chạy
+                src = open(os.path.join(os.path.dirname(HERE), "web", "app.js"), encoding="utf-8").read()
+                fn = _re.search(r"function stepsSig\(steps\) \{.*?\n\}", src, _re.S).group(0)
+                cases = [scr5["steps"], [{"type": "tap_text", "text": "Đăng nhập 😀 «Sign Players»"}, {"type": "launch", "app": "eFootball"},
+                                         {"type": "combo", "keys": "cmd a"}, {"type": "wait", "seconds": 2}, {"type": "tap", "x": 1, "y": 2}], []]
+                out = subprocess.run([node, "-e", fn + "; process.stdout.write(JSON.stringify(%s.map(stepsSig)))" % _json.dumps(cases)],
+                                     capture_output=True, text=True, timeout=30).stdout
+                ok(_json.loads(out or "null") == [runner.steps_sig(c) for c in cases], "«dấu» các bước: giao diện và bộ chạy tính ra giống hệt (kể cả chữ có dấu / emoji)", out)
+                ok(runner.steps_sig([kk("a"), kk("b")]) != runner.steps_sig([kk("b"), kk("a")]), "đổi chỗ hai bước cùng loại → «dấu» khác (không cho chạy tiếp nhầm bước)")
+            seq.clear()
+            RG.start_machine("G1", grp, dict(scr5, steps=[kk("a"), kk("b"), kk("c")], mode="loop", loops=2), start_at=1); RG.workers["G1"]["thread"].join(5)
+            ok(seq == ["b", "c", "a", "b", "c"], "kịch bản lặp: chỉ vòng ĐẦU chạy từ bước 2, vòng sau chạy từ đầu", seq)
+            slow = threading.Event(); seq.clear()
+            runner.engine.run_step = lambda nav, step, log=None: (seq.append(step.get("name")), slow.wait(3) if step.get("name") == "slow" else None, (True, "ok"))[2]
+            RG.start_machine("G1", grp, dict(scr5, steps=[kk("a"), kk("slow"), kk("c")]))
+            ok(until(lambda: (pr() or {}).get("at") == 1) and RG.status()["G1"]["running"], "đang làm bước 2 → tiến độ chỉ đúng bước 2 «đang chạy»", pr())
+            RG.stop_machine("G1"); slow.set(); RG.workers["G1"]["thread"].join(5)
+            p = pr()
+            ok(seq == ["a", "slow"] and p["at"] is None and p["bad"] is None and p["next"] == 2 and p["done"] == [0, 1],
+               "bấm Dừng giữa chừng → không còn bước «đang chạy»; chạy tiếp sẽ từ bước 3 (bước chưa làm)", (seq, p))
         finally:
             runner.engine.run_step = real_run_step
             runner.engine.time = _t
@@ -434,6 +508,9 @@ def main():
             r = gui.Api().group_run("G", ["M2"])
             ok(r["ok"] is False and "2 kịch bản" in r["error"], "nhóm nhiều kịch bản mà không nêu kịch bản → từ chối, không chạy gì", r)
             ok("M2" not in gui.RUNNER.workers, "…và không máy nào bị khởi động")
+            r1, r2, r3 = gui.Api().machine_run("G", "M2", "s1", 1), gui.Api().machine_run("G", "M2", "s1", "x"), gui.Api().machine_run("G", "M2", "s1", True)
+            ok(r1["ok"] is False and "không có bước 2" in r1["error"] and "có 1 bước" in r1["error"] and r2["ok"] is False and r3["ok"] is False
+               and "M2" not in gui.RUNNER.workers, "«chạy từ bước N» mà kịch bản không có bước đó / số lạ → từ chối, nói rõ kịch bản có mấy bước", (r1, r2, r3))
             # app cửa sổ (không --web): tên khác trỏ vào cùng iPhone với máy đang làm đơn của khách → bị bỏ qua, báo trong `held`
             real_udid, real_map = gui.MGR._udid, gui.MGR.board_map
             gui.MGR._udid = lambda n: {"M2": "udid-khach"}.get(n)

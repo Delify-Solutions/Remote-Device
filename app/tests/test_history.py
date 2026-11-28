@@ -157,6 +157,15 @@ def main():
         ok(len(res) == 3 and [(e["i"], e["n"], e["type"], e["ok"]) for e in ev2] == [(1, 3, "key", True), (2, 3, "tap_if", True), (3, 3, "wait", True)]
            and ev2[1]["what"].startswith("Nếu thấy chữ «Không có hộp thoại»"),
            "kịch bản thường: bước đếm 1…N; bước chạy qua HAI lớp (engine → apimode) chỉ ghi MỘT dòng", ev2)
+        t2.run_begin("kịch bản")
+        seen = []
+        res = engine.run_flow(m, [{"type": "key", "name": "enter"}, {"type": "key", "name": "tab"}, {"type": "wait", "seconds": 0}],
+                              log=lambda *a: None, start=1, on_step=lambda i, ok_, msg: seen.append((i, ok_)))
+        t2.run_end()
+        ev3 = [e for e in H.machine("iPhoneFarm-002") if e["ev"] == "step"][-2:]
+        ok([r["i"] for r in res] == [1, 2] and [(e["i"], e["n"]) for e in ev3] == [(2, 3), (3, 3)] and seen == [(1, None), (1, True), (2, None), (2, True)],
+           "«chạy tiếp từ bước 2»: bước 1 không làm; kết quả + lịch sử đánh số đúng vị trí trong kịch bản (2/3, 3/3); báo tiến độ lúc bắt đầu / xong từng bước",
+           (res, ev3, seen))
         t2.step_begin("Bước lẻ"); t2.step_end(True)
         lone = H.machine("iPhoneFarm-002")[-1]
         ok(lone["ev"] == "step" and lone["what"] == "Bước lẻ" and "run" not in lone and "i" not in lone, "bước lẻ ngoài lượt chạy vẫn được ghi (không thuộc lượt chạy nào, không đánh số)", lone)

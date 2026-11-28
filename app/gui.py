@@ -1148,7 +1148,9 @@ class Api:
             RUNNER.stop_group(g, bool(force), sid)          # không bao giờ gỡ «dừng chờ kiểm tra» (xem machine_ack)
         return {"ok": True}
 
-    def machine_run(self, group_id, name, script=None):
+    def machine_run(self, group_id, name, script=None, start_at=None):
+        """Chạy máy `name` theo nhóm / kịch bản. start_at (số thứ tự bước, 0 = bước 1): «chạy tiếp từ bước N» — chỉ với kịch bản 1 lần / lặp;
+        vòng đầu bỏ qua các bước trước N. Kịch bản nhận đơn không nhận (không bao giờ nhảy vào giữa đơn của khách)."""
         g = store.get_group(group_id)
         if not g:
             return {"ok": False, "error": "nhóm không tồn tại"}
@@ -1160,11 +1162,21 @@ class Api:
         sc = None if g.get("mode") == "api" else store.pick_script(g, script)
         if name not in (g.get("devices") or []):
             return {"ok": False, "error": "Máy «%s» không thuộc nhóm «%s»." % (name, g.get("name"))}
+        start = 0
+        if start_at not in (None, "", 0, "0"):
+            if sc is None or sc.get("mode") == "orders":
+                return {"ok": False, "error": "«Chạy từ bước N» chỉ dùng cho kịch bản chạy 1 lần / lặp lại — kịch bản nhận đơn luôn chạy từ đầu mỗi đơn."}
+            try:
+                start = int(start_at)
+            except (TypeError, ValueError):
+                start = -1
+            if isinstance(start_at, bool) or not 0 <= start < len(sc.get("steps") or []):
+                return {"ok": False, "error": "Kịch bản «%s» không có bước %s (có %d bước)." % (sc["name"], start_at if start < 0 else start + 1, len(sc.get("steps") or []))}
         held = self._held_what(g, [name], script).get(name)
         if held:
             return {"ok": False, "error": "Máy đang DỪNG CHỜ NGƯỜI KIỂM TRA (%s) — kiểm tra máy và xác nhận «Đã kiểm tra xong»%s rồi mới chạy việc khác trên máy này."
                                           % (held, " ở app dạng cửa sổ" if WEBDEV is not None else "")}
-        ok, why = CLAIMS.start([name], lambda: RUNNER.start_machine(name, g, sc))
+        ok, why = CLAIMS.start([name], lambda: RUNNER.start_machine(name, g, sc, start_at=start))
         if why:
             return {"ok": False, "error": why}
         if not ok:

@@ -49,13 +49,16 @@
     login_fields: [{ key: "username" }, { key: "password" }], otp: { enabled: true },
     missing_rules: ["Nạp gói THÀNH CÔNG"], required_phases: ["login", "purchase", "finish"] };
   let RUN = {};   // name -> {running, stopping, status, iter, last_ok, last_msg, group_id, mode, job, counts}
-  function mockRun(g, sc) {
+  function mockRun(g, sc, start) {
     const who = { group_name: g && g.name, script_id: sc && sc.id, script_name: sc && sc.name };
+    const steps = (sc && sc.steps) || [], s0 = Math.max(0, Math.min(Number(start) || 0, steps.length));
+    const prog = sc && sc.mode !== "orders" && steps.length ? { n: steps.length, types: typeof stepsSig === "function" ? stepsSig(steps) : "", iter: 1, start: s0,
+      at: Math.min(s0 + 1, steps.length - 1), done: steps.map((_, i) => i).filter(i => i >= s0 && i < Math.min(s0 + 1, steps.length - 1)), skip: [], bad: null, msg: "", next: Math.min(s0 + 1, steps.length - 1) } : null;
     return g && g.mode === "api"
       ? { ...who, running: true, stopping: false, mode: "api", group_id: g.id, iter: 2, status: "NG261124A008 · Đang mua 1050 eFootball Coins (1/1)",
           job: "NG261124A008", last_ok: true, last_msg: "NG261124A007: HOÀN TẤT", counts: { done: 2, failed: 1, review: 0 } }
       : { ...who, running: true, stopping: false, mode: (sc && sc.mode) || "once", group_id: g && g.id, iter: 1, status: "đang chạy · vòng 1",
-          last_ok: true, last_msg: "2/2 bước OK", counts: { done: 0, failed: 0, review: 0 } };
+          last_ok: true, last_msg: "2/2 bước OK", counts: { done: 0, failed: 0, review: 0 }, prog };
   }
   function mockStop(n, force) {
     const r = RUN[n]; if (!r) return;
@@ -158,7 +161,7 @@
       syncGroupFields(); return P({ ok: true, started, busy });
     },
     group_stop: (gid, force, script) => { const g = GROUPS.find(x => x.id === gid); (g ? g.devices : []).forEach(n => { const r = RUN[n]; if (r && r.group_id === gid && (!script || r.script_id === script)) mockStop(n, force); }); syncGroupFields(); return P({ ok: true }); },
-    machine_run: (gid, name, script) => { const g = GROUPS.find(x => x.id === gid); const sc = g && (g.scripts || []).find(x => x.id === script || x.name === script) || (g && (g.scripts || [])[0]); RUN[name] = mockRun(g, sc); syncGroupFields(); return P({ ok: true, started: true }); },
+    machine_run: (gid, name, script, start_at) => { const g = GROUPS.find(x => x.id === gid); const sc = g && (g.scripts || []).find(x => x.id === script || x.name === script) || (g && (g.scripts || [])[0]); RUN[name] = mockRun(g, sc, start_at); syncGroupFields(); return P({ ok: true, started: true }); },
     machine_ack: (name) => { const r = RUN[name]; if (!(r && !r.running && r.hold)) return P({ ok: false, error: "Máy không ở trạng thái chờ kiểm tra." }); r.hold = null; return P({ ok: true }); },
     machine_pause: (name) => { const r = RUN[name] = RUN[name] || { running: false, counts: {} }; r.parked = true; if (r.running) { r.pause_requested = true; r.paused = true; } r.status = "ĐANG DỪNG · xử lý tay rồi bấm Tiếp tục"; return P({ ok: true, running: !!r.running, in_use: false }); },
     machine_resume: (name) => { const r = RUN[name]; if (!(r && r.parked)) return P({ ok: false, error: "Máy không đang dừng." }); r.parked = false; r.pause_requested = false; r.paused = false; r.status = r.running ? "đang chạy · vòng 1" : "nghỉ"; return P({ ok: true }); },
