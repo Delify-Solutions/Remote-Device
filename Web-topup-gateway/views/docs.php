@@ -26,8 +26,8 @@ $H = $top + count($flow) * $rowH + 14;
 <link rel="stylesheet" href="/assets/vuexy/vendor/fonts/iconify-icons.css">
 <link rel="stylesheet" href="/assets/vuexy/vendor/css/core.css">
 <link rel="stylesheet" href="/assets/vuexy/css/demo.css">
-<link rel="stylesheet" href="/assets/app.css">
-<script src="/assets/theme.js"></script>
+<link rel="stylesheet" href="/assets/app.css?v=<?= (int) @filemtime(BASE . '/public/assets/app.css') ?>">
+<script src="/assets/theme.js?v=<?= (int) @filemtime(BASE . '/public/assets/theme.js') ?>"></script>
 </head>
 <body class="docs-body">
 <header class="docs-top">
@@ -280,6 +280,6 @@ PY) ?>
     </section>
   </div>
 </div>
-<script src="/assets/app.js"></script>
+<script src="/assets/app.js?v=<?= (int) @filemtime(BASE . '/public/assets/app.js') ?>"></script>
 </body>
 </html>

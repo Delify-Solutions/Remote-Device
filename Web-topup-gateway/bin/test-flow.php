@@ -1203,6 +1203,9 @@ ok(str_contains($docs['text'], 'wallet_short') && str_contains($docs['text'], 'a
     'tài liệu có phần ví: wallet_short, giá / loại tiền của gói, job.wallet, lỗi 422 already_bought');
 ok(http('GET', '/admin')['code'] === 302, '/admin chưa đăng nhập → chuyển về trang đăng nhập');
 ok(http('GET', '/admin/login')['code'] === 200, 'trang đăng nhập hiển thị');
+$lp = http('GET', '/admin/login')['text'];
+ok(preg_match('#/assets/app\.css\?v=[1-9]\d*"#', $lp) === 1 && preg_match('#/assets/theme\.js\?v=[1-9]\d*"#', $lp) === 1,
+    'đường dẫn CSS / JS kèm số phiên bản (sửa giao diện xong trình duyệt tự tải bản mới, không dùng bản cũ trong bộ nhớ đệm)');
 
 echo "\n" . ($fail === 0 ? "✅ TẤT CẢ $pass kiểm tra đều đạt.\n" : "❌ $fail lỗi / " . ($pass + $fail) . " kiểm tra.\n");
 exit($fail === 0 ? 0 : 1);

@@ -26,8 +26,8 @@ $initial = mb_strtoupper(mb_substr((string) ($user['username'] ?? 'A'), 0, 1));
 <link rel="stylesheet" href="/assets/vuexy/vendor/css/core.css">
 <link rel="stylesheet" href="/assets/vuexy/css/demo.css">
 <link rel="stylesheet" href="/assets/vuexy/vendor/libs/perfect-scrollbar/perfect-scrollbar.css">
-<link rel="stylesheet" href="/assets/app.css">
-<script src="/assets/theme.js"></script>
+<link rel="stylesheet" href="/assets/app.css?v=<?= (int) @filemtime(BASE . '/public/assets/app.css') ?>">
+<script src="/assets/theme.js?v=<?= (int) @filemtime(BASE . '/public/assets/theme.js') ?>"></script>
 <script src="/assets/vuexy/vendor/js/helpers.js"></script>
 <script src="/assets/vuexy/js/config.js"></script>
 </head>
@@ -119,6 +119,6 @@ $initial = mb_strtoupper(mb_substr((string) ($user['username'] ?? 'A'), 0, 1));
 <script src="/assets/vuexy/vendor/libs/hammer/hammer.js"></script>
 <script src="/assets/vuexy/vendor/js/menu.js"></script>
 <script src="/assets/vuexy/js/main.js"></script>
-<script src="/assets/app.js"></script>
+<script src="/assets/app.js?v=<?= (int) @filemtime(BASE . '/public/assets/app.js') ?>"></script>
 </body>
 </html>

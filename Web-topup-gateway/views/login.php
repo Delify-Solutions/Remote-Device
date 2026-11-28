@@ -8,8 +8,8 @@
 <link rel="stylesheet" href="/assets/vuexy/vendor/libs/node-waves/node-waves.css">
 <link rel="stylesheet" href="/assets/vuexy/vendor/css/core.css">
 <link rel="stylesheet" href="/assets/vuexy/css/demo.css">
-<link rel="stylesheet" href="/assets/app.css">
-<script src="/assets/theme.js"></script>
+<link rel="stylesheet" href="/assets/app.css?v=<?= (int) @filemtime(BASE . '/public/assets/app.css') ?>">
+<script src="/assets/theme.js?v=<?= (int) @filemtime(BASE . '/public/assets/theme.js') ?>"></script>
 </head>
 <body>
 <div class="auth-wrap">

@@ -114,3 +114,9 @@ svg.seq .t-gw { fill: var(--bs-primary); }
 
 /* nhãn trạng thái đặt cạnh tiêu đề trang: giữ cỡ chữ thường của nhãn */
 .page-head h4 .badge { font-size: .8125rem; }
+
+/* hộp (modal) có <form> bọc đầu / thân / chân hộp: form cũng phải là cột co giãn thì «modal-dialog-scrollable» mới cuộn được phần thân
+   (Bootstrap chỉ giới hạn chiều cao cho con TRỰC TIẾP của .modal-content) */
+.modal-content > form { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; max-height: 100%; }
+.modal-dialog-scrollable .modal-content > form { overflow: hidden; }
+.modal-dialog-scrollable .modal-content > form > .modal-body { overflow-y: auto; }
