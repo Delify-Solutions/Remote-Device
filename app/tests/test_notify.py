@@ -121,6 +121,47 @@ def main():
     ok(notify.link_trouble("Bluetooth chưa nối với iPhone") and notify.link_trouble("board không phản hồi (không rõ…)")
        and not notify.link_trouble("không thấy chữ «Shop»"), "phân loại lỗi board / Bluetooth")
 
+    print("== 3b. Tìm chat id (getUpdates) ==")
+    import io
+    upd = {"ok": True, "result": [
+        {"update_id": 1, "message": {"chat": {"id": 111, "type": "private", "first_name": "Hoàng", "last_name": "Anh"}, "text": "hi"}},
+        {"update_id": 2, "my_chat_member": {"chat": {"id": -1001234567890, "type": "supergroup", "title": "Farm admin"}}},
+        {"update_id": 3, "message": {"chat": {"id": 111, "type": "private", "first_name": "Hoàng"}, "text": "lần 2"}},
+        {"update_id": 4, "channel_post": {"chat": {"id": -1009876543210, "type": "channel", "title": "Kênh báo"}}},
+        {"update_id": 5, "callback_query": {"id": "x"}}]}
+    reqs = []
+
+    def up_open(req, timeout):
+        reqs.append(req.full_url)
+        return json.dumps(upd).encode()
+    tc = notify.Telegram(lambda: {"telegram_token": TOKEN}, opener=up_open)
+    chats, err = tc.chats()
+    ids = [c["id"] for c in chats]
+    ok(not err and sorted(ids) == sorted(["111", "-1001234567890", "-1009876543210"]) and reqs and "/getUpdates" in reqs[0]
+       and "my_chat_member" in urllib.parse.unquote(reqs[0]) and any(c["title"] == "Farm admin" and c["type"] == "supergroup" for c in chats),
+       "liệt kê chat đã nói chuyện với bot (người nhắn, nhóm VỪA KÉO bot vào, kênh), không trùng", chats)
+
+    def err_open(code, body):
+        def f(req, timeout):
+            raise urllib.error.HTTPError(req.full_url, code, "x", {}, io.BytesIO(json.dumps(body).encode()))
+        return f
+    ok("offset=-100" in reqs[0], "lấy 100 tin MỚI NHẤT (offset=-100), không phải 100 tin cũ nhất", reqs[0][:120])
+    ok(chats[0]["id"] == "-1009876543210" and chats[-1]["id"] in ("111", "-1001234567890"), "chat mới thấy gần nhất lên đầu", [c["id"] for c in chats])
+    for code, bd, want in ((409, {"description": "Conflict: can't use getUpdates method while webhook is active"}, "webhook"),
+                             (409, {"description": "Conflict: terminated by other getUpdates request"}, "chương trình khác"),
+                             (401, {"description": "x"}, "mã bot không đúng"), (404, {"description": "x"}, "mã bot không đúng")):
+        tc = notify.Telegram(lambda: {"telegram_token": TOKEN}, opener=err_open(code, dict(bd, ok=False)))
+        chats, err = tc.chats()
+        ok(not chats and want in err and TOKEN not in err, "Telegram lỗi %d → báo rõ «%s», không lộ mã bot" % (code, want), err)
+    os.environ["IPF_NO_TELEGRAM"] = "1"
+    reqs.clear()
+    ok(notify.Telegram(lambda: {"telegram_token": TOKEN}, opener=up_open).chats()[0] == [] and not reqs, "IPF_NO_TELEGRAM → «Tìm chat» không gọi Telegram thật")
+    os.environ.pop("IPF_NO_TELEGRAM", None)
+    ok(notify.Telegram(lambda: {}).chats() == ([], "chưa nhập mã bot"), "chưa có mã bot → báo")
+    tc = notify.Telegram(lambda: {"telegram_token": "999:saved"}, opener=up_open)
+    reqs.clear(); tc.chats(TOKEN)
+    ok(reqs and TOKEN in reqs[0], "dùng mã bot vừa nhập (chưa lưu) nếu có")
+
     print("== 4. Bộ chạy (runner) bắn đúng loại sự kiện ==")
     import runner as runmod, engine
     got = []
@@ -366,6 +407,8 @@ def main():
         r = api.telegram_save("", "@kenh_admin", None)
         ok(r.get("ok") and mem.get("telegram_token") == TOKEN and mem.get("telegram_chat") == "@kenh_admin", "để trống mã bot = giữ mã cũ", r)
         ok(api.telegram_save(None, "abc", None).get("ok") is False, "chat id sai dạng → không lưu")
+        r = api.telegram_chats("khong-phai-ma")
+        ok(r["ok"] is False and r["chats"] == [] , "«Tìm chat» với mã bot sai dạng → báo, không gọi Telegram", r)
     finally:
         gui.store.get_settings, gui.store.save_settings = saved_settings
         gui.TELEGRAM._settings = gui.store.get_settings

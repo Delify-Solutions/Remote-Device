@@ -581,6 +581,7 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
 ./.venv/bin/python app/tests/test_ocr.py          # bộ đọc chữ: Apple Vision + RapidOCR (chữ trên nền màu của game), ghép với tesseract
 ./.venv/bin/python app/tests/test_portable.py     # phần chạy được trên Windows: đường dẫn .venv, file .bat, tự dùng RapidOCR khi không có Vision
 ./.venv/bin/python app/tests/test_history.py      # «máy nào đang chạy bước nào» + lịch sử theo máy / theo đơn; không lọt thông tin đăng nhập
+./.venv/bin/python app/tests/test_ui_boot.py      # khởi động CẢ trang trong node (DOM giả): không hàm / biến nào bị gọi mà không tồn tại
 ./.venv/bin/python app/tests/test_ui_steps.py     # trình sửa kịch bản (chạy mã giao diện bằng node): câu của từng bước, ô «Lấy từ đơn», đổi cách chạy
 uv run --python 3.12 --with mcp app/tests/interop_sdk.py     # kiểm chéo với client của SDK MCP chính thức
 ./.venv/bin/python app/tests/smoke_device.py iPhoneFarm-01   # máy THẬT (tắt app trước): các bước của chế độ nhận đơn
@@ -745,9 +746,18 @@ Yêu cầu của chủ dự án:
 Làm theo 3 phần, cả 3 đã xong: Telegram, ảnh mẫu + tạm dừng tại bước, AI xử lý màn hình lạ.
 
 ### Thông báo Telegram (`app/notify.py`)
-- Cài đặt: trang «Nhóm & Kịch bản» → nút **Telegram**. Nhập mã bot (tạo ở @BotFather) và chat id (người, nhóm `-100…` hay `@kênh`).
-  Chọn loại sự kiện được bắn. Lưu xong tool tự gửi một tin thử. Lưu trong `app/data/settings.json` (không vào git); giao diện không bao
-  giờ nhận lại mã bot, chỉ phần số đầu.
+- Cài đặt: trang **«Thông báo & AI»** (menu bên trái; nút Telegram / AI ở trang «Nhóm & Kịch bản» cũng dẫn tới đây).
+  1. Nhắn @BotFather, `/newbot` → dán mã bot.
+  2. Kéo bot vào nhóm admin (hoặc nhắn cho bot), nhắn một tin bất kỳ trong đó.
+  3. Bấm **«Tìm chat»**: tool gọi `getUpdates` và liệt kê các người / nhóm / kênh vừa nói chuyện với bot (kể cả lúc VỪA KÉO bot vào nhóm),
+     bấm chọn là điền chat id. Bot đang dùng webhook thì báo rõ (tắt webhook mới đọc được).
+  4. Chọn loại sự kiện → Lưu: tool tự gửi một tin thử; nút «Gửi thử» gửi lại bất cứ lúc nào.
+
+  Lưu trong `app/data/settings.json` (không vào git); trang không bao giờ nhận lại mã bot, chỉ phần số đầu.
+  - «Tìm chat» lấy 100 tin MỚI NHẤT của bot (`offset=-100`). Bot mặc định không đọc tin thường trong nhóm: nhóm không hiện ra thì nhắn
+    `/start@tên_bot` trong nhóm, hoặc gỡ bot ra rồi kéo vào lại. Có chương trình khác đang đọc tin của bot (409) thì báo rõ.
+  - Quyết định: bản web cũng cấu hình được Telegram và «Tìm chat» (khi không có máy đang làm đơn của khách) — mã bot không bao giờ trả về
+    trang; danh sách chat chỉ có tên người / nhóm đã nói chuyện với bot.
 - 4 loại sự kiện, mặc định bật cả 4:
   - **Máy dừng chờ admin**: màn hình lạ AI không xử lý được (phần 2 / 3).
   - **Đơn cần đối soát**: máy nhận đơn dừng, GIỮ màn hình sau đơn của khách.
@@ -820,16 +830,16 @@ Làm theo 3 phần, cả 3 đã xong: Telegram, ảnh mẫu + tạm dừng tại
 - Kiểm thử: `./.venv/bin/python app/tests/test_screencheck.py`.
 
 ### AI xử lý màn hình lạ (`app/aiscreen.py`)
-- Cài đặt: trang «Nhóm & Kịch bản» → nút **AI màn hình lạ**. Gồm:
+- Cài đặt: trang **«Thông báo & AI»** → khung «AI xử lý màn hình lạ». Gồm:
   - bật / tắt;
-  - nhà cung cấp: Anthropic (Claude), hoặc OpenAI / máy chủ tương thích OpenAI;
-  - model (để trống = mặc định `claude-opus-5-5` / `gpt-5`);
-  - API key;
-  - địa chỉ máy chủ riêng (tuỳ chọn).
+  - chọn nhà cung cấp ĐANG DÙNG: Anthropic (Claude), hoặc OpenAI / máy chủ tương thích OpenAI (LM Studio, Ollama, OpenRouter…);
+  - MỖI nhà cung cấp có ô riêng và giữ key riêng (`ai_providers` trong settings.json), đổi qua lại không phải nhập lại key, key không bao
+    giờ bị chép sang nhà cung cấp khác: API key, model (để trống = mặc định `claude-opus-5-5` / `gpt-5`), địa chỉ máy chủ riêng (tuỳ chọn);
+  - nút «Thử hỏi AI». Cấu hình kiểu cũ (một bộ `ai_key` / `ai_model` / `ai_base_url`) vẫn đọc được, lưu lần sau thì chuyển sang kiểu mới.
 
   Lưu xong tool hỏi thử AI một ảnh quảng cáo vẽ sẵn và báo kết quả. Lưu trong `app/data/settings.json` (không vào git). Giao diện không
-  bao giờ nhận lại key (chỉ 4 ký tự cuối khi key dài ≥ 24 ký tự). Bản web không đổi được cấu hình này, không «thử» được, và đổi nhà cung cấp /
-  máy chủ thì phải nhập lại key.
+  bao giờ nhận lại key (chỉ 4 ký tự cuối khi key dài ≥ 24 ký tự). Bản web chỉ XEM được (không đổi, không «thử»). Đổi địa chỉ máy chủ
+  của một nhà cung cấp thì phải nhập lại key của nó.
 - Cần gói `anthropic` (Claude) hoặc `openai`. Windows: đã có trong `requirements-windows.txt`. Mac: `./.venv/bin/pip install "anthropic>=0.125,<2" "openai>=1.50,<3"` (đã thử 0.125.0 — bản này có tham số `fallbacks` mà tool dùng; bản quá cũ thiếu tham số này thì AI luôn lỗi và máy tạm dừng chờ admin).
   Thiếu gói thì AI báo lỗi rõ và máy tạm dừng chờ admin như khi không có AI.
 - **Cách chạy:** màn hình khác ảnh mẫu của bước (sau 8 giây chờ) → gửi AI ảnh màn hình hiện tại (cạnh dài 1280 px) + ảnh mẫu + mô tả bước +

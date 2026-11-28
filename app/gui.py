@@ -1363,39 +1363,71 @@ class Api:
                 return {"ok": False, "error": str(e)}
 
     # ---- AI xử lý màn hình lạ (quảng cáo / hộp thông báo) ----
-    def ai_screen_get(self):
-        c = aiscreen.config(store.get_settings())
-        k = c["key"]
-        return {"provider": c["provider"], "model": c["model"], "base_url": c["base_url"], "enabled": c["enabled"],
-                "has_key": bool(k), "key_hint": ("…" + k[-4:]) if len(k) >= 24 else ("đã lưu" if k else ""),
-                "usable": aiscreen.usable(c), "defaults": aiscreen.DEFAULT_MODEL}
+    @staticmethod
+    def _key_hint(k):
+        return ("…" + k[-4:]) if len(k) >= 24 else ("đã lưu" if k else "")
 
-    def ai_screen_save(self, provider=None, model=None, key=None, base_url=None, enabled=None):
-        """Lưu cấu hình AI. `key` để trống = giữ key đang lưu (chỉ khi KHÔNG đổi nhà cung cấp / máy chủ — đổi nơi gửi thì phải nhập lại key).
-        Không bao giờ trả key về giao diện."""
+    def ai_screen_get(self):
+        """Cấu hình AI cho trang «Thông báo & AI»: bật / tắt, nhà cung cấp đang dùng, và cấu hình RIÊNG của từng nhà cung cấp.
+        Không bao giờ trả key (chỉ 4 ký tự cuối khi key dài)."""
+        st = store.get_settings()
+        c = aiscreen.config(st)
+        provs = {p: {"has_key": bool(e["key"]), "key_hint": self._key_hint(e["key"]), "model": e["model"], "base_url": e["base_url"],
+                     "default_model": aiscreen.DEFAULT_MODEL[p]} for p, e in aiscreen.providers(st).items()}
+        return {"provider": c["provider"], "model": c["model"], "base_url": c["base_url"], "enabled": c["enabled"],
+                "has_key": bool(c["key"]), "key_hint": self._key_hint(c["key"]), "usable": aiscreen.usable(c),
+                "defaults": aiscreen.DEFAULT_MODEL, "providers": provs, "editable": WEBDEV is None}
+
+    def ai_settings_save(self, cfg):
+        """Lưu cả trang cấu hình AI: {"enabled", "active", "providers": {"anthropic": {model, key, base_url}, "openai": {…}}}.
+        Mỗi nhà cung cấp giữ key riêng; `key` để trống = giữ key đang lưu của nhà cung cấp đó — trừ khi đổi MÁY CHỦ của nó (khi đó phải nhập
+        lại: key cũ không tự gửi sang máy chủ mới). Không bao giờ trả key."""
         if WEBDEV is not None:
             # Ảnh màn hình (kể cả lúc làm đơn của khách) được gửi tới máy chủ AI này: bản web (có thể đang do AI điều khiển) không được đổi nơi gửi.
             return {"ok": False, "error": "Cấu hình AI chỉ đổi được ở app dạng cửa sổ (chạy `python app/gui.py` không kèm --web)."}
-        old = aiscreen.config(store.get_settings())
-        prov = str(provider or old["provider"]).strip().lower()
-        if prov not in aiscreen.DEFAULT_MODEL:
+        cfg = cfg if isinstance(cfg, dict) else {}
+        if not isinstance(cfg.get("providers") or {}, dict):
+            return {"ok": False, "error": "cấu hình AI sai dạng"}
+        st = store.get_settings()
+        cur = aiscreen.providers(st)
+        active = str(cfg.get("active") or aiscreen.config(st)["provider"]).strip().lower()
+        if active not in aiscreen.DEFAULT_MODEL:
             return {"ok": False, "error": "Nhà cung cấp AI chỉ có: anthropic, openai"}
-        url = str(base_url if base_url is not None else old["base_url"]).strip().rstrip("/")
-        if url and not re.match(r"^https?://[^\s/]+", url):
-            return {"ok": False, "error": "Địa chỉ máy chủ AI phải bắt đầu bằng http:// hoặc https://"}
-        mdl = str(model if model is not None else old["model"]).strip()
-        if mdl and not re.match(r"^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,99}$", mdl):
-            return {"ok": False, "error": "Tên model không hợp lệ"}
-        patch = {"ai_provider": prov, "ai_model": mdl, "ai_base_url": url}
-        new_key = str(key or "").strip()
-        if new_key:
-            patch["ai_key"] = new_key
-        elif old["key"] and (prov != old["provider"] or _origin(url) != _origin(old["base_url"])):
-            return {"ok": False, "error": "Đổi nhà cung cấp / máy chủ AI thì phải NHẬP LẠI API key (key cũ không tự gửi sang nơi mới)."}
-        if enabled is not None:
-            patch["ai_screen"] = bool(enabled)
+        out = {}
+        for p, old in cur.items():
+            e = (cfg.get("providers") or {}).get(p)
+            if not isinstance(e, dict):
+                out[p] = old
+                continue
+            url = str(e.get("base_url", old["base_url"]) or "").strip().rstrip("/")
+            if url and not re.match(r"^https?://[^\s/]+", url):
+                return {"ok": False, "error": "%s: địa chỉ máy chủ phải bắt đầu bằng http:// hoặc https://" % p}
+            mdl = str(e.get("model", old["model"]) or "").strip()
+            if mdl and not re.match(r"^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,99}$", mdl):
+                return {"ok": False, "error": "%s: tên model không hợp lệ" % p}
+            key = str(e.get("key") or "").strip()
+            if key and not re.match(r"^[\x21-\x7e]{8,300}$", key):
+                return {"ok": False, "error": "%s: API key có ký tự lạ (dấu cách, xuống dòng…) — dán lại đúng key" % p}
+            if not key:
+                key = old["key"]
+                if key and _origin(url) != _origin(old["base_url"]):
+                    return {"ok": False, "error": "%s: đổi máy chủ thì phải NHẬP LẠI API key (key cũ không tự gửi sang máy chủ mới)." % p}
+            out[p] = {"key": key, "model": "" if mdl == aiscreen.DEFAULT_MODEL[p] else mdl, "base_url": url}
+        patch = {"ai_providers": out, "ai_provider": active, "ai_key": None, "ai_model": None, "ai_base_url": None}
+        if cfg.get("enabled") is not None:
+            patch["ai_screen"] = bool(cfg.get("enabled"))
         store.save_settings(patch)
         return dict(self.ai_screen_get(), ok=True)
+
+    def ai_screen_save(self, provider=None, model=None, key=None, base_url=None, enabled=None):
+        """(Kiểu cũ) lưu cấu hình MỘT nhà cung cấp và chọn nó làm nhà cung cấp đang dùng — xem ai_settings_save."""
+        prov = str(provider or aiscreen.config(store.get_settings())["provider"]).strip().lower()
+        e = {"key": key or ""}
+        if model is not None:
+            e["model"] = model
+        if base_url is not None:
+            e["base_url"] = base_url
+        return self.ai_settings_save({"active": prov, "enabled": enabled, "providers": {prov: e}})
 
     def ai_screen_test(self):
         """Hỏi AI một lần với một ảnh thử (vẽ sẵn một hộp «Special offer» có nút X) — để biết key / model / máy chủ dùng được.
@@ -1446,6 +1478,15 @@ class Api:
             patch["telegram_events"] = [e for e in (events or []) if e in notify.EVENTS]
         store.save_settings(patch)
         return dict(self.telegram_get(), ok=True)
+
+    def telegram_chats(self, token=None):
+        """Các chat vừa nói chuyện với bot (người nhắn cho bot, nhóm / kênh vừa kéo bot vào) — để chọn chat id. `token` trống = mã đang lưu.
+        Không lưu gì, không trả mã bot."""
+        tok = str(token or "").strip()
+        if tok and not re.match(r"^\d{5,}:[A-Za-z0-9_-]{20,}$", tok):
+            return {"ok": False, "error": "Mã bot không đúng dạng — lấy ở @BotFather, dạng 123456789:AA…", "chats": []}
+        chats, err = TELEGRAM.chats(tok or None)
+        return {"ok": not err, "error": err, "chats": chats}
 
     def telegram_test(self):
         ok, err = TELEGRAM.send_now("✅ iPhone Farm: thử thông báo — nếu bạn đọc được tin này thì cấu hình Telegram đã đúng.")

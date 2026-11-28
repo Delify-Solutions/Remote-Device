@@ -105,7 +105,7 @@
     tools: AI_TOOLS.map(([name, cli, help, read_only]) => ({ name, cli, help, read_only })),
   });
   const TG = { token: "", chat: "", events: ["paused", "review", "failed", "link"] };
-  const AIS = { provider: "anthropic", model: "", key: "", base_url: "", enabled: true };
+  const AIS = { provider: "anthropic", enabled: true, p: { anthropic: { key: "", model: "", base_url: "" }, openai: { key: "", model: "", base_url: "" } } };
   window.pywebview = { api: {
     sys_overview: () => P(OV),
     sys_install_pip: (n) => P({ ok: true, log: "Collecting pytesseract…\nSuccessfully installed pytesseract-0.3.13" }),
@@ -185,15 +185,24 @@
                                              return P({ ok: true, has_token: !!TG.token, chat: TG.chat, events: TG.events }); },
     screen_capture: (n) => P({ ok: true, screen: { v: 1, w: 1334, h: 750, texts: ["home", "shop", "extras"],
                                                   img: "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=" } }),
-    ai_screen_get: () => P({ provider: AIS.provider, model: AIS.model || (AIS.provider === "openai" ? "gpt-5" : "claude-opus-5-5"), base_url: AIS.base_url,
-                             enabled: AIS.enabled, has_key: !!AIS.key, key_hint: AIS.key ? (AIS.key.length >= 24 ? "…" + AIS.key.slice(-4) : "đã lưu") : "",
-                             usable: AIS.enabled && !!AIS.key, defaults: { anthropic: "claude-opus-5-5", openai: "gpt-5" } }),
-    ai_screen_save: (provider, model, key, base_url, enabled) => {
-      if (!key && AIS.key && (provider !== AIS.provider || (base_url || "") !== (AIS.base_url || "")))
-        return P({ ok: false, error: "Đổi nhà cung cấp / máy chủ AI thì phải NHẬP LẠI API key (key cũ không tự gửi sang nơi mới)." });
-      Object.assign(AIS, { provider, model, base_url, enabled }); if (key) AIS.key = key;
-                                                                   return P({ ok: true, usable: AIS.enabled && !!AIS.key, enabled: AIS.enabled }); },
-    ai_screen_test: () => P({ ok: true, kind: "ad", reason: "Hộp quảng cáo «Special offer»", close: "X", x: 945, y: 185, secs: 3.2, model: AIS.model || "claude-opus-5-5" }),
+    ai_screen_get: () => { const prov = (p) => ({ has_key: !!AIS.p[p].key, key_hint: AIS.p[p].key ? (AIS.p[p].key.length >= 24 ? "…" + AIS.p[p].key.slice(-4) : "đã lưu") : "",
+                                                   model: AIS.p[p].model, base_url: AIS.p[p].base_url, default_model: { anthropic: "claude-opus-5-5", openai: "gpt-5" }[p] });
+                           const a = AIS.p[AIS.provider];
+                           return P({ provider: AIS.provider, model: a.model || { anthropic: "claude-opus-5-5", openai: "gpt-5" }[AIS.provider], base_url: a.base_url,
+                                      enabled: AIS.enabled, has_key: !!a.key, usable: AIS.enabled && !!a.key, editable: true,
+                                      defaults: { anthropic: "claude-opus-5-5", openai: "gpt-5" }, providers: { anthropic: prov("anthropic"), openai: prov("openai") } }); },
+    ai_settings_save: (cfg) => {
+      for (const p of ["anthropic", "openai"]) {
+        const e = (cfg.providers || {})[p]; if (!e) continue;
+        if (!e.key && AIS.p[p].key && (e.base_url || "") !== (AIS.p[p].base_url || "")) return P({ ok: false, error: p + ": đổi máy chủ thì phải NHẬP LẠI API key." });
+        AIS.p[p] = { key: e.key || AIS.p[p].key, model: e.model, base_url: e.base_url };
+      }
+      AIS.provider = cfg.active || AIS.provider; if (cfg.enabled != null) AIS.enabled = !!cfg.enabled;
+      return window.pywebview.api.ai_screen_get().then(r => Object.assign(r, { ok: true }));
+    },
+    ai_screen_test: () => P({ ok: true, kind: "ad", reason: "Hộp quảng cáo «Special offer»", close: "X", x: 945, y: 185, secs: 3.2, model: "claude-opus-5-5" }),
+    telegram_chats: (token) => P(token || TG.token ? { ok: true, error: "", chats: [{ id: "-1001234567890", title: "Farm admin", type: "supergroup" }, { id: "123456789", title: "Hoàng Anh", type: "private" }] }
+                                                   : { ok: false, error: "chưa nhập mã bot", chats: [] }),
     telegram_test: () => P(TG.token && TG.chat ? { ok: true, error: "" } : { ok: false, error: "chưa nhập mã bot và chat id" }),
     gateway_sync: () => P({ configured: !!GWCFG.key, ok: GWCFG.key ? true : null, at: Date.now() / 1000, error: "", devices: 2, idle: 1, scripts: 1, sent: 1 }),
     gateway_pools: () => P(GWCFG.url && GWCFG.key ? { ok: true, pools: GWPOOLS } : { ok: false, error: "Chưa cấu hình", pools: [] }),

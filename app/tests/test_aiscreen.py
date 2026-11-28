@@ -347,18 +347,44 @@ def main():
         mem.clear()
         r = api.ai_screen_save("anthropic", "", "sk-ant-THISISAFAKEKEY-1234567890", "", True)
         ok(api.ai_screen_get()["key_hint"] == "…7890", "key dài → chỉ hiện 4 ký tự cuối", api.ai_screen_get()["key_hint"])
-        ok(r.get("ok") and mem.get("ai_key") == "sk-ant-THISISAFAKEKEY-1234567890" and "THISISAFAKEKEY" not in json.dumps(r)
+        ok(r.get("ok") and mem["ai_providers"]["anthropic"]["key"] == "sk-ant-THISISAFAKEKEY-1234567890" and "THISISAFAKEKEY" not in json.dumps(r)
            and "THISISAFAKEKEY" not in json.dumps(api.ai_screen_get()) and r["usable"], "lưu key; lệnh trả về KHÔNG chứa key", r)
         r = api.ai_screen_save("openai", "", "", "", True)
-        ok(r.get("ok") is False and "NHẬP LẠI" in r["error"], "đổi nhà cung cấp mà không nhập lại key → từ chối (key cũ không tự gửi sang nơi mới)", r)
+        ok(r.get("ok") and r["provider"] == "openai" and not r["usable"] and not mem["ai_providers"]["openai"]["key"]
+           and mem["ai_providers"]["anthropic"]["key"].startswith("sk-ant-"),
+           "chuyển sang OpenAI chưa có key → lưu, chưa dùng được; key Anthropic KHÔNG bị chép sang OpenAI, vẫn giữ cho Anthropic", r)
+        r = api.ai_screen_save("anthropic", None, "", None, True)
+        ok(r.get("ok") and r["usable"] and r["provider"] == "anthropic", "chuyển lại Anthropic → dùng lại key cũ của nó, không phải nhập lại", r)
         r = api.ai_screen_save("anthropic", "", "", "https://ai.cua-ai-do.example/v1", True)
         ok(r.get("ok") is False, "đổi máy chủ mà không nhập lại key → từ chối", r)
         ok(api.ai_screen_save("anthropic", "model bad!", "", "", True).get("ok") is False and api.ai_screen_save("la", "", "x", "", True).get("ok") is False
            and api.ai_screen_save("openai", "", "x", "ftp://a", True).get("ok") is False, "model / nhà cung cấp / địa chỉ sai dạng → không lưu")
         r = api.ai_screen_save("anthropic", "claude-sonnet-5-5", "", "", False)
-        ok(r.get("ok") and mem.get("ai_model") == "claude-sonnet-5-5" and mem.get("ai_screen") is False and not r["usable"], "đổi model, tắt AI (giữ key)", r)
+        ok(r.get("ok") and mem["ai_providers"]["anthropic"]["model"] == "claude-sonnet-5-5" and mem.get("ai_screen") is False and not r["usable"]
+           and mem["ai_providers"]["anthropic"]["key"], "đổi model, tắt AI (giữ key)", r)
+        r = api.ai_settings_save({"active": "openai", "enabled": True, "providers": {
+            "anthropic": {"model": "claude-opus-5-5", "key": "", "base_url": ""},
+            "openai": {"model": "llava", "key": "sk-local-123", "base_url": "http://127.0.0.1:1234/v1"}}})
+        pv = mem["ai_providers"]
+        ok(r.get("ok") and r["provider"] == "openai" and r["usable"] and pv["openai"]["base_url"] == "http://127.0.0.1:1234/v1"
+           and pv["anthropic"]["model"] == "" and pv["anthropic"]["key"] and "sk-local-123" not in json.dumps(r),
+           "trang cấu hình lưu cả hai nhà cung cấp một lần; model trùng mặc định thì lưu trống (luôn theo mặc định)", r)
+        r = api.ai_settings_save({"active": "openai", "providers": {"openai": {"model": "llava", "key": "", "base_url": "https://khac.example/v1"}}})
+        ok(r.get("ok") is False and "NHẬP LẠI" in r["error"] and mem["ai_providers"]["openai"]["base_url"] == "http://127.0.0.1:1234/v1",
+           "đổi máy chủ của một nhà cung cấp mà không nhập lại key → từ chối (key không tự gửi sang máy chủ mới)", r)
+        ok(api.ai_settings_save({"providers": ["x"]}).get("ok") is False, "cấu hình sai dạng → báo lỗi, không ném")
+        r = api.ai_settings_save({"active": "anthropic", "providers": {"anthropic": {"key": "sk-ant-abc\nX-Evil: 1", "model": "", "base_url": ""}}})
+        ok(r.get("ok") is False and "ký tự lạ" in r["error"], "API key có xuống dòng / dấu cách → không lưu", r)
+        mem.clear(); mem.update(ai_provider="openai", ai_key="sk-cu-1234567890", ai_model="gpt-4.1")
+        g = api.ai_screen_get()
+        ok(g["provider"] == "openai" and g["providers"]["openai"]["has_key"] and g["providers"]["openai"]["model"] == "gpt-4.1"
+           and not g["providers"]["anthropic"]["has_key"], "cấu hình kiểu cũ (một bộ key) vẫn đọc được — thuộc nhà cung cấp đang chọn", g)
+        mem.clear(); mem.update(ai_key="sk-ant-THISISAFAKEKEY-1234567890", ai_provider="anthropic")
         gui.WEBDEV = object()
-        ok(api.ai_screen_save("anthropic", "", "k2", "", True).get("ok") is False and mem.get("ai_key") != "k2", "bản web → không đổi được cấu hình AI")
+        before = json.dumps(mem, sort_keys=True)
+        ok(api.ai_screen_save("anthropic", "", "sk-ant-WEB-ATTEMPT-123456", "", True).get("ok") is False and json.dumps(mem, sort_keys=True) == before,
+           "bản web → không đổi được cấu hình AI (không ghi gì)")
+        ok(api.ai_screen_get()["editable"] is False, "bản web → trang báo «chỉ xem»")
         ok(api.ai_screen_test().get("ok") is False, "bản web → không «thử» AI (mỗi lần hỏi đều tốn tiền)")
         gui.WEBDEV = web
         mem.clear()

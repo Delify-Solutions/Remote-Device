@@ -79,13 +79,31 @@ class AIError(Exception):
     pass
 
 
+def providers(settings: dict) -> dict:
+    """Cấu hình RIÊNG của từng nhà cung cấp: {"anthropic": {key, model, base_url}, "openai": {…}} — mỗi nhà cung cấp giữ key của nó, đổi qua
+    lại không phải nhập lại. Cấu hình kiểu cũ (một bộ ai_key / ai_model / ai_base_url) được coi là của nhà cung cấp `ai_provider`."""
+    s = settings or {}
+    raw = s.get("ai_providers") if isinstance(s.get("ai_providers"), dict) else {}
+    out = {}
+    for p in DEFAULT_MODEL:
+        e = raw.get(p) if isinstance(raw.get(p), dict) else {}
+        out[p] = {"key": str(e.get("key") or "").strip(), "model": str(e.get("model") or "").strip(),
+                  "base_url": str(e.get("base_url") or "").strip().rstrip("/")}
+    old = str(s.get("ai_provider") or "anthropic").strip().lower()
+    if old in out and not raw.get(old) and (s.get("ai_key") or s.get("ai_model") or s.get("ai_base_url")):
+        out[old] = {"key": str(s.get("ai_key") or "").strip(), "model": str(s.get("ai_model") or "").strip(),
+                    "base_url": str(s.get("ai_base_url") or "").strip().rstrip("/")}
+    return out
+
+
 def config(settings: dict) -> dict:
+    """Cấu hình của nhà cung cấp ĐANG DÙNG (`ai_provider`)."""
     s = settings or {}
     prov = str(s.get("ai_provider") or "anthropic").strip().lower()
     if prov not in DEFAULT_MODEL:
         prov = "anthropic"
-    return {"provider": prov, "model": str(s.get("ai_model") or "").strip() or DEFAULT_MODEL[prov],
-            "key": str(s.get("ai_key") or "").strip(), "base_url": str(s.get("ai_base_url") or "").strip().rstrip("/"),
+    e = providers(s)[prov]
+    return {"provider": prov, "model": e["model"] or DEFAULT_MODEL[prov], "key": e["key"], "base_url": e["base_url"],
             "enabled": s.get("ai_screen", True) is not False}
 
 

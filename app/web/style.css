@@ -680,3 +680,16 @@ html.ipf-menu-off.layout-navbar-fixed .layout-navbar.navbar-detached { inline-si
 }
 
 @media (prefers-reduced-motion: reduce) { .flow-ops, .flow-ins, .ed-log-caret { transition: none; } }
+
+/* ---------- trang «Thông báo & AI» ---------- */
+.tg-steps { padding-left: 1.2rem; margin-bottom: 1rem; font-size: .86rem; color: var(--bs-secondary-color); }
+.tg-steps li { margin-bottom: .25rem; }
+.tg-chats { display: grid; gap: .35rem; }
+.tg-chat { display: flex; align-items: center; gap: .55rem; padding: .45rem .7rem; border: 1px solid var(--bs-border-color);
+  border-radius: .45rem; cursor: pointer; min-width: 0; }
+.tg-chat > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tg-chat:has(input:checked) { border-color: var(--bs-primary); background: rgba(var(--bs-primary-rgb), .08); }
+.aip-prov { border: 1px solid var(--bs-border-color); border-radius: .55rem; padding: .7rem .85rem; margin-bottom: .6rem; }
+.aip-prov.is-active { border-color: var(--bs-primary); box-shadow: 0 0 0 1px var(--bs-primary) inset; }
+.aip-head { display: flex; align-items: center; gap: .55rem; cursor: pointer; margin: 0; flex-wrap: wrap; }
+.aip-fields { margin-top: .6rem; }

@@ -100,6 +100,48 @@ class Telegram:
             return False, "đang chạy kiểm thử (IPF_NO_TELEGRAM) — không gửi tin thật"
         return self._send(c, text, photo)
 
+    def chats(self, token=None):
+        """Các chat đã nói chuyện với bot gần đây (người nhắn cho bot, nhóm / kênh có bot — kể cả lúc VỪA KÉO bot vào nhóm), để chọn chat id
+        khỏi phải mở getUpdates bằng tay. Trả (danh sách [{id, title, type}], lỗi). Không bao giờ trả mã bot trong lỗi."""
+        tok = str(token or "").strip() or self.config()["token"]
+        if not tok:
+            return [], "chưa nhập mã bot"
+        if os.environ.get("IPF_NO_TELEGRAM"):
+            return [], "đang chạy kiểm thử (IPF_NO_TELEGRAM) — không gọi Telegram thật"
+        try:
+            req = urllib.request.Request("%s/bot%s/getUpdates?%s" % (API, tok, urllib.parse.urlencode(
+                # offset=-100: 100 tin MỚI NHẤT (không có offset thì là 100 tin CŨ NHẤT chưa xác nhận — bot bận thì nhóm vừa kéo vào bị lọt)
+                {"offset": -100, "limit": 100, "timeout": 0,
+                 "allowed_updates": json.dumps(["message", "channel_post", "my_chat_member", "chat_member"])})))
+            raw = self._open(req, TIMEOUT)
+            res = json.loads(raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw)
+        except urllib.error.HTTPError as e:
+            try:
+                desc = json.loads(e.read().decode("utf-8", "replace")).get("description") or ""
+            except Exception:
+                desc = ""
+            if e.code == 409:
+                if "webhook" in desc.lower():
+                    return [], "bot đang dùng webhook nên không đọc được tin — tắt webhook của bot rồi thử lại"
+                return [], _clean("bot đang được một chương trình khác đọc tin (%s) — tắt chương trình đó rồi thử lại" % (desc or "409"), tok)
+            if e.code in (401, 404):
+                return [], "mã bot không đúng"
+            return [], _clean("Telegram báo lỗi %s%s" % (e.code, (": " + desc) if desc else ""), tok)
+        except Exception as e:
+            return [], _clean("không gọi được Telegram: %s" % e, tok)
+        if not res.get("ok"):
+            return [], _clean(res.get("description") or "Telegram từ chối", tok)
+        found = {}
+        for u in res.get("result") or []:
+            for k in ("message", "edited_message", "channel_post", "my_chat_member", "chat_member"):
+                ch = (u.get(k) or {}).get("chat") if isinstance(u.get(k), dict) else None
+                if not isinstance(ch, dict) or "id" not in ch:
+                    continue
+                title = ch.get("title") or " ".join(x for x in (ch.get("first_name"), ch.get("last_name")) if x) or ch.get("username") or ""
+                found.pop(ch["id"], None)
+                found[ch["id"]] = {"id": str(ch["id"]), "title": str(title)[:80], "type": str(ch.get("type") or "")}
+        return list(found.values())[::-1], ""                # mới thấy gần nhất lên đầu (dict giữ thứ tự lần GHI cuối: xoá rồi ghi lại)
+
     def _ensure_worker(self):
         with self._lock:
             if self._thread is not None and self._thread.is_alive():

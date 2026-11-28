@@ -91,6 +91,13 @@
         </li>
         <li class="menu-header small"><span class="menu-header-text">Tự động hoá</span></li>
         <li class="menu-item">
+          <a class="menu-link app-nav" data-view="alerts" href="javascript:void(0)">
+            <i class="menu-icon icon-base ti tabler-bell-cog"></i>
+            <div>Thông báo &amp; AI</div>
+            <span class="badge rounded-pill bg-label-secondary ms-auto" id="nav-alerts-state">—</span>
+          </a>
+        </li>
+        <li class="menu-item">
           <a class="menu-link app-nav" data-view="ai" href="javascript:void(0)">
             <i class="menu-icon icon-base ti tabler-robot"></i>
             <div>Kết nối AI</div>
@@ -277,6 +284,21 @@
               <button class="btn btn-primary" id="btn-ai-refresh"><i class="ti tabler-refresh me-1"></i>Tải lại</button>
             </div>
             <div id="ai-body"><div class="api-note">Đang tải…</div></div>
+          </section>
+
+          <!-- ---------- VIEW: THÔNG BÁO & AI (Telegram cho admin + AI xử lý màn hình lạ) ---------- -->
+          <section class="view" id="view-alerts">
+            <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+              <div>
+                <h4 class="mb-1">Thông báo &amp; AI</h4>
+                <small class="text-muted">Telegram báo cho admin khi máy cần người; AI xử lý quảng cáo / hộp thông báo trước khi tạm dừng máy.</small>
+              </div>
+              <button class="btn btn-label-secondary" id="btn-alerts-refresh"><i class="ti tabler-refresh me-1"></i>Tải lại</button>
+            </div>
+            <div class="row g-4">
+              <div class="col-xl-6"><div class="card h-100"><div class="card-body" id="tg-body"><div class="api-note">Đang tải…</div></div></div></div>
+              <div class="col-xl-6"><div class="card h-100"><div class="card-body" id="aip-body"><div class="api-note">Đang tải…</div></div></div></div>
+            </div>
           </section>
 
           <!-- ---------- VIEW: THEO DÕI (máy nào đang chạy bước nào + lịch sử theo máy / theo đơn) ---------- -->
@@ -627,5 +649,6 @@
 <!-- App -->
 <script src="app.js"></script>
 <script src="ai.js"></script>
+<script src="alerts.js"></script>
 </body>
 </html>

@@ -167,7 +167,7 @@ function showView(name) {
   const was = ($(".view.active") || {}).id;
   $$(".app-nav").forEach(b => b.closest(".menu-item").classList.toggle("active", b.dataset.view === name));
   $$(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
-  const titles = { overview: "Tổng quan", devices: "Thiết bị", esp: "ESP32", flows: "Nhóm & Kịch bản", ai: "Kết nối AI", monitor: "Theo dõi" };
+  const titles = { overview: "Tổng quan", devices: "Thiết bị", esp: "ESP32", flows: "Nhóm & Kịch bản", ai: "Kết nối AI", monitor: "Theo dõi", alerts: "Thông báo & AI" };
   const pt = document.getElementById("page-title"); if (pt) pt.textContent = titles[name] || "";
   if (name === "overview") loadOverview();
   if (name === "flows") {
@@ -179,6 +179,7 @@ function showView(name) {
   if (name === "monitor") startMonitor(); else stopMonitor();
   if (name === "esp" && !ESP_SCANNED) espScan();   // tự quét lần đầu mở tab ESP
   if (name === "ai") loadAI();
+  if (name === "alerts") loadAlerts();
 }
 
 /* =========================================================
@@ -2483,66 +2484,7 @@ async function gatewaySettings() {
   await loadGateway();
 }
 
-// Thông báo Telegram cho admin: mã bot + chat id + loại sự kiện được bắn. Mã bot không bao giờ được gửi ngược về giao diện.
-async function telegramSettings() {
-  let c = {};
-  try { c = await API().telegram_get(); } catch (e) {}
-  const on = new Set(c.events || []);
-  const r = await askForm("Thông báo Telegram",
-    "Tạo bot ở @BotFather → lấy mã bot. Chat id: nhắn cho bot một tin rồi mở api.telegram.org/bot<mã>/getUpdates (nhóm thì thêm bot vào nhóm, id bắt đầu bằng -100). Lưu trên máy này.", [
-    { key: "token", label: "Mã bot", type: "password", value: "",
-      placeholder: c.has_token ? `để trống = giữ mã đang lưu (${c.token_hint})` : "123456789:AA…" },
-    { key: "chat", label: "Chat id nhận thông báo", value: c.chat || "", placeholder: "123456789 hoặc -100… hoặc @ten_kenh" },
-    ...(c.all_events || []).map(ev => ({ key: "ev_" + ev.key, label: ev.label, type: "select", value: on.has(ev.key) ? "1" : "0",
-                                          options: [{ value: "1", label: "Có báo" }, { value: "0", label: "Không báo" }] })),
-  ]);
-  if (!r) return;
-  // không tải được danh sách loại sự kiện → gửi null (= giữ nguyên lựa chọn đã lưu), không gửi [] (= tắt hết)
-  const events = c.all_events ? c.all_events.filter(ev => r["ev_" + ev.key] === "1").map(ev => ev.key) : null;
-  try {
-    const res = await API().telegram_save(r.token, r.chat, events);
-    if (!res || !res.ok) { toast("Chưa lưu: " + ((res && res.error) || "?"), "bad"); return; }
-    if (res.has_token && res.chat) {
-      const t = await API().telegram_test();
-      if (t && t.ok) toast("Đã lưu — đã gửi tin thử tới Telegram", "ok");
-      else toast("Đã lưu nhưng gửi thử KHÔNG được: " + ((t && t.error) || "?"), "bad");
-    } else toast("Đã lưu — còn thiếu " + (res.has_token ? "chat id" : "mã bot") + " nên chưa gửi thông báo được", "warn");
-  } catch (e) { toast("Lỗi: " + e, "bad"); }
-  loadTelegram();
-}
-
-// AI xem MÀN HÌNH LẠ: màn hình khác ảnh mẫu của bước → hỏi AI có phải quảng cáo / hộp thông báo không, bấm nút đóng / bỏ qua; không được
-// thì máy tạm dừng chờ admin. API key không bao giờ được gửi ngược về giao diện.
-async function aiScreenSettings() {
-  let c = {};
-  try { c = await API().ai_screen_get(); } catch (e) {}
-  const d = c.defaults || { anthropic: "claude-opus-5-5", openai: "gpt-5" };
-  const r = await askForm("AI xử lý màn hình lạ",
-    "Khi màn hình khác ảnh mẫu của bước, tool gửi ảnh màn hình (kể cả lúc làm đơn của khách) cho AI hỏi có phải quảng cáo / hộp thông báo không và nút nào đóng được; tool bấm nút đó rồi so lại. Không xử lý được thì máy tạm dừng + báo Telegram. Tốn tiền theo lần hỏi (chỉ hỏi khi gặp màn hình lạ).", [
-    { key: "enabled", type: "select", label: "Dùng AI", value: c.enabled === false ? "0" : "1",
-      options: [{ value: "1", label: "Có — hỏi AI trước khi tạm dừng máy" }, { value: "0", label: "Không — màn hình lạ là tạm dừng chờ admin luôn" }] },
-    { key: "provider", type: "select", label: "Nhà cung cấp", value: c.provider || "anthropic",
-      options: [{ value: "anthropic", label: "Anthropic (Claude)" }, { value: "openai", label: "OpenAI — hoặc máy chủ tương thích OpenAI" }] },
-    { key: "model", label: `Model (để trống = mặc định: ${d.anthropic} / ${d.openai})`, value: c.model || "", placeholder: d.anthropic },
-    { key: "key", label: "API key", type: "password", value: "", placeholder: c.has_key ? `để trống = giữ key đang lưu (${c.key_hint})` : "sk-…" },
-    { key: "base_url", label: "Địa chỉ máy chủ riêng (tuỳ chọn — để trống = máy chủ chính thức). Anthropic: không ghi /v1; OpenAI / tương thích: thường kết thúc bằng /v1", value: c.base_url || "", placeholder: "để trống" },
-  ]);
-  if (!r) return;
-  try {
-    // ô model đang là model MẶC ĐỊNH (của nhà cung cấp cũ hay mới) → lưu trống = luôn theo mặc định (không ghim cứng một model)
-    const model = [d[c.provider], d[r.provider]].includes(r.model.trim()) ? "" : r.model.trim();
-    const res = await API().ai_screen_save(r.provider, model, r.key, r.base_url, r.enabled === "1");
-    if (!res || !res.ok) { toast("Chưa lưu: " + ((res && res.error) || "?"), "bad"); return; }
-    if (!res.usable) { toast(res.enabled ? "Đã lưu — còn thiếu API key nên chưa dùng AI" : "Đã lưu — đang TẮT AI", "warn"); loadAiScreen(); return; }
-    toast("Đã lưu — đang thử hỏi AI một ảnh mẫu…", "");
-    const t = await API().ai_screen_test();
-    if (t && t.ok) toast(`AI trả lời sau ${t.secs}s (${t.model}): ${t.kind === "ad" ? "quảng cáo" : t.kind}${t.close ? ` — nút «${t.close}»` : ""}`, "ok");
-    else toast("Đã lưu nhưng hỏi AI KHÔNG được: " + ((t && t.error) || "?"), "bad");
-  } catch (e) { toast("Lỗi: " + e, "bad"); }
-  loadAiScreen();
-}
-
-async function loadAiScreen() {
+async function loadAiScreen() {                    // chấm trạng thái AI cạnh nút «AI màn hình lạ» ở trang «Nhóm & Kịch bản»
   const dot = $("#ai-dot");
   if (!dot) return;
   try {
@@ -3110,11 +3052,12 @@ function init() {
     GROUP.api.pool = e.target.value; GW_POOL = null; loadGwPool();
   };
   $("#btn-gw-settings").onclick = gatewaySettings;
-  $("#btn-tg-settings").onclick = telegramSettings;
-  $("#btn-ai-screen").onclick = aiScreenSettings;
+  $("#btn-tg-settings").onclick = () => showView("alerts");          // cấu hình ở trang «Thông báo & AI»
+  $("#btn-ai-screen").onclick = () => showView("alerts");
   loadAiScreen();
   loadTelegram();
-  setInterval(loadTelegram, 30000);                  // chấm trạng thái: lần gửi gần nhất lỗi thì đỏ
+  alertsBadge();                                     // nhãn «Thông báo & AI» ở menu: đã cài Telegram / AI chưa
+  setInterval(() => { loadTelegram(); loadAiScreen(); alertsBadge(); }, 30000);   // lần gửi Telegram gần nhất lỗi thì chấm đỏ
   $("#btn-gw-import").onclick = (e) => importGwSteps(e.currentTarget);
   $("#btn-group-run").onclick = (e) => runGroup(e.currentTarget);
   $("#btn-group-stop").onclick = (e) => stopGroup(e.currentTarget);
