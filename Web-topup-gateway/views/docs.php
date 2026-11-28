@@ -211,10 +211,10 @@ SH) ?>
 
     <section id="toolloop">
       <h4>Vòng lặp mẫu của tool</h4>
-      <p>Khung xử lý cho <b>mỗi máy</b> (giả mã). Điểm mấu chốt: <b>chỉ xin việc khi máy trống và game đã đăng xuất</b>, luôn báo kết quả, chỉ tính một lần mua khi chữ «nạp thành công» <b>xuất hiện mới</b> sau khi bấm, và phân biệt rõ <code>failed</code> (chắc chắn chưa mua gì) với <code>review</code> (không chắc). <b>iPhone Farm Manager</b> đã cài đúng vòng lặp này: nhóm máy đặt chế độ «Nhận đơn từ Gateway (API)» và chọn pool là chạy.</p>
+      <p>Khung xử lý cho <b>mỗi máy</b> (giả mã). Điểm mấu chốt: <b>chỉ xin việc khi máy trống và game đã đăng xuất</b>, luôn báo kết quả, chỉ tính một lần mua khi chữ «nạp thành công» <b>xuất hiện mới</b> sau khi bấm, và phân biệt rõ <code>failed</code> (chắc chắn chưa mua gì) với <code>review</code> (không chắc). <b>iPhone Farm Manager</b> đã cài đúng vòng lặp này: tạo một kịch bản có cách chạy «nhận đơn từ gateway», chọn pool, soạn bước cho từng giai đoạn rồi bấm Chạy.</p>
       <?= $code('Giả mã — một máy', <<<'PY'
-pool = GET /api/tool/pools/efootball-ios          # luật nhận diện + 6 danh sách bước + gói (tải 1 lần, làm mới định kỳ)
-thiếu luật logged_out / login_success / purchase_success hoặc thiếu bước đăng nhập / mua / kết thúc → KHÔNG chạy
+pool = GET /api/tool/pools/efootball-ios          # luật nhận diện + gói (tải 1 lần, làm mới định kỳ). Sáu danh sách bước dưới đây (login_steps … finish_steps) là của TOOL: soạn trong kịch bản nhận đơn
+pool thiếu luật logged_out / login_success / purchase_success, hoặc kịch bản thiếu bước đăng nhập / mua / kết thúc → KHÔNG chạy
 
 while True:
     if máy chưa sẵn sàng (mất Bluetooth / không chụp được màn hình): sleep(15); continue   # KHÔNG xin việc

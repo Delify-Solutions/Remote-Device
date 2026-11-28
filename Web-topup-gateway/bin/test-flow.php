@@ -90,8 +90,9 @@ Schema::migrate();
 $cfg = Pools::defaults();
 $cfg['otp'] = ['enabled' => true, 'timeout' => 120, 'max_requests' => 2, 'hint' => ''];
 $cfg['rules'] = [['when' => 'login_success', 'value' => 'Trang chủ', 'note' => ''], ['when' => 'logged_out', 'value' => 'Konami ID', 'note' => '']];
+// BƯỚC ĐỜI CŨ (trước đây soạn ở gateway; giờ chỉ còn trong dữ liệu đã lưu / tệp dữ liệu mặc định đời cũ): gateway giữ nguyên trạng để tool chép
+// về kịch bản. 'optional' trong dữ liệu cũ có cả dạng chuỗi '1' / '0' lẫn true / false.
 $cfg['login_steps'] = [['type' => 'type', 'value' => '{{username}}', 'note' => '']];
-// 'optional' đến từ form quản trị là chuỗi '1' / '0', từ JSON là true / false
 $cfg['after_purchase_steps'] = [['type' => 'tap_text', 'value' => 'Đóng|OK', 'optional' => '1']];
 $cfg['finish_steps'] = [['type' => 'tap_text', 'value' => 'Đăng xuất', 'optional' => '0'], ['type' => 'home', 'value' => '', 'optional' => true],
                         ['type' => 'khong_co_loai_nay', 'value' => 'x']];
@@ -161,10 +162,12 @@ ok(($pv['code'] ?? '') === 'efootball-ios' && count($pv['packages'] ?? []) === 3
 ok(!isset($pv['rules']) && !isset($pv['packages'][0]['ocr_text']), 'shop KHÔNG thấy luật/chữ OCR');
 ok(($pv['login_fields'][1]['secret'] ?? false) === true, 'trường password được đánh dấu bí mật');
 $tv = http('GET', '/api/tool/pools/efootball-ios', $TK)['json']['pool'] ?? [];
-ok(($tv['rules'][0]['when'] ?? '') === 'login_success' && ($tv['packages'][0]['ocr_text'] ?? '') === '1050|1,050' && ($tv['login_steps'][0]['value'] ?? '') === '{{username}}', 'tool thấy luật + chữ OCR + các bước', $tv);
+ok(($tv['rules'][0]['when'] ?? '') === 'login_success' && ($tv['packages'][0]['ocr_text'] ?? '') === '1050|1,050' && ($tv['login_steps'][0]['value'] ?? '') === '{{username}}', 'tool thấy luật + chữ OCR + bước đời cũ còn lưu', $tv);
 $lists = ['login_steps', 'otp_steps', 'nav_steps', 'purchase_steps', 'after_purchase_steps', 'finish_steps'];
-ok(array_keys(Pools::STEP_LISTS) === $lists && !array_diff($lists, array_keys($tv)) && $tv['otp_steps'] === [] && $tv['nav_steps'] === [],
-    'tool nhận đủ 6 danh sách bước (đăng nhập, OTP, vào gói, mua, sau mua, kết thúc)', array_keys($tv));
+ok(array_keys(Pools::LEGACY_STEP_LISTS) === $lists && array_values(array_intersect($lists, array_keys($tv))) === ['login_steps', 'after_purchase_steps', 'finish_steps'],
+    'tool chỉ nhận các danh sách bước đời cũ CÓ bước (danh sách rỗng không còn khoá — pool mới không có khoá nào)', array_keys($tv));
+ok(!array_intersect($lists, array_keys(Pools::defaults())) && !array_intersect($lists, array_keys(Pools::sanitize(['login_steps' => [], 'finish_steps' => [['type' => 'loai_la']]]))),
+    'pool mới / danh sách rỗng / toàn bước sai loại → cấu hình không có khoá bước nào');
 ok(($tv['login_steps'][0]['optional'] ?? null) === false && ($tv['after_purchase_steps'][0]['optional'] ?? null) === true
     && array_column($tv['finish_steps'], 'optional') === [false, true], 'cờ «bỏ qua nếu lỗi» của từng bước được giữ đúng (mặc định tắt)', $tv['finish_steps'] ?? null);
 ok(count($tv['finish_steps']) === 2, 'bước có loại lạ bị loại bỏ khi lưu');
@@ -176,8 +179,8 @@ ok($tl['code'] === 200 && ($t0['code'] ?? '') === 'efootball-ios' && ($t0['activ
 ok(http('GET', '/api/tool/pools', $SK)['code'] === 401, 'khoá shop không đọc được danh sách pool của tool');
 ok(http('GET', '/api/tool/pools/khong-co', $TK)['code'] === 404, 'tool hỏi pool không có → 404');
 $miss = Pools::missing(Pools::find($poolId));
-ok(count($miss) === 2 && str_contains($miss[0], 'Nạp gói THÀNH CÔNG') && str_contains($miss[1], 'mua 1 gói'),
-    'trang quản trị chỉ ra pool còn thiếu gì để máy tự chạy (luật «nạp thành công», bước mua)', $miss);
+ok(count($miss) === 1 && str_contains($miss[0], 'Nạp gói THÀNH CÔNG'),
+    'trang quản trị chỉ ra pool còn thiếu LUẬT gì để máy tự chạy (bước thao tác do tool quản — gateway không xét)', $miss);
 ok(isset(Pools::RULE_WHEN['logged_out']) && array_keys(Pools::RULES_REQUIRED) === ['logged_out', 'login_success', 'purchase_success'], 'ba luật bắt buộc: chưa đăng nhập / đăng nhập thành công / nạp thành công');
 
 echo "\n== Tạo đơn ==\n";
@@ -441,20 +444,33 @@ ok($again['code'] === 302, 'chủ thật ở IP quen VẪN đăng nhập đượ
 $known = jdec(Settings::get('login_known_ips', '[]'));
 ok(count($known) === 1 && !str_contains(json_encode($known), '203.0.113.50'), 'danh sách IP quen chỉ lưu dạng băm (không lưu IP thật), không trùng lặp', $known);
 
-echo "\n== Loại bước mới: vuốt, bấm giữ ==\n";
+echo "\n== Bước đời cũ kiểu vuốt / bấm giữ: giữ nguyên trạng ==\n";
 $gc = Pools::defaults();
 $gc['rules'] = [['when' => 'login_success', 'value' => 'Trang chủ'], ['when' => 'logged_out', 'value' => 'Konami ID'], ['when' => 'purchase_success', 'value' => 'Thành công']];
 $gc['login_steps'] = [['type' => 'launch', 'value' => 'game']];
 $gc['nav_steps'] = [['type' => 'swipe', 'value' => 'left'], ['type' => 'swipe', 'value' => '375,1000 > 375,400'],
                     ['type' => 'hold', 'value' => '636,468 @1.5s'], ['type' => 'hold_text', 'value' => 'Sách @2s', 'optional' => true]];
 $gid = Pools::save(null, 'gesture-pool', 'Pool cử chỉ', 'Game', true, $gc);
-ok(is_int($gid), 'lưu được pool có bước vuốt / bấm giữ', $gid);
+ok(is_int($gid), 'dữ liệu đời cũ có bước vuốt / bấm giữ → lưu được', $gid);
 $gv = http('GET', '/api/tool/pools/gesture-pool', $TK)['json']['pool']['nav_steps'] ?? [];
 ok(array_column($gv, 'type') === ['swipe', 'swipe', 'hold', 'hold_text'] && array_column($gv, 'value') === ['left', '375,1000 > 375,400', '636,468 @1.5s', 'Sách @2s']
     && array_column($gv, 'optional') === [false, false, false, true], 'tool nhận lại đúng loại bước, giá trị và cờ «bỏ qua nếu lỗi»', $gv);
-ok(!array_diff(['swipe', 'hold', 'hold_text'], array_keys(Pools::STEP_TYPES)), 'ba loại bước mới có trong danh sách chọn của trang quản trị');
+ok(!array_diff(['swipe', 'hold', 'hold_text'], Pools::LEGACY_STEP_TYPES) && !defined('Pools::STEP_TYPES'), 'gateway chỉ còn danh sách TÊN loại bước đời cũ để giữ dữ liệu (không còn bảng chọn bước)');
 
 echo "\n== Tool tự báo: máy rảnh ở kịch bản nào + danh mục kịch bản (/api/tool/sync) ==\n";
+$dropAfterLogin = static function () use (&$post, &$ah, $gid, $TK, $lists): void {     // gọi ở phần trang quản trị (cần phiên đăng nhập admin)
+    $page = http('GET', "/admin/pools/$gid", null, null, $ah)['text'];
+    ok(str_contains($page, 'còn lưu <b>5 bước soạn ở gateway từ bản cũ</b>') && str_contains($page, 'Đăng nhập: 1 · Vào danh sách gói nạp: 4'), 'pool cử chỉ còn 5 bước đời cũ → trang sửa pool báo rõ');
+    $noCsrf = http('POST', "/admin/pools/$gid/drop-steps", null, '', array_merge($ah, ['Content-Type: application/x-www-form-urlencoded']));
+    ok($noCsrf['code'] !== 302 && Pools::legacySteps(Pools::find($gid)['cfg']) === ['login_steps' => 1, 'nav_steps' => 4], '«Xoá bước cũ» thiếu mã CSRF → bị từ chối, không xoá gì', $noCsrf['code']);
+    $dr = $post("/admin/pools/$gid/drop-steps", []);
+    $after = Pools::find($gid)['cfg'];
+    $tvg = http('GET', '/api/tool/pools/gesture-pool', $TK)['json']['pool'] ?? [];
+    ok($dr['code'] === 302 && Pools::legacySteps($after) === [] && !array_intersect($lists, array_keys($after)) && !array_intersect($lists, array_keys($tvg)) && count($after['rules']) === 3
+        && ($tvg['code'] ?? '') === 'gesture-pool', '«Xoá bước cũ»: pool hết bước đời cũ (cấu hình lẫn API tool không còn khoá bước nào); luật và phần còn lại giữ nguyên', array_keys($tvg));
+    $dr2 = $post("/admin/pools/$gid/drop-steps", []);
+    ok($dr2['code'] === 302 && !str_contains(http('GET', "/admin/pools/$gid", null, null, $ah)['text'], 'drop-steps'), 'bấm lần nữa không lỗi; trang sửa pool không còn lời báo / nút');
+};
 ok(Schema::version() === Schema::LATEST && Schema::LATEST >= 3, 'CSDL ở phiên bản mới nhất (có bảng tool_scripts)', Schema::version());
 ok(http('POST', '/api/tool/sync', null, ['devices' => []])['code'] === 401, 'sync không có khoá → 401');
 ok(http('POST', '/api/tool/sync', $SK, ['devices' => []])['code'] === 401, 'sync bằng khoá SHOP → 401 (chỉ khoá Tool)');
@@ -840,11 +856,6 @@ $poolForm = static function (int $id): array {
     foreach ($cfg['rules'] as $r) {
         $f['ru_when'][] = $r['when']; $f['ru_value'][] = $r['value']; $f['ru_note'][] = $r['note'];
     }
-    foreach (array_keys(Pools::STEP_LISTS) as $list) {
-        foreach ($cfg[$list] as $s) {
-            $f[$list . '_type'][] = $s['type']; $f[$list . '_value'][] = $s['value']; $f[$list . '_note'][] = $s['note']; $f[$list . '_optional'][] = $s['optional'] ? '1' : '0';
-        }
-    }
     $prices = Pools::prices($id);
     foreach (Pools::packages($id) as $k) {
         $f['pk_id'][] = $k['id']; $f['pk_code'][] = $k['code']; $f['pk_name'][] = $k['name']; $f['pk_ocr'][] = $k['ocr_text']; $f['pk_price'][] = $k['price_text'];
@@ -862,6 +873,20 @@ ok(str_contains($pf, 'Loại tiền dùng trong pool') && str_contains($pf, 'JPY
     && str_contains($pf, 'name="pp_JPY_amount[]" value="1500"') && str_contains($pf, 'value="¥1,500"') && str_contains($pf, 'Chữ giá (mặc định, khi không có giá theo loại tiền)')
     && substr_count($pf, 'name="pp_JPY_amount[]"') === 6,
     'trang sửa pool: ô loại tiền + cột «giá» và «chữ hiện trên máy» cho từng loại tiền ở mỗi gói (cả dòng mẫu để thêm gói)', mb_substr(strip_tags($pf), 0, 120));
+// BƯỚC ĐỜI CŨ ở trang sửa pool: không còn khung soạn bước; pool còn lưu bước cũ thì có lời báo + nút xoá
+ok(!str_contains($pf, '_steps_type[]') && !str_contains($pf, 'tpl-login_steps') && str_contains($pf, 'soạn <b>trong tool</b>')
+    && str_contains($pf, 'còn lưu <b>3 bước soạn ở gateway từ bản cũ</b>') && str_contains($pf, 'Đăng nhập: 1 · Mua 1 gói: 1 · Kết thúc đơn: 1') && str_contains($pf, "action=\"/admin/pools/$wpId/drop-steps\""),
+    'trang sửa pool: không còn chỗ soạn bước (nói rõ soạn ở tool); pool còn bước đời cũ → hiện số bước từng giai đoạn + nút «Xoá bước cũ»', mb_substr(strip_tags($pf), 0, 120));
+$newForm = http('GET', '/admin/pools/new', null, null, $ah)['text'];
+ok(str_contains($newForm, 'soạn <b>trong tool</b>') && !str_contains($newForm, 'drop-steps') && !str_contains($newForm, 'từ bản cũ'), 'pool mới: không có lời báo / nút nào về bước cũ');
+$f = $poolForm($wpId);
+$f['login_steps_type'] = ['home']; $f['login_steps_value'] = ['']; $f['login_steps_note'] = ['chen-qua-form']; $f['login_steps_optional'] = ['0'];     // form đời cũ / gửi tay
+$sv0 = $post('/admin/pools/save', $f);
+$keep = Pools::find($wpId)['cfg'];
+ok($sv0['code'] === 302 && Pools::legacySteps($keep) === ['login_steps' => 1, 'purchase_steps' => 1, 'finish_steps' => 1] && $keep['login_steps'][0]['type'] === 'launch'
+    && (http('GET', '/api/tool/pools/wallet-pool', $TK)['json']['pool']['purchase_steps'][0]['value'] ?? '') === '{{package.price_text}}',
+    'lưu pool qua trang quản trị: bước đời cũ đang lưu được GIỮ NGUYÊN (form không còn gửi bước; trường bước gửi tay bị bỏ qua)', Pools::legacySteps($keep));
+$dropAfterLogin();
 $f = $poolForm($wpId);
 $f['currencies'] = 'JPY, XX1';
 $pv = $post('/admin/pools/save', $f);

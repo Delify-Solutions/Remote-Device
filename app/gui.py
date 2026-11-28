@@ -990,33 +990,66 @@ class Api:
         return {"ok": bool(store.remove_device_from_group(name, group_id))}
 
     @staticmethod
-    def _orders_ready(api, what):
-        """Cấu hình nhận đơn `api` (của nhóm nhận đơn hoặc của kịch bản nhận đơn) đủ để chạy chưa → None, hoặc câu báo thiếu gì."""
-        api = store.api_defaults(api)
-        if not api["pool"]:
+    def _orders_ready(orders, what):
+        """Cấu hình nhận đơn `orders` của kịch bản đủ để chạy chưa → None, hoặc câu báo thiếu gì. (Luật của pool + các giai đoạn bắt buộc
+        được kiểm đầy đủ lúc máy bắt đầu nhận đơn — runner dừng máy và nói rõ thiếu gì.)"""
+        o = store.api_defaults(orders)
+        if not o["pool"]:
             return "%s chưa chọn pool của gateway." % what
         try:
-            steps = apimode.effective_steps(_gateway().pool(api["pool"]), api["steps"])
+            _gateway().pool(o["pool"])
         except GatewayError as e:
             return e.vi()
-        except apimode.ConfigError as e:
-            return "Cấu hình bước sai: %s" % e
-        if not steps["purchase"]:
-            return "Chưa có «các bước mua 1 gói» (cấu hình trên gateway hoặc trong %s)." % what.lower()
+        if not apimode.order_steps(o["steps"])["purchase"]:
+            return "%s chưa có «các bước mua 1 gói»." % what
         return None
 
     @staticmethod
     def _takes_orders(g, script=None):
-        """Lần chạy này có NHẬN ĐƠN CỦA KHÁCH không: nhóm nhận đơn kiểu cũ, hoặc kịch bản có cách chạy «nhận đơn từ gateway»."""
-        if g.get("mode") == "api":
-            return True
+        """Lần chạy này có NHẬN ĐƠN CỦA KHÁCH không: kịch bản được chọn có cách chạy «nhận đơn từ gateway»."""
         sc = store.pick_script(g, script)
         return bool(sc and sc.get("mode") == "orders")
 
+    @staticmethod
+    def _adopt_gateway_steps(g, script=None):
+        """Kịch bản nhận đơn CHƯA chép bước đời cũ từ gateway → chép (một lần; xem store.adopt_gateway_steps). Trả (nhóm đọc lại sau khi
+        chép, {giai đoạn: số bước vừa chép}); không phải kịch bản nhận đơn / đã chép / chưa chọn pool → (nhóm như cũ, None).
+        Không đọc được pool → ném GatewayError; bước đời cũ SAI DẠNG ở giai đoạn kịch bản đang trống → ném apimode.ConfigError. Cả hai đều
+        chưa đánh dấu gì (lần sau thử lại) và người gọi KHÔNG được cho máy chạy."""
+        sc = store.pick_script(g, script)
+        o = store.api_defaults(sc.get("orders")) if sc and sc.get("mode") == "orders" else None
+        if not (o and o["pool"] and not o["gw_steps_copied"]):
+            return g, None
+        legacy, bad = apimode.legacy_gateway_steps(_gateway().pool(o["pool"]))
+        res = store.adopt_gateway_steps(g["id"], sc["id"], legacy, bad)
+        if res is None:
+            return g, None
+        if res["blocked"]:
+            raise apimode.ConfigError(apimode.legacy_blocked_text(res["blocked"]))
+        return (store.get_group(g["id"]) or g), res["copied"]
+
+    def orders_adopt(self, group_id, script_id):
+        """Giao diện gọi khi mở một kịch bản nhận đơn chưa chép bước đời cũ từ gateway: chép (một lần) rồi trả nhóm mới nhất để vẽ lại.
+        Không chép được vì bước đời cũ sai dạng → `blocked` kèm lời báo (giao diện hiện cho người vận hành)."""
+        g = store.get_group(group_id)
+        if not g:
+            return {"ok": False, "error": "nhóm không tồn tại"}
+        try:
+            g, copied = Api._adopt_gateway_steps(g, script_id)
+        except GatewayError as e:
+            return {"ok": False, "error": e.vi()}
+        except apimode.ConfigError as e:
+            return {"ok": False, "blocked": True, "error": "Chưa chép được: %s." % e}
+        return {"ok": True, "copied": copied or {}, "group": g}
+
+    @staticmethod
+    def _with_copy(result, g, copied):
+        """Kết quả chạy kèm `copied` + `group` (nhóm mới nhất) khi lần gọi này vừa chép bước đời cũ vào kịch bản — KỂ CẢ khi sau đó không chạy
+        được: bước đã nằm trong kịch bản đã lưu, trình sửa phải nạp lại bản đó."""
+        return dict(result, copied=copied, group=g) if copied is not None else result
+
     def _runnable(self, g, script=None):
         """Nhóm (và kịch bản `script`) đủ điều kiện chạy chưa → None, hoặc câu báo thiếu gì."""
-        if g.get("mode") == "api":
-            return Api._orders_ready(g.get("api"), "Nhóm")
         scripts = g.get("scripts") or []
         if not scripts:
             return "Nhóm chưa có kịch bản nào."
@@ -1043,7 +1076,7 @@ class Api:
         return out
 
     def _held_what(self, g, names, script=None):
-        """{tên máy: lý do} cho các máy trong `names` đang DỪNG CHỜ NGƯỜI KIỂM TRA mà nhóm `g` không được phép chạy đè lên (chỉ chính nhóm nhận đơn
+        """{tên máy: lý do} cho các máy trong `names` đang DỪNG CHỜ NGƯỜI KIỂM TRA mà nhóm `g` không được phép chạy đè lên (chỉ chính kịch bản nhận đơn
         đã gây ra trạng thái đó mới «Chạy lại» được — và ở chế độ web thì không ai được: gỡ giữ là lời xác nhận của người vận hành)."""
         out = {}
         st = RUNNER.status()
@@ -1051,8 +1084,8 @@ class Api:
             hold = RUNNER.hold_reason(n)
             w = st.get(n) or {}
             # «Chạy lại» chỉ dành cho CHÍNH lần nhận đơn đã để máy ở trạng thái giữ: cùng nhóm, và (với kịch bản nhận đơn) cùng kịch bản
-            same_api_group = Api._takes_orders(g, script) and w.get("group_id") == g.get("id") and w.get("script_id") == ((store.pick_script(g, script) or {}).get("id") if g.get("mode") != "api" else None)
-            if hold and (WEBDEV is not None or not same_api_group):       # chế độ web: «Chạy lại» cũng là gỡ giữ → chỉ làm ở app cửa sổ
+            same_orders = Api._takes_orders(g, script) and w.get("group_id") == g.get("id") and w.get("script_id") == (store.pick_script(g, script) or {}).get("id")
+            if hold and (WEBDEV is not None or not same_orders):       # chế độ web: «Chạy lại» cũng là gỡ giữ → chỉ làm ở app cửa sổ
                 out[n] = hold
             elif not (st.get(n) or {}).get("running"):
                 hit = _customer_conflict(n)                               # tên khác nhưng CÙNG iPhone / board với một máy của khách
@@ -1062,16 +1095,25 @@ class Api:
 
     def group_run(self, group_id, names=None, script=None):
         """Chạy một kịch bản của nhóm trên các máy (mặc định: mọi máy của nhóm) — máy nào đang bận việc khác thì bỏ qua và báo trong `busy`.
-        Nhóm nhận đơn API không cần `script`."""
+        Kịch bản nhận đơn vừa được chép bước đời cũ từ gateway (một lần) thì kết quả kèm `copied` + `group` (nhóm mới nhất)."""
         g = store.get_group(group_id)
         if not g:
             return {"ok": False, "error": "nhóm không tồn tại"}
         if Api._takes_orders(g, script) and not RUNNER.allow_api:
             return {"ok": False, "error": WEB_NO_ORDERS}
+        try:
+            g, copied = Api._adopt_gateway_steps(g, script)
+        except GatewayError as e:
+            return {"ok": False, "error": e.vi()}
+        except apimode.ConfigError as e:
+            return {"ok": False, "error": "Chưa chạy: %s." % e}
+        return Api._with_copy(self._group_run(g, names, script), g, copied)
+
+    def _group_run(self, g, names, script):
         why = self._runnable(g, script)
         if why:
             return {"ok": False, "error": why}
-        sc = None if g.get("mode") == "api" else store.pick_script(g, script)
+        sc = store.pick_script(g, script)
         targets = list(names) if names is not None else list(g.get("devices") or [])
         stray = [n for n in targets if n not in (g.get("devices") or [])]
         if stray:
@@ -1094,7 +1136,7 @@ class Api:
         g = store.get_group(group_id)
         if g:
             sid = None
-            if script and g.get("mode") != "api":
+            if script:
                 sc = store.pick_script(g, script)
                 if sc is None:
                     return {"ok": False, "error": "Nhóm không có kịch bản «%s»." % script}
@@ -1110,10 +1152,19 @@ class Api:
             return {"ok": False, "error": "nhóm không tồn tại"}
         if Api._takes_orders(g, script) and not RUNNER.allow_api:
             return {"ok": False, "error": WEB_NO_ORDERS}
+        try:
+            g, copied = Api._adopt_gateway_steps(g, script)
+        except GatewayError as e:
+            return {"ok": False, "error": e.vi()}
+        except apimode.ConfigError as e:
+            return {"ok": False, "error": "Chưa chạy: %s." % e}
+        return Api._with_copy(self._machine_run(g, name, script, start_at), g, copied)
+
+    def _machine_run(self, g, name, script, start_at):
         why = self._runnable(g, script)
         if why:
             return {"ok": False, "error": why}
-        sc = None if g.get("mode") == "api" else store.pick_script(g, script)
+        sc = store.pick_script(g, script)
         if name not in (g.get("devices") or []):
             return {"ok": False, "error": "Máy «%s» không thuộc nhóm «%s»." % (name, g.get("name"))}
         start = 0
@@ -1160,7 +1211,7 @@ class Api:
         return {"ok": False, "error": "Máy «%s» không đang dừng." % name}
 
     def stop_all(self, force=False):
-        """DỪNG TẤT CẢ máy đang chạy (nhóm nhận đơn: làm nốt đơn dở rồi dừng; force: bỏ dở ngay). Không gỡ trạng thái «dừng chờ kiểm tra» —
+        """DỪNG TẤT CẢ máy đang chạy (máy đang nhận đơn: làm nốt đơn dở rồi dừng; force: bỏ dở ngay). Không gỡ trạng thái «dừng chờ kiểm tra» —
         việc đó chỉ người vận hành làm từng máy."""
         n = len(RUNNER.running_names())
         RUNNER.stop_all(bool(force))
@@ -1268,7 +1319,7 @@ class Api:
                 time.sleep(apimode.STEP_GAP)
             return {"ok": True, "results": results}
 
-    # ---- kết nối Topup Gateway (chế độ API của nhóm) ----
+    # ---- kết nối Topup Gateway (cho các kịch bản nhận đơn) ----
     def gateway_get(self):
         s = store.get_settings()
         key = s.get("gateway_key") or ""
@@ -1432,8 +1483,6 @@ class Api:
         for g in store.get_groups():
             for sc in g.get("scripts") or []:
                 pc = ((sc.get("orders") or {}).get("pool") or "") if sc.get("mode") == "orders" else ""
-                if g.get("mode") == "api":
-                    pc = (g.get("api") or {}).get("pool") or pc
                 if pc and pc not in codes:
                     codes.append(pc)
         out, pools = [], {}
@@ -1569,20 +1618,16 @@ class Api:
         return self.ai_info()
 
     def gateway_pool(self, code):
-        """Cấu hình 1 pool, các bước đã đổi sang dạng của tool — để xem và nhập vào nhóm."""
+        """Cấu hình 1 pool cho trình sửa kịch bản nhận đơn: luật, gói, trường đăng nhập (bước thì soạn trong kịch bản, không lấy ở đây)."""
         try:
             pool = _gateway().pool(code)
-            steps = {ph: [apimode.gw_step_to_engine(s) for s in (pool.get(apimode.GW_LISTS[ph]) or [])]
-                     for ph in apimode.PHASES}
             return {"ok": True, "code": pool.get("code"), "name": pool.get("name"), "active": pool.get("active"),
-                    "steps": steps, "rules": pool.get("rules") or [], "packages": pool.get("packages") or [],
+                    "rules": pool.get("rules") or [], "packages": pool.get("packages") or [],
                     "login_fields": pool.get("login_fields") or [], "otp": pool.get("otp") or {},
                     # thiếu các thứ này thì máy KHÔNG nhận đơn — giao diện phải nói rõ cho người vận hành
-                    "missing_rules": apimode.missing_rules(pool), "required_phases": list(apimode.REQUIRED_PHASES)}
+                    "missing_rules": apimode.missing_rules(pool)}
         except GatewayError as e:
             return {"ok": False, "error": e.vi()}
-        except apimode.ConfigError as e:
-            return {"ok": False, "error": "Cấu hình bước trên gateway sai: %s" % e}
 
 
 def main(argv=None):

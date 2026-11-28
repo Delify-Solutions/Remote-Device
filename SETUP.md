@@ -282,19 +282,20 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
     gỡ trạng thái chờ kiểm tra.
   «Dừng» kết thúc hẳn việc đang chạy. Nút **«Dừng tất cả»** ở thanh trên cùng dừng mọi máy đang chạy (có hỏi lại; không gỡ trạng thái «dừng chờ kiểm tra»).
 - **Máy đang «dừng chờ kiểm tra» sau đơn của khách** (màn hình giữ nguyên, game có thể còn đăng nhập tài khoản khách): nhóm / kịch bản KHÁC không chạy đè lên được
-  — bị bỏ qua và báo rõ; ô «Chạy trên máy» hiện «⚠ dừng chờ kiểm tra» và không tích được. Chỉ «Chạy lại» của chính nhóm nhận đơn đó (tự đăng xuất + kiểm game
+  — bị bỏ qua và báo rõ; ô «Chạy trên máy» hiện «⚠ dừng chờ kiểm tra» và không tích được. Chỉ «Chạy lại» của chính kịch bản nhận đơn đó (tự đăng xuất + kiểm game
   sạch trước; nếu lần chạy lại dừng sớm trước khi kiểm xong thì máy vẫn đang giữ), hoặc người vận hành bấm **«Đã kiểm tra xong»** trên máy đó, mới gỡ được.
   **Bấm Dừng không còn là lời xác nhận** (trước đây Dừng trên máy đã dừng = xác nhận); xoá nhóm còn máy đang giữ bị từ chối.
 - **Kịch bản nhận đơn** (cách chạy thứ ba của kịch bản: «nhận đơn từ gateway»): lộ trình của nó là cả vòng đời một đơn —
   ① **Chờ đơn từ gateway** (chọn pool mà kịch bản phục vụ) → ② **Giữ chỗ cho máy** (tool xin đơn; gateway giao cho đúng một máy) → các giai đoạn
   **Đăng nhập · Nhập OTP · Vào danh sách gói · Mua một gói · Sau mỗi lần mua** → **Báo kết quả cho gateway** → **Kết thúc đơn**.
   Hai trạm đầu và trạm «báo kết quả» là việc tool tự làm với gateway (không sửa / xoá được); mỗi giai đoạn có danh sách bước riêng, nút
-  «Thêm bước» và «Thử» riêng. Giai đoạn chưa có bước riêng thì máy chạy bước cấu hình ở pool trên gateway («dùng N bước của gateway»); luật nhận
-  diện (chưa đăng nhập / đăng nhập thành công / nạp thành công…) và gói nạp vẫn lấy từ pool.
+  «Thêm bước» và «Thử» riêng. **Bước chỉ soạn ở đây** (từ 2026-11-28 gateway không còn soạn bước, bộ chạy không đọc bước nào từ gateway): giai đoạn
+  bắt buộc (đăng nhập / mua / kết thúc) chưa có bước thì máy không nhận đơn. Pool lưu từ bản cũ còn bước ở gateway → tool chép về kịch bản đúng
+  MỘT lần (lúc mở kịch bản / lúc chạy; `orders.gw_steps_copied`), sau đó xoá ở trang sửa pool của gateway. Luật nhận diện (chưa đăng nhập / đăng
+  nhập thành công / nạp thành công…) và gói nạp vẫn lấy từ pool.
   - Nó chạy bằng **đúng bộ máy của chế độ nhận đơn** (`Runner._run_api`): cùng vòng xin đơn, sổ đơn, «dừng chờ kiểm tra», nhịp tim — nên **bản web
-    không chạy được** (từ chối như nhóm nhận đơn), máy đang nhận đơn bằng kịch bản được coi là máy của khách, và máy đang giữ chỉ «Chạy lại» được
-    bằng CHÍNH kịch bản đó (nút «Chạy lại» hiện cạnh máy ấy trong dải «Chạy» của trình sửa kịch bản, có hỏi lại). «Thử» một giai đoạn chưa có
-    bước riêng chỉ dùng bước của gateway khi pool đang nạp trong trình sửa đúng là pool của kịch bản. Bấm «Chạy» ở app cửa sổ có hỏi lại vì máy sẽ nhận ĐƠN THẬT. `list_groups` (AI / dòng lệnh) ghi «NHẬN ĐƠN THẬT từ pool …».
+    không chạy được**, máy đang nhận đơn bằng kịch bản được coi là máy của khách, và máy đang giữ chỉ «Chạy lại» được
+    bằng CHÍNH kịch bản đó (nút «Chạy lại» hiện cạnh máy ấy trong dải «Chạy» của trình sửa kịch bản, có hỏi lại). Bấm «Chạy» ở app cửa sổ có hỏi lại vì máy sẽ nhận ĐƠN THẬT. `list_groups` (AI / dòng lệnh) ghi «NHẬN ĐƠN THẬT từ pool …».
   - Đổi kịch bản thường sang «nhận đơn»: các bước đang có thành giai đoạn «Đăng nhập». Đổi ngược lại: nếu chỉ «Đăng nhập» có bước thì chúng quay
     về làm danh sách bước thường; cấu hình nhận đơn đã soạn vẫn được giữ.
   - «Thử» giai đoạn «Mua một gói» có hỏi lại (bấm mua thật). Thời gian chờ đăng nhập / chờ kết quả mua hiện dùng mặc định (45 / 60 giây).
@@ -331,7 +332,7 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
     luôn chỗ đó. Hình biến mất trước khi con trỏ tới nơi → không bấm. Trước khi tìm, con trỏ được cất về góc. Nên khoanh SÁT một nút — khoanh
     trùm nhiều nút giống nhau thì khi dãy nút xê dịch máy có thể chọn lệch một nút.
   - Phần giao diện của bước này gắn với trang (kéo khung, cắt ảnh, hộp sửa bước) chỉ được thử TAY trên trình sửa thật với hai iPhone 8; bài
-    thử tự động (`test_ui_steps.py`) chỉ phủ các hàm thuần (đổi khung kéo ra toạ độ, kiểm ảnh, đọc ô «giống tối thiểu», lấy bước của gateway…).
+    thử tự động (`test_ui_steps.py`) chỉ phủ các hàm thuần (đổi khung kéo ra toạ độ, kiểm ảnh, đọc ô «giống tối thiểu», kịch bản nhận đơn còn thiếu gì…).
   - Giới hạn: hình chỉ khớp với máy CÙNG độ phân giải với lúc cắt (chiều xoay thì không sao khi tool dò được chiều — ảnh chụp được quay thẳng, xem «Ảnh chụp bị xoay»); nền phía sau nút thay đổi nhiều (video, hiệu ứng)
     thì phải khoanh sát nút hoặc hạ độ giống. Ảnh mẫu (PNG) nằm trong chính dữ liệu của bước; không gửi lên gateway.
 - **Đăng nhập eFootball (Data Transfer → KONAMI ID) — các trường hợp đã gặp trên máy thật** (chạy lặp ngày 27/11/2026 trên hai iPhone 8, có bộ
@@ -473,8 +474,8 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   ngang, di +x làm con trỏ đi xuống trên ảnh. `nav.tap_at` tự nhận ra hướng ở mỗi lần bấm (xem con trỏ rời góc nào), quay ảnh về hệ trục của chuột để
   đo, đổi điểm cần bấm và hướng vuốt sang hệ đó (`nav.Frame`). Không phân định được hướng → không bấm. Đo trên iPhone 8 đang mở eFootball: tới đích
   giữa màn hình ngang trong ~6 giây. Toạ độ trong kịch bản vẫn là toạ độ của ảnh chụp như người dùng thấy.
-- Nhóm ở chế độ **nhận đơn API** (kiểu cũ: cả nhóm nhận đơn, bước chia 6 giai đoạn ở mức nhóm) vẫn hoạt động như trước; giao diện không còn chỗ
-  tạo loại nhóm này — dùng «kịch bản nhận đơn» thay thế.
+- Nhóm ở chế độ **nhận đơn API** kiểu cũ (cả nhóm nhận đơn, bước chia 6 giai đoạn ở mức nhóm) **đã gỡ ngày 2026-11-28**: dữ liệu cũ tự đổi thành
+  nhóm thường có một kịch bản nhận đơn «Nhận đơn» khi đọc (`store.norm_scripts`); nhóm chỉ còn máy + danh sách kịch bản, cách chạy nằm trong kịch bản.
 - **Tool tự báo cho gateway** (`app/presence.py` → `POST /api/tool/sync`; gateway ở ngoài mạng nên chỉ tool gọi lên được): cứ ~20 giây và ngay khi có
   thay đổi, tool gửi (a) **máy nào đang rảnh ở kịch bản nào** — trạng thái từng máy + các kịch bản của mọi nhóm máy đang ở — và (b) **danh mục kịch bản**
   (tên, nhóm, cách chạy, số bước, tên các `{{biến}}`, dàn ý loại bước + ghi chú; chỉ gửi khi đổi).
@@ -514,7 +515,7 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
   Máy chạy kịch bản thường của chủ thì vẫn xem được.
 - **Máy dừng chờ người kiểm tra** (đơn gián đoạn giữa lúc mua, đơn cần đối soát, lỗi phiên đăng nhập, lỗi lặp lại…): màn hình được
   GIỮ NGUYÊN — AI/CLI không điều khiển, không chạy lại nhóm có máy đó, và **`stop_run` cũng bị từ chối**. Trạng thái này chỉ gỡ bằng nút **«Đã kiểm tra xong»**
-  (lời xác nhận «đã đối soát xong» của người vận hành) hoặc «Chạy lại» của chính nhóm nhận đơn đó, trong app dạng cửa sổ. Bấm Dừng, Dừng nhóm, Dừng tất cả
+  (lời xác nhận «đã đối soát xong» của người vận hành) hoặc «Chạy lại» của chính kịch bản nhận đơn đó, trong app dạng cửa sổ. Bấm Dừng, Dừng nhóm, Dừng tất cả
   hay xoá nhóm đều KHÔNG gỡ; không nạp / xoá / đổi tên board, không gán lại hay xoá máy đó được khi đang giữ. «Dừng ngay» giữa một đơn — tính từ lúc tool bắt đầu
   gõ tài khoản của khách — cũng đưa máy vào trạng thái này, vì game có thể đã / còn đăng nhập tài khoản khách.
   **Giới hạn đã biết:** trạng thái giữ chỉ nằm trong bộ nhớ của app — tắt hoặc khởi động lại app là mất. Hãy đối soát và bấm «Đã kiểm tra xong» TRƯỚC khi tắt app.
@@ -618,7 +619,7 @@ này ra mạng / đường hầm):
   tắt hẳn rồi chạy lại thì mở lại địa chỉ có `?t=<khoá>`. Tệp khoá được tạo sẵn quyền 0600; tệp khoá cũ mà người khác đọc được thì bị thay khoá mới;
 - chỉ gọi được hàm công khai của lớp `Api`; tệp tĩnh chỉ trong `app/web` (bỏ mọi tệp / thư mục bắt đầu bằng `_` hoặc `.`, và liên kết trỏ ra ngoài);
 - yêu cầu bị từ chối thì đóng kết nối; không nhận `Transfer-Encoding` hay tiêu đề lặp (Host / Origin / Content-Length); kết nối im quá 30 giây bị đóng; trang không cho nhúng vào khung;
-- **chế độ web KHÔNG chạy đơn của khách.** Nhóm nhận đơn từ gateway (chế độ API) bị từ chối ở bản web — cả từ giao diện, từ cầu nối AI, lẫn trong bộ chạy
+- **chế độ web KHÔNG chạy đơn của khách.** Kịch bản nhận đơn từ gateway bị từ chối ở bản web — cả từ giao diện, từ cầu nối AI, lẫn trong bộ chạy
   (`Runner.allow_api = False`) — vì trình duyệt có thể đang do AI điều khiển. Nhận đơn thật chỉ chạy ở app dạng cửa sổ (`python app/gui.py`, không `--web`).
   Nhờ vậy trong bản web không bao giờ có «máy đang làm đơn của khách» hay «máy đang dừng chờ đối soát»;
 - phòng thủ thêm, phòng khi quy tắc trên bị nới sau này: nếu trong tiến trình có máy của khách thì (a) máy đó được nhận ra theo **máy thật** — iPhone + cổng board

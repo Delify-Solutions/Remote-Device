@@ -132,8 +132,22 @@ def main():
         store.rename_in_groups("M1", "M1-moi")
         ok(store.get_group(a["id"])["devices"] == ["M2", "M1-moi"] and store.get_group(b["id"])["devices"] == ["M1-moi"], "máy đổi tên → đổi trong mọi nhóm, giữ vị trí")
         ok(store.get_group(a["id"])["scripts"][0]["steps"] == [home] and store.get_group(b["id"])["scripts"][0]["steps"] == [tap], "kịch bản của các nhóm không bị đụng")
-        g = store.save_group({"name": "Không nói chế độ", "devices": []})
-        ok(g["mode"] == "once" and g["loops"] == 1, "nhóm mới không nói chế độ → mặc định chạy theo kịch bản (không lặp vô hạn)", (g["mode"], g["loops"]))
+        # NHÓM NHẬN ĐƠN kiểu cũ (mode «api» + khối `api` ở cấp nhóm) → đổi thành nhóm thường có một kịch bản nhận đơn
+        g = store.save_group({"name": "Nhóm đời cũ", "devices": ["M9"], "mode": "api", "loops": 3, "steps": [],
+                              "api": {"pool": "p-cu", "steps": {"login": [home]}, "login_wait": 30, "check_keyboard": False}})
+        got = [(s["id"], s["name"], s["mode"], s["orders"]["pool"], s["orders"]["steps"]["login"], s["orders"]["login_wait"], s["orders"]["check_keyboard"]) for s in g["scripts"]]
+        ok(not any(k in g for k in ("mode", "loops", "api", "steps")) and got == [("don", "Nhận đơn", "orders", "p-cu", [home], 30, False)],
+           "nhóm nhận đơn kiểu cũ → nhóm thường + 1 kịch bản nhận đơn «don» mang đúng cấu hình cũ; nhóm không còn mode / loops / api / steps", (sorted(g), got))
+        ok(store.get_group(g["id"])["scripts"] == g["scripts"] and store.save_group(store.get_group(g["id"]))["scripts"] == g["scripts"],
+           "đọc lại / lưu lại không sinh thêm kịch bản nhận đơn nào")
+        store.delete_group(g["id"])
+        store._write(store.GROUPS_FILE, store._read(store.GROUPS_FILE) + [
+            {"id": "cu1", "name": "Tệp đời cũ", "devices": [], "mode": "api", "scripts": [{"id": "don", "name": "Trùng mã", "steps": [home]}], "api": {"pool": "p2"}}])
+        ids = [[(s["id"], s["mode"]) for s in store.get_group("cu1")["scripts"]] for _ in range(2)]
+        ok(ids == [[("don", "once"), ("don1", "orders")]] * 2, "tệp đời cũ CHƯA lưu lại: mã kịch bản nhận đơn sinh ra giống nhau ở mọi lần đọc và tránh mã đã có", ids)
+        store.delete_group("cu1")
+        g = store.save_group({"name": "Không nói gì", "devices": []})
+        ok(g["scripts"] == [] and "mode" not in g and "loops" not in g and "api" not in g, "nhóm mới: chỉ có máy + danh sách kịch bản (cách chạy nằm trong kịch bản)", sorted(g))
 
         print("\n== 7. Runner: một máy MỘT kịch bản một lúc, hiện «nhóm · kịch bản» ==")
         import threading, runner
@@ -157,6 +171,7 @@ def main():
         runner.engine.run_flow = lambda nav, steps, stop_check=None, pause_gate=None, **kw: (ran.append([s["type"] for s in steps]) or [{"ok": True}] * len(steps))
         grp = {"id": "G", "name": "Nhóm G", "devices": ["M1", "M2"], "mode": "once"}
         scr_once = {"id": "so", "name": "Một lần", "steps": [home, tap], "mode": "once", "loops": 1}
+        scr_orders = {"id": "nd0", "name": "Nhận đơn", "mode": "orders", "steps": [], "loops": 1, "orders": {"pool": "p"}}     # kịch bản NHẬN ĐƠN tối giản
         scr_loop3 = {"id": "sl", "name": "Ba vòng", "steps": [home], "mode": "loop", "loops": 3}
         ok(R0.start_machine("M1", grp, scr_once) is True, "máy rảnh → chạy được kịch bản")
         R0.workers["M1"]["thread"].join(10)
@@ -166,7 +181,7 @@ def main():
         ran.clear()
         R0.start_machine("M2", grp, scr_loop3); R0.workers["M2"]["thread"].join(15)
         ok(len(ran) == 3 and R0.status()["M2"]["iter"] == 3, "kịch bản «lặp 3 vòng» chạy đúng 3 vòng (cách chạy nằm trong kịch bản)", (len(ran), R0.status()["M2"]["iter"]))
-        ok(R0.start_machine("M1", grp, None) is False, "không có kịch bản (và nhóm không phải API) → không chạy")
+        ok(R0.start_machine("M1", grp, None) is False, "không nêu kịch bản → không chạy (nhóm không tự chạy được)")
 
         # --- TẠM DỪNG / TIẾP TỤC (để người xử lý tay): chạy bằng run_flow THẬT, chỉ giả bước ---
         runner.engine.run_flow = real_run_flow
@@ -269,8 +284,8 @@ def main():
             ok(RG.start_machine("G1", grp, scr5, start_at=5) is False and RG.start_machine("G1", grp, scr5, start_at=-1) is False,
                "chạy từ bước không có trong kịch bản (6 / âm) → không chạy")
             ok(RG.start_machine("G1", grp, dict(scr5, mode="orders", orders={}), start_at=1) is False
-               and RG.start_machine("G1", dict(grp, mode="api", api={"pool": "p"}), None, start_at=1) is False,
-               "kịch bản / nhóm NHẬN ĐƠN không bao giờ chạy từ giữa (không nhảy vào giữa đơn của khách)")
+               and RG.start_machine("G1", grp, scr_orders, start_at=1) is False,
+               "kịch bản NHẬN ĐƠN không bao giờ chạy từ giữa (không nhảy vào giữa đơn của khách)")
             ok(RG.start_machine("G1", grp, scr5, start_at="abc") is False and RG.start_machine("G1", grp, scr5, start_at=True) is False,
                "bộ chạy tự kiểm số bước lạ (chữ / True) → không chạy, không ném lỗi")
             import shutil, subprocess, json as _json, re as _re
@@ -339,7 +354,7 @@ def main():
         RI.ident = lambda n: table.get(n, (None, None))
         RI._run_api = lambda name, group, w: w["stop"].wait(30)
         RI._ensure_heartbeat = lambda: None
-        RI.start_machine("M1", {"id": "API", "name": "Nhận đơn", "devices": ["M1"], "mode": "api", "api": {"pool": "p"}})
+        RI.start_machine("M1", {"id": "API", "name": "Nhận đơn", "devices": ["M1"]}, scr_orders)
         table["M1"] = ("da-bi-gan-lai", "/dev/khac")                 # bảng gán bị đổi SAU khi máy đã bắt đầu làm đơn
         ok(RI.conflict("ten-khac", "UDID-1", None) == "M1" and RI.conflict("ten-khac", None, "/dev/p1") == "M1" and RI.conflict("M1") == "M1",
            "máy đang làm đơn được nhận ra theo iPhone / cổng board ghi lúc bắt đầu — tên khác trỏ vào cùng máy vẫn bị coi là máy đó", RI.customers())
@@ -362,7 +377,7 @@ def main():
         def spy_run_api(self, name, group, w):
             self._seen_nav(w, self._session(name)); seen.update(udid=w["udid"], port=w["port"]); w["stop"].wait(30)
         RS._run_api = lambda name, group, w: spy_run_api(RS, name, group, w)
-        RS.start_machine("S1", {"id": "API", "name": "Nhận đơn", "devices": ["S1"], "mode": "api", "api": {"pool": "p"}})
+        RS.start_machine("S1", {"id": "API", "name": "Nhận đơn", "devices": ["S1"]}, scr_orders)
         import time as _t2
         for _ in range(100):
             if seen: break
@@ -376,7 +391,7 @@ def main():
         RA.ident = lambda n: map_a.get(n, (None, None))
         RA._run_api = lambda name, group, w: w["stop"].wait(30)
         RA._ensure_heartbeat = lambda: None
-        RA.start_machine("KHACH", {"id": "API", "name": "Nhận đơn", "devices": ["KHACH"], "mode": "api", "api": {"pool": "p"}})
+        RA.start_machine("KHACH", {"id": "API", "name": "Nhận đơn", "devices": ["KHACH"]}, scr_orders)
         kb = {"id": "KB", "name": "Kịch bản", "devices": ["alias-udid", "alias-cong", "rieng"], "mode": "once"}
         ok(RA.start_machine("alias-udid", kb, scr_once) is False and RA.start_machine("alias-cong", kb, scr_once) is False and "alias-udid" not in RA.workers,
            "kịch bản chạy lên một tên khác trỏ vào CÙNG iPhone (kể cả UDID viết khác) hoặc CÙNG board với máy đang làm đơn → từ chối")
@@ -438,7 +453,7 @@ def main():
         RK.workers["O1"]["mode"] = "api"
         ok(RK.start_machine("O1", grpO, scO["tr"]) is False and RK.start_machine("O1", grpO, scO["th"]) is False and RK.hold_reason("O1") == "đơn T-7 cần đối soát",
            "máy đang giữ sau đơn của kịch bản «nd»: kịch bản nhận đơn KHÁC và kịch bản thường của cùng nhóm đều không chạy đè được")
-        ok(RK.start_machine("O1", dict(grpO, mode="api", api={"pool": "p-x"}), None) is False, "…nhóm nhận đơn kiểu cũ cùng mã nhóm cũng không được coi là «cùng việc» (khác kịch bản)")
+        ok(RK.start_machine("O1", dict(grpO, mode="api", api={"pool": "p-x"}), None) is False, "…nhóm mang dấu «nhận đơn» kiểu cũ mà không nêu kịch bản → không chạy (bộ chạy chỉ chạy kịch bản)")
         ok(RK.start_machine("O1", grpO, scO["nd"]) is True, "…chỉ «Chạy lại» của CHÍNH kịch bản nhận đơn đó mới chạy tiếp được")
         RK.workers["O1"]["thread"].join(5)
         ok(RK.hold_reason("O1") == "đơn T-7 cần đối soát", "…và nếu lần chạy lại kết thúc trước khi kiểm xong game sạch thì máy VẪN đang giữ", RK.hold_reason("O1"))
@@ -447,8 +462,8 @@ def main():
         # tiến trình không được chạy đơn của khách (chế độ web)
         RW = runner.Runner(lambda n: FakeNav())
         RW.allow_api = False
-        ok(RW.start_machine("W1", {"id": "API", "name": "Nhận đơn", "devices": ["W1"], "mode": "api", "api": {"pool": "p"}}) is False and RW.workers == {},
-           "allow_api = False (chế độ web) → bộ chạy từ chối nhóm nhận đơn; không có worker nào được tạo")
+        ok(RW.start_machine("W1", {"id": "API", "name": "Nhận đơn", "devices": ["W1"]}, scr_orders) is False and RW.workers == {},
+           "allow_api = False (chế độ web) → bộ chạy từ chối kịch bản nhận đơn; không có worker nào được tạo")
         ok(RW.start_machine("W1", grp, scr_once) is True, "…kịch bản thường vẫn chạy")
         RW.workers["W1"]["thread"].join(10)
 
@@ -456,20 +471,21 @@ def main():
         RH = runner.Runner(lambda n: FakeNav())
         RH._run_api = lambda name, group, w: None            # không cần gateway thật cho bài thử này
         RH._ensure_heartbeat = lambda: None
-        api_grp = {"id": "API", "name": "Nhóm nhận đơn", "devices": ["H1"], "mode": "api", "api": {"pool": "p"}}
-        other_api = {"id": "API2", "name": "Nhóm nhận đơn khác", "devices": ["H1"], "mode": "api", "api": {"pool": "q"}}
-        script_grp = {"id": "KB", "name": "Nhóm kịch bản", "devices": ["H1"], "mode": "once"}
-        RH.workers["H1"] = worker("API", None, alive=False, hold="đơn T-9 cần đối soát")
+        api_grp = {"id": "API", "name": "Nhóm nhận đơn", "devices": ["H1"]}
+        other_api = {"id": "API2", "name": "Nhóm nhận đơn khác", "devices": ["H1"]}
+        script_grp = {"id": "KB", "name": "Nhóm kịch bản", "devices": ["H1"]}
+        RH.workers["H1"] = worker("API", "nd0", alive=False, hold="đơn T-9 cần đối soát")
         RH.workers["H1"]["mode"] = "api"
         ok(RH.start_machine("H1", script_grp, scr_once) is False and RH.hold_reason("H1") == "đơn T-9 cần đối soát",
            "máy đang giữ chờ đối soát: chạy KỊCH BẢN của nhóm khác lên → từ chối, vẫn giữ (không bấm vào tài khoản khách còn đăng nhập)", RH.hold_reason("H1"))
-        ok(RH.start_machine("H1", other_api, None) is False and RH.hold_reason("H1") == "đơn T-9 cần đối soát", "…nhóm nhận đơn KHÁC cũng không chạy đè được")
-        ok(RH.start_machine("H1", dict(api_grp, mode="once"), scr_once) is False, "…kể cả chính nhóm đó nhưng không phải đường «Chạy lại» của chế độ nhận đơn")
+        ok(RH.start_machine("H1", other_api, scr_orders) is False and RH.hold_reason("H1") == "đơn T-9 cần đối soát", "…kịch bản nhận đơn cùng mã nhưng của NHÓM KHÁC cũng không chạy đè được")
+        ok(RH.start_machine("H1", api_grp, scr_once) is False and RH.start_machine("H1", api_grp, dict(scr_orders, id="nd-khac")) is False,
+           "…kể cả chính nhóm đó nhưng là kịch bản thường / kịch bản nhận đơn KHÁC (không phải đường «Chạy lại» của đúng kịch bản đã để máy giữ)")
         RH.workers["H0"] = worker(None, None, alive=False, hold="giữ của một việc không rõ nhóm")
         RH.workers["H0"]["mode"] = "api"
-        ok(RH.start_machine("H0", {"mode": "api", "devices": ["H0"], "api": {"pool": "p"}}, None) is False and RH.hold_reason("H0"),
-           "nhóm không có id không được coi là «cùng nhóm» với một việc cũng không có id nhóm (None == None không phải là cùng nhóm)")
-        ok(RH.start_machine("H1", api_grp, None) is True, "chỉ «Chạy lại» của CHÍNH nhóm nhận đơn đó mới chạy tiếp được (đường này tự đăng xuất + kiểm game sạch)")
+        ok(RH.start_machine("H0", {"devices": ["H0"]}, dict(scr_orders, id=None)) is False and RH.start_machine("H0", {"devices": ["H0"]}, scr_orders) is False and RH.hold_reason("H0"),
+           "nhóm / kịch bản không có id không được coi là «cùng việc» với một việc cũng không có id (None == None không phải là cùng việc)")
+        ok(RH.start_machine("H1", api_grp, scr_orders) is True, "chỉ «Chạy lại» của CHÍNH kịch bản nhận đơn đó mới chạy tiếp được (đường này tự đăng xuất + kiểm game sạch)")
         RH.workers["H1"]["thread"].join(5)
         ok(RH.hold_reason("H1") == "đơn T-9 cần đối soát",
            "«Chạy lại» mà lần chạy mới kết thúc TRƯỚC khi kiểm xong game đã đăng xuất (không mở được máy, bị dừng…) → máy VẪN đang giữ", RH.hold_reason("H1"))
@@ -478,7 +494,7 @@ def main():
         RH.pause_machine("H1")
         ok(RH.hold_reason("H1") == "đơn T-9 cần đối soát" and RH.workers["H1"].get("carry_hold") == "đơn T-9 cần đối soát" and RH.status()["H1"]["parked"] is True and RH.status()["H1"]["hold"],
            "bấm «Dừng máy» trên máy đang giữ chờ kiểm tra → vẫn giữ nguyên (cả lý do mang theo), chỉ thêm trạng thái đang dừng", RH.status()["H1"])
-        ok(RH.start_machine("H1", api_grp, None) is False, "…lúc đang dừng thì cả «Chạy lại» của chính nhóm nhận đơn cũng chưa chạy (phải bấm Tiếp tục trước)")
+        ok(RH.start_machine("H1", api_grp, scr_orders) is False, "…lúc đang dừng thì cả «Chạy lại» của chính kịch bản nhận đơn cũng chưa chạy (phải bấm Tiếp tục trước)")
         ok(RH.resume_machine("H1") is True and RH.hold_reason("H1") == "đơn T-9 cần đối soát" and RH.workers["H1"].get("carry_hold") == "đơn T-9 cần đối soát" and RH.start_machine("H1", script_grp, scr_once) is False,
            "bấm «Tiếp tục» → hết dừng nhưng VẪN đang giữ chờ kiểm tra (Tiếp tục không phải lời xác nhận đã đối soát)", RH.hold_reason("H1"))
         RH.pause_machine("H1")
@@ -494,7 +510,7 @@ def main():
         def clean_run(name, group, w):
             w["carry_hold"] = None                       # như bộ chạy thật lúc đã THẤY game ở trạng thái chưa đăng nhập
         RH._run_api = clean_run
-        RH.start_machine("H1", api_grp, None); RH.workers["H1"]["thread"].join(5)
+        RH.start_machine("H1", api_grp, scr_orders); RH.workers["H1"]["thread"].join(5)
         ok(RH.hold_reason("H1") is None and RH.start_machine("H1", script_grp, scr_once) is True, "lần «Chạy lại» đã kiểm xong game sạch → hết giữ, máy dùng lại bình thường")
         RH.workers["H1"]["thread"].join(5)
 
@@ -688,7 +704,7 @@ def main():
             sc_nd0 = {"id": "nd0", "name": "Chưa chọn pool", "mode": "orders", "steps": [], "loops": 1, "orders": store.api_defaults(None)}
             gO2 = {"id": "GO", "name": "Nhóm nhận đơn theo kịch bản", "mode": "once", "devices": ["M1", "M2"], "scripts": [sc_ok, sc_nd, sc_nd0]}
             ok(gui.Api._takes_orders(gO2, "nd") is True and gui.Api._takes_orders(gO2, "s1") is False and gui.Api._takes_orders(gO2, None) is False
-               and gui.Api._takes_orders({"mode": "api"}) is True, "nhận ra lần chạy nào là NHẬN ĐƠN CỦA KHÁCH: nhóm nhận đơn kiểu cũ, hoặc kịch bản có cách chạy «nhận đơn»")
+               and gui.Api._takes_orders({"mode": "api"}) is False, "nhận ra lần chạy nào là NHẬN ĐƠN CỦA KHÁCH: đúng khi kịch bản được chọn có cách chạy «nhận đơn» (nhóm không tự nhận đơn)")
             ok("chưa chọn pool" in rn(gO2, "nd0") and "Chưa chọn pool" in rn(gO2, "nd0"), "kịch bản nhận đơn chưa chọn pool → báo rõ, không chạy", rn(gO2, "nd0"))
             real_gateway = gui._gateway
 
@@ -696,15 +712,22 @@ def main():
                 def __init__(self, pool): self._pool = pool
                 def pool(self, code): return self._pool
             gui._gateway = lambda: FakePoolGW({"code": "p-x", "login_steps": [], "purchase_steps": [], "finish_steps": []})
-            ok("mua 1 gói" in rn(gO2, "nd"), "kịch bản nhận đơn mà cả kịch bản lẫn gateway đều chưa có bước mua → báo rõ, không chạy", rn(gO2, "nd"))
-            gui._gateway = lambda: FakePoolGW({"code": "p-x", "purchase_steps": [{"type": "tap_text", "value": "Mua"}]})
-            ok(rn(gO2, "nd") is None, "đủ bước mua (lấy từ gateway) → kịch bản nhận đơn chạy được")
+            ok("mua 1 gói" in rn(gO2, "nd"), "kịch bản nhận đơn chưa có bước mua → báo rõ, không chạy", rn(gO2, "nd"))
+            sc_buy = dict(sc_nd, id="nd-mua", orders=store.api_defaults({"pool": "p-x", "steps": {"login": [home], "purchase": [tap]}}))
+            ok(rn(dict(gO2, scripts=[sc_buy]), "nd-mua") is None, "kịch bản có bước mua → chạy được")
+            # bước ĐỜI CŨ còn lưu ở pool trên gateway (dạng {type, value}); lúc đầu «nav» cố ý sai dạng
+            legacy_pool = {"code": "p-x", "login_steps": [{"type": "launch", "value": "game-cu", "note": "mở game"}], "nav_steps": [{"type": "tap", "value": "sai-dang"}],
+                           "purchase_steps": [{"type": "tap_text", "value": "Mua"}], "finish_steps": [{"type": "home", "value": ""}]}
+            gui._gateway = lambda: FakePoolGW(legacy_pool)
+            ok("mua 1 gói" in rn(gO2, "nd"), "bước đời cũ còn nằm ở gateway KHÔNG được tính là bước của kịch bản (phải chép về kịch bản trước)", rn(gO2, "nd"))
             real_get2, real_allow = gui.store.get_group, gui.RUNNER.allow_api
-            gui.store.get_group = lambda gid: gO2 if gid == "GO" else None
+            store.save_group(json.loads(json.dumps(gO2)))       # nhóm THẬT trong kho: phép chép bước đời cũ ghi thẳng vào kịch bản đã lưu
+            gui.store.get_group = old_get
+            orders_of = lambda sid: next(s for s in store.get_group("GO")["scripts"] if s["id"] == sid)["orders"]
             started_o = []
             real_start_group, real_start_machine = gui.RUNNER.start_group, gui.RUNNER.start_machine
             gui.RUNNER.start_group = lambda g, names=None, script=None: started_o.append(("group", (script or {}).get("id"))) or list(names or [])
-            gui.RUNNER.start_machine = lambda name, g, script=None: started_o.append(("machine", (script or {}).get("id"))) or True
+            gui.RUNNER.start_machine = lambda name, g, script=None, start_at=0: started_o.append(("machine", (script or {}).get("id"))) or True
             try:
                 gui.RUNNER.allow_api = False            # bản web
                 r1, r2 = gui.Api().group_run("GO", ["M1"], "nd"), gui.Api().machine_run("GO", "M1", "nd")
@@ -714,8 +737,89 @@ def main():
                 ok(r3.get("ok") is True and started_o == [("group", "s1")], "…kịch bản thường của cùng nhóm vẫn chạy ở bản web", (r3, started_o))
                 gui.RUNNER.allow_api = True             # app cửa sổ
                 started_o.clear()
+                # giai đoạn «vào danh sách gói» kịch bản đang TRỐNG mà bước đời cũ của nó sai dạng → không chép gì, không chạy (trước đây máy cũng từ chối)
+                rb, ab = gui.Api().group_run("GO", ["M1"], "nd"), gui.Api().orders_adopt("GO", "nd")
+                ok(rb["ok"] is False and "sai dạng" in rb["error"] and "Vào danh sách gói" in rb["error"] and started_o == [] and "copied" not in rb
+                   and orders_of("nd")["gw_steps_copied"] is False and orders_of("nd")["steps"]["purchase"] == [] and ab["ok"] is False and ab.get("blocked") is True and "sai dạng" in ab["error"],
+                   "bước đời cũ SAI DẠNG ở giai đoạn kịch bản đang trống → KHÔNG chạy, không chép gì, không đánh dấu; giao diện nhận lời báo rõ", (rb, ab))
+                legacy_pool["nav_steps"] = [{"type": "tap_text", "value": "Cửa hàng"}]                      # sửa lại trên gateway (hoặc xoá bước cũ)
                 r4 = gui.Api().group_run("GO", ["M1"], "nd")
                 ok(r4.get("ok") is True and started_o == [("group", "nd")], "app cửa sổ: kịch bản nhận đơn được chuyển cho bộ chạy kèm đúng kịch bản", (r4, started_o))
+                o4 = orders_of("nd")
+                ok(r4.get("copied") == {"nav": 1, "purchase": 1, "finish": 1} and r4["group"]["id"] == "GO" and o4["gw_steps_copied"] is True
+                   and o4["steps"]["purchase"] == [{"type": "tap_text", "text": "Mua"}] and o4["steps"]["finish"] == [{"type": "home"}]
+                   and o4["steps"]["login"] == [home] and o4["steps"]["nav"] == [{"type": "tap_text", "text": "Cửa hàng"}],
+                   "lần chạy đầu: bước đời cũ ở gateway được CHÉP vào các giai đoạn kịch bản đang trống (giai đoạn đã có bước giữ nguyên), kết quả kèm nhóm mới nhất",
+                   (r4.get("copied"), o4))
+                # trình sửa còn cầm bản CŨ HƠN lần chép (chưa có dấu «đã chép», các giai đoạn kia còn trống) rồi bấm Lưu → không được ghi đè mất bước vừa chép
+                stale = json.loads(json.dumps(gO2)); stale["name"] = "Tên vừa sửa"
+                next(s for s in stale["scripts"] if s["id"] == "nd")["orders"]["steps"]["after"] = [tap]     # …và người dùng có soạn thêm một giai đoạn
+                store.save_group(stale)
+                o4b = orders_of("nd")
+                ok(store.get_group("GO")["name"] == "Tên vừa sửa" and o4b["gw_steps_copied"] is True and o4b["steps"]["purchase"] == o4["steps"]["purchase"]
+                   and o4b["steps"]["finish"] == o4["steps"]["finish"] and o4b["steps"]["after"] == [tap] and o4b["steps"]["login"] == [home],
+                   "lưu một bản sửa cũ hơn lần chép: phần người dùng sửa được ghi, bước vừa chép + dấu «đã chép» KHÔNG bị ghi đè mất", o4b)
+                # …nhưng giai đoạn do CHÍNH người dùng soạn mà họ xoá trong bản sửa cũ đó thì phải mất thật: chỉ giai đoạn lần chép đã điền mới được giữ lại
+                ok(o4b["gw_copied_phases"] == ["nav", "purchase", "finish"], "kịch bản ghi lại những giai đoạn lần chép đã điền (sổ của backend, giữ qua lần lưu không gửi lại)", o4b["gw_copied_phases"])
+                stale2 = json.loads(json.dumps(gO2))
+                next(s for s in stale2["scripts"] if s["id"] == "nd")["orders"]["steps"]["login"] = []      # xoá hết bước đăng nhập — bước của chính người dùng
+                store.save_group(stale2)
+                o4c = orders_of("nd")
+                ok(o4c["steps"]["login"] == [] and o4c["steps"]["after"] == [] and o4c["steps"]["purchase"] == o4["steps"]["purchase"] and o4c["steps"]["finish"] == o4["steps"]["finish"]
+                   and o4c["steps"]["nav"] == o4["steps"]["nav"] and o4c["gw_steps_copied"] is True and o4c["gw_copied_phases"] == ["nav", "purchase", "finish"],
+                   "bản sửa cũ xoá trống giai đoạn do người dùng tự soạn → trống thật (không tự đầy lại); giai đoạn lần chép đã điền vẫn được giữ", {p: len(o4c["steps"][p]) for p in store.API_PHASES})
+                gg = store.get_group("GO")
+                next(s for s in gg["scripts"] if s["id"] == "nd")["orders"]["steps"]["login"] = [home]      # trả lại bước đăng nhập cho các phép thử dưới
+                store.save_group(gg)
+                gg = store.get_group("GO")
+                next(s for s in gg["scripts"] if s["id"] == "nd")["orders"]["steps"]["finish"] = []        # người dùng xoá hết bước «kết thúc đơn»
+                store.save_group(gg)
+                r5 = gui.Api().machine_run("GO", "M1", "nd")
+                rs = store.save_group(store.get_group("GO"))        # bản ĐÃ có dấu mà giai đoạn trống → người dùng tự xoá: lưu lại vẫn trống
+                ok(next(s for s in rs["scripts"] if s["id"] == "nd")["orders"]["steps"]["finish"] == [], "…lưu lại bản đã có dấu: giai đoạn người dùng xoá trống không tự đầy lại")
+                ok(r5.get("ok") is True and "copied" not in r5 and "group" not in r5 and orders_of("nd")["steps"]["finish"] == [] and orders_of("nd")["gw_steps_copied"] is True,
+                   "đã chép MỘT lần thì không chép lại: giai đoạn người dùng xoá trống thì trống thật", (r5, orders_of("nd")["steps"]["finish"]))
+                ad, ad0 = gui.Api().orders_adopt("GO", "nd"), gui.Api().orders_adopt("GO", "nd0")
+                ok(ad["ok"] is True and ad["copied"] == {} and ad["group"]["id"] == "GO" and ad0["ok"] is True and ad0["copied"] == {} and orders_of("nd0")["gw_steps_copied"] is False
+                   and gui.Api().orders_adopt("khong-co", "x")["ok"] is False,
+                   "orders_adopt (giao diện gọi khi mở kịch bản): đã chép rồi / chưa chọn pool → không chép gì, trả nhóm mới nhất; nhóm lạ → lỗi", (ad.get("copied"), ad0))
+                gg = store.get_group("GO")
+                next(s for s in gg["scripts"] if s["id"] == "nd0")["orders"]["pool"] = "p-x"
+                store.save_group(gg)
+                ad1 = gui.Api().orders_adopt("GO", "nd0")
+                ok(ad1["copied"] == {"login": 1, "nav": 1, "purchase": 1, "finish": 1} and orders_of("nd0")["steps"]["login"] == [{"type": "launch", "app": "game-cu", "note": "mở game"}]
+                   and orders_of("nd0")["gw_steps_copied"] is True, "orders_adopt trên kịch bản chưa chép: chép các giai đoạn trống (ghi chú của bước đi theo) rồi đánh dấu",
+                   (ad1.get("copied"), orders_of("nd0")["steps"]["login"]))
+                # chép xong rồi mà sau đó KHÔNG chạy được (máy không thuộc nhóm): kết quả lỗi vẫn kèm nhóm mới để trình sửa nạp lại
+                gg = store.get_group("GO")
+                gg["scripts"].append({"id": "nd2", "name": "Nhận đơn 2", "mode": "orders", "steps": [], "loops": 1, "orders": {"pool": "p-x", "steps": {"login": [home]}}})
+                store.save_group(gg)
+                r6 = gui.Api().machine_run("GO", "MAY-LA", "nd2")
+                ok(r6["ok"] is False and "không thuộc nhóm" in r6["error"] and r6.get("copied") == {"nav": 1, "purchase": 1, "finish": 1} and r6["group"]["id"] == "GO"
+                   and orders_of("nd2")["gw_steps_copied"] is True, "vừa chép xong mà không chạy được → kết quả lỗi VẪN kèm `copied` + nhóm mới nhất", {k: r6.get(k) for k in ("ok", "error", "copied")})
+                # nhiều luồng cùng đọc-sửa-ghi tệp nhóm (giao diện lưu + chép bước đời cũ): không hỏng tệp, không mất thay đổi của bên nào
+                import threading as _th
+                errs, base = [], store.get_group("GO")
+                for rnd in range(40):
+                    g0 = json.loads(json.dumps(base)); g0["name"] = "Vòng %d" % rnd
+                    next(s for s in g0["scripts"] if s["id"] == "nd2")["orders"] = {"pool": "p-x", "steps": {"login": [home]}}
+                    store._write(store.GROUPS_FILE, [g0])
+                    go = _th.Event()
+                    def adopt():
+                        go.wait()
+                        try: store.adopt_gateway_steps("GO", "nd2", {"finish": [home]})
+                        except Exception as e: errs.append(repr(e))
+                    def add_dev():
+                        go.wait()
+                        try: store.add_device_to_group("M-%d" % rnd, "GO")
+                        except Exception as e: errs.append(repr(e))
+                    ts = [_th.Thread(target=adopt), _th.Thread(target=add_dev)]
+                    [t.start() for t in ts]; go.set(); [t.join() for t in ts]
+                    got = store._read_strict(store.GROUPS_FILE)
+                    o = next(s for s in got[0]["scripts"] if s["id"] == "nd2").get("orders") or {}
+                    if not (("M-%d" % rnd) in got[0]["devices"] and (o.get("steps") or {}).get("finish") == [home] and o.get("gw_steps_copied") is True):
+                        errs.append("vòng %d mất thay đổi" % rnd)
+                ok(errs == [] and not [f for f in os.listdir(tmp) if f.endswith(".tmp")], "40 vòng hai luồng cùng ghi tệp nhóm (chép bước + thêm máy): tệp không hỏng, không bên nào mất thay đổi, không sót tệp tạm", errs[:3])
                 # máy đang giữ sau đơn của kịch bản «nd»: chỉ chính kịch bản đó được «Chạy lại»
                 gui.RUNNER.workers["M2"] = worker("GO", "nd", alive=False, hold="đơn T-5 cần đối soát")
                 gui.RUNNER.workers["M2"]["mode"] = "api"
@@ -723,12 +827,13 @@ def main():
                 gui.WEBDEV = None
                 hw = gui.Api()._held_what
                 ok("M2" not in hw(gO2, ["M2"], "nd") and "M2" in hw(gO2, ["M2"], "s1") and "M2" in hw(gO2, ["M2"], "nd0") and "M2" in hw({"id": "GO", "mode": "api", "devices": ["M2"]}, ["M2"]),
-                   "máy đang giữ sau đơn của kịch bản nhận đơn: «Chạy lại» đúng kịch bản đó thì được; kịch bản khác / nhóm nhận đơn kiểu cũ thì bị chặn")
+                   "máy đang giữ sau đơn của kịch bản nhận đơn: «Chạy lại» đúng kịch bản đó thì được; kịch bản khác / nhóm không nêu kịch bản thì bị chặn")
                 gui.WEBDEV = object()
                 ok("M2" in gui.Api()._held_what(gO2, ["M2"], "nd"), "…ở bản web thì «Chạy lại» cũng bị chặn (gỡ giữ là việc của người vận hành ở app cửa sổ)")
                 gui.WEBDEV = real_web
                 gui.RUNNER.ack_hold("M2")
             finally:
+                store.delete_group("GO")
                 gui._gateway, gui.store.get_group, gui.RUNNER.allow_api = real_gateway, real_get2, real_allow
                 gui.RUNNER.start_group, gui.RUNNER.start_machine = real_start_group, real_start_machine
         finally:

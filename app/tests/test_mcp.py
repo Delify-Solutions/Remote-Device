@@ -48,13 +48,14 @@ class FakeHost:
         self.held = []
         self.opened, self.closed = [], []
         self.started, self.stopped = [], []
-        self.group_list = [{"id": "g1", "name": "Nhóm eFootball", "mode": "api", "devices": ["iPhoneFarm-01"], "pool": "game-test", "scripts": []},
-                           {"id": "g2", "name": "Nhóm kịch bản", "mode": "once", "devices": ["iPhoneFarm-01"], "pool": None,
+        self.group_list = [{"id": "g1", "name": "Nhóm eFootball", "devices": ["iPhoneFarm-01"],
+                            "scripts": [{"id": "nd", "name": "Nạp theo đơn", "steps": 12, "mode": "orders", "loops": 1, "pool": "game-test"}]},
+                           {"id": "g2", "name": "Nhóm kịch bản", "devices": ["iPhoneFarm-01"],
                             "scripts": [{"id": "s1", "name": "Đăng nhập", "steps": 3, "mode": "once", "loops": 1},
                                         {"id": "s2", "name": "Mua gói", "steps": 5, "mode": "loop", "loops": 0}]},
-                           {"id": "g3", "name": "Nhóm một kịch bản", "mode": "once", "devices": ["iPhoneFarm-01"], "pool": None,
+                           {"id": "g3", "name": "Nhóm một kịch bản", "devices": ["iPhoneFarm-01"],
                             "scripts": [{"id": "only", "name": "Duy nhất", "steps": 1, "mode": "once", "loops": 1}]},
-                           {"id": "g4", "name": "Nhóm trống", "mode": "once", "devices": [], "pool": None, "scripts": []}]
+                           {"id": "g4", "name": "Nhóm trống", "devices": [], "scripts": []}]
         self.full_lists = 0
 
     def names(self): return list(self.games)
@@ -76,7 +77,7 @@ class FakeHost:
                               "log": [{"t": "10:00:00", "name": "iPhoneFarm-01", "text": "Đã mua 1050 Coins (1/1)"}]}
     def groups(self): return list(self.group_list)
     def start(self, gid, name=None, script=None):
-        self.started.append((gid, name, script) if script else (gid, name))
+        self.started.append((gid, name, script))
         return {"ok": True, "started": [name] if name else ["iPhoneFarm-01"]}
     def stop(self, name=None, gid=None, force=False): self.stopped.append((name, gid, force)); return {"ok": True}
     def rescan(self): return {"ok": True}
@@ -334,10 +335,10 @@ def run_all(tmp, real_ocr):
        "run_steps: bước có điều kiện nói rõ ĐÃ BẤM hay BỎ QUA (xong theo hai kiểu); các bước khác xong thì không kèm lời", body(r))
 
     gl = body(call(server, "list_groups"))
-    ok("Nhóm eFootball (id g1)" in gl and "nhận đơn từ pool «game-test»" in gl, "danh sách nhóm nhận đơn", gl)
+    ok("Nhóm eFootball (id g1)" in gl and "«Nạp theo đơn» (12 bước, NHẬN ĐƠN THẬT từ pool «game-test»)" in gl, "danh sách nhóm: kịch bản nhận đơn được nêu rõ là NHẬN ĐƠN THẬT kèm pool", gl)
     ok("«Đăng nhập» (3 bước, 1 lần)" in gl and "«Mua gói» (5 bước, lặp)" in gl and "Nhóm trống" in gl and "kịch bản: chưa có" in gl, "danh sách nhóm: mỗi kịch bản kèm số bước + cách chạy (1 lần / lặp)", gl)
     call(server, "start_run", {"group": "nhom efootball", "device": "iPhoneFarm-01"}); call(server, "stop_run", {"device": "iPhoneFarm-01", "force": True}); call(server, "stop_run", {"group": "g1"})
-    ok(host.started == [("g1", "iPhoneFarm-01")] and host.stopped == [("iPhoneFarm-01", None, True), (None, "g1", False)], "chạy / dừng theo tên nhóm hoặc id, dừng thường và dừng ngay", (host.started, host.stopped))
+    ok(host.started == [("g1", "iPhoneFarm-01", "nd")] and host.stopped == [("iPhoneFarm-01", None, True), (None, "g1", False)], "chạy / dừng theo tên nhóm hoặc id, dừng thường và dừng ngay", (host.started, host.stopped))
     ok(call(server, "start_run", {"group": "nhóm lạ"})["result"]["isError"] is True and call(server, "stop_run", {})["result"]["isError"] is True, "nhóm không tồn tại / không nêu gì để dừng → từ chối")
     # nhóm chạy KỊCH BẢN: phải biết chạy kịch bản nào
     n0 = len(host.started)
@@ -620,8 +621,9 @@ def run_all(tmp, real_ocr):
             def list_devices(self):
                 return [{"name": "iPhoneFarm-01", "udid": "BI-MAT-UDID", "label": "Máy A", "board_online": True, "port": "/dev/cu.x", "ble": True, "ios_connected": True,
                          "ios": "16.7", "model": "iPhone 8", "group_id": "g1", "group_name": "Nhóm A", "running": True}]
-            def machine_run(self, gid, n): self.calls.append(("machine_run", gid, n)); return {"ok": True, "started": True}
-            def group_run(self, gid): self.calls.append(("group_run", gid)); return {"ok": False, "error": "Nhóm chưa chọn pool của gateway."}
+            def machine_run(self, gid, n, script=None):
+                self.calls.append(("machine_run", gid, n, script)); return {"ok": True, "started": True, "copied": {"finish": 2}, "group": {"id": gid, "scripts": [{"steps": ["BUOC-BI-MAT"]}]}}
+            def group_run(self, gid, names=None, script=None): self.calls.append(("group_run", gid, script)); return {"ok": False, "error": "Kịch bản «Nạp theo đơn» chưa chọn pool của gateway."}
             def machine_stop(self, n, force=False): self.calls.append(("machine_stop", n, force)); return {"ok": True}
             def group_stop(self, gid, force=False): self.calls.append(("group_stop", gid, force)); return {"ok": True}
             def rescan(self): self.calls.append(("rescan",)); return {"ok": False, "error": "Đang có máy chạy"}
@@ -629,7 +631,8 @@ def run_all(tmp, real_ocr):
         runner, mgr, api = FakeRunner(), FakeMgr(fh.navs), FakeApi()
         store_devs, store_groups = control.store.get_devices, control.store.get_groups
         control.store.get_devices = lambda: [{"name": "iPhoneFarm-01", "udid": "BI-MAT-UDID", "label": "Máy A"}]
-        control.store.get_groups = lambda: [{"id": "g1", "name": "Nhóm A", "mode": "api", "devices": ["iPhoneFarm-01"], "api": {"pool": "game-test", "steps": {"login": [{"type": "type", "text": "{{password}}"}]}}, "steps": []}]
+        control.store.get_groups = lambda: [{"id": "g1", "name": "Nhóm A", "devices": ["iPhoneFarm-01"], "scripts": [
+            {"id": "nd", "name": "Nạp theo đơn", "mode": "orders", "steps": [], "loops": 1, "orders": {"pool": "game-test", "steps": {"login": [{"type": "type", "text": "{{password}}"}]}}}]}]
         try:
             ah = control.AppHost(mgr, runner, api)
             runner.on.add("iPhoneFarm-01")
@@ -640,8 +643,8 @@ def run_all(tmp, real_ocr):
             ok("đang chạy" in (why or "") and ah.acquire("iPhoneFarm-02") is None and ah.active() == ["iPhoneFarm-02"], "máy đang nhận đơn = không xin được; máy rảnh thì xin được", why)
             ah.release("iPhoneFarm-02")
             gv = ah.groups()[0]
-            ok(gv == {"id": "g1", "name": "Nhóm A", "mode": "api", "devices": ["iPhoneFarm-01"], "pool": "game-test", "scripts": []} and "password" not in json.dumps(gv),
-               "nhóm: chỉ tên / chế độ / máy / pool — KHÔNG lộ các bước (có thể chứa dữ liệu riêng)", gv)
+            ok(gv == {"id": "g1", "name": "Nhóm A", "devices": ["iPhoneFarm-01"], "scripts": [{"id": "nd", "name": "Nạp theo đơn", "steps": 1, "mode": "orders", "loops": 1, "pool": "game-test"}]}
+               and "password" not in json.dumps(gv), "nhóm: chỉ tên / máy / kịch bản (số bước, cách chạy, pool) — KHÔNG lộ các bước (có thể chứa dữ liệu riêng)", gv)
             groups_nhom_a = control.store.get_groups
             control.store.get_groups = lambda: [{"id": "g9", "name": "N", "mode": "once", "devices": [], "scripts": [
                 {"id": "a", "name": "Đăng nhập", "mode": "loop", "loops": 0, "steps": [{"type": "type", "text": "MAT-KHAU-BI-MAT"}, {"type": "home"}]}]}]
@@ -690,12 +693,14 @@ def run_all(tmp, real_ocr):
             ok(t["isError"] is False and mgr.asked == ["iPhoneFarm-01"] and mgr.rescans == 1, "máy rảnh → bấm qua phiên của app (app vừa mở chưa quét board → tự quét một lần)", (mgr.asked, mgr.rescans))
             rm.call("tap", {"device": "iPhoneFarm-01", "x": 5, "y": 5})
             ok(mgr.rescans == 1, "đã biết board rồi thì không quét lại mỗi lệnh")
-            rm.call("start_run", {"group": "Nhóm A", "device": "iPhoneFarm-01"}); r2 = rm.call("start_run", {"group": "g1"})
+            r1 = rm.call("start_run", {"group": "Nhóm A", "device": "iPhoneFarm-01"}); r2 = rm.call("start_run", {"group": "g1"})
             rm.call("stop_run", {"device": "iPhoneFarm-01"}); rm.call("stop_run", {"group": "Nhóm A", "force": True}); r3 = rm.call("rescan_boards")
-            ok(api.calls == [("machine_run", "g1", "iPhoneFarm-01"), ("group_run", "g1"), ("machine_stop", "iPhoneFarm-01", False), ("group_stop", "g1", True), ("rescan",)],
-               "chạy / dừng / quét lại đi qua đúng các hàm của app", api.calls)
+            ok(api.calls == [("machine_run", "g1", "iPhoneFarm-01", "nd"), ("group_run", "g1", "nd"), ("machine_stop", "iPhoneFarm-01", False), ("group_stop", "g1", True), ("rescan",)],
+               "chạy / dừng / quét lại đi qua đúng các hàm của app (luôn kèm kịch bản — nhóm một kịch bản thì tự lấy)", api.calls)
+            ok(r1["isError"] is False and "nhận đơn từ gateway" in r1["content"][0]["text"] and "BUOC-BI-MAT" not in json.dumps(r1, ensure_ascii=False) and r1["structuredContent"].get("copied") == {"finish": 2},
+               "chạy kịch bản nhận đơn: lời đáp nói rõ là nhận đơn; nhóm app trả kèm (có nội dung bước) KHÔNG lọt tới AI", r1)
             ok(r2["isError"] is True and "chưa chọn pool" in r2["content"][0]["text"] and r3["isError"] is True and "Đang có máy chạy" in r3["content"][0]["text"],
-               "app từ chối (nhóm thiếu cấu hình, đang có máy chạy) → lý do tới được người gọi")
+               "app từ chối (kịch bản thiếu cấu hình, đang có máy chạy) → lý do tới được người gọi")
             st = rm.call("farm_status")["content"][0]["text"]
             ok("Bắt đầu nhận đơn" in st, "xem được nhật ký chạy của app", st[:80])
             # máy đang được AI điều khiển thì app phải biết (để không dò/đóng cổng của nó giữa chừng)

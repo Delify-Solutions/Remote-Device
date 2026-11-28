@@ -24,34 +24,50 @@
     { udid: "1111aaaa2222bbbb3333cccc4444dddd5555eeee", name: "iPhone 8 (demo)", model: "iPhone 8", product_type: "iPhone10,1", ios: "16.7.10", connection: "USB" },
     { udid: "aaaa1111bbbb2222cccc3333dddd4444eeee5555", name: "XS Max", model: "iPhone XS Max", product_type: "iPhone11,6", ios: "18.7", connection: "USB" },
   ];
+  // nhóm = {id, name, devices, scripts}; cách chạy nằm trong từng kịch bản (1 lần / lặp / nhận đơn)
   let GROUPS = [
-    { id: "g1", name: "iPhone 8 · 16.7", mode: "loop", loops: 0,
-      devices: ["iPhoneFarm-01"], steps: [{ type: "home" }, { type: "wait", seconds: 2 }] },
-    { id: "g2", name: "eFootball · nhận đơn", mode: "api", loops: 0, devices: ["iPhoneFarm-02"], steps: [],
-      api: { pool: "efootball-ios", login_wait: 45, purchase_wait: 60, check_keyboard: true,
-             steps: { login: [], otp: [], nav: [], purchase: [{ type: "tap", x: 320, y: 610 }, { type: "tap_text", text: "Mua" }], after: [], finish: [] } } },
+    { id: "g1", name: "iPhone 8 · 16.7", devices: ["iPhoneFarm-01"],
+      scripts: [{ id: "k1", name: "Kịch bản 1", steps: [{ type: "home" }, { type: "wait", seconds: 2 }], mode: "loop", loops: 0 }] },
+    { id: "g2", name: "eFootball · nhận đơn", devices: ["iPhoneFarm-02"],
+      scripts: [{ id: "don", name: "Nhận đơn", steps: [], mode: "orders", loops: 1,
+        orders: { pool: "efootball-ios", login_wait: 45, purchase_wait: 60, check_keyboard: true, gw_steps_copied: false,
+                  steps: { login: [], otp: [], nav: [], purchase: [{ type: "tap", x: 320, y: 610 }, { type: "tap_text", text: "Mua" }], after: [], finish: [] } } }] },
   ];
   let GWCFG = { url: "https://gateway.example.com", key: "gwt_demo1234" };
   const GWPOOLS = [{ code: "efootball-ios", name: "eFootball (iOS) — Konami ID", game: "eFootball", active: true },
                    { code: "idv-asia", name: "Identity V (Asia)", game: "Identity V", active: false }];
+  // bước đời cũ còn lưu ở pool trên gateway: orders_adopt (và lúc bấm chạy) chép MỘT LẦN vào các giai đoạn còn trống của kịch bản
+  const GW_LEGACY = {
+    login: [{ type: "launch", app: "efootball" }, { type: "wait_text", text: "Đăng nhập", timeout: 20 }, { type: "tap_text", text: "Đăng nhập" },
+            { type: "type", text: "{{username}}" }, { type: "key", name: "tab" }, { type: "type", text: "{{password}}" }, { type: "key", name: "enter" }],
+    nav: [{ type: "tap_text", text: "Cửa hàng" }, { type: "tap_text", text: "eFootball Coins" }],
+    purchase: [{ type: "tap_text", text: "{{package.ocr_text}}" }, { type: "tap_text", text: "Mua" }],
+    after: [{ type: "tap_text", text: "OK" }], finish: [{ type: "tap_text", text: "Đăng xuất" }, { type: "home" }] };
   const GWPOOL = { ok: true, code: "efootball-ios", name: "eFootball (iOS) — Konami ID", active: true,
-    steps: {
-      login: [{ type: "launch", app: "efootball" }, { type: "wait_text", text: "Đăng nhập", timeout: 20 }, { type: "tap_text", text: "Đăng nhập" },
-              { type: "type", text: "{{username}}" }, { type: "key", name: "tab" }, { type: "type", text: "{{password}}" }, { type: "key", name: "enter" }],
-      otp: [], nav: [{ type: "tap_text", text: "Cửa hàng" }, { type: "tap_text", text: "eFootball Coins" }],
-      purchase: [{ type: "tap_text", text: "{{package.ocr_text}}" }, { type: "tap_text", text: "Mua" }],
-      after: [{ type: "tap_text", text: "OK" }], finish: [{ type: "tap_text", text: "Đăng xuất" }, { type: "home" }] },
     rules: [{ when: "logged_out", value: "Konami ID|Đăng nhập", note: "" }, { when: "login_success", value: "Trang chủ", note: "" }],
     packages: [{ code: "coin_1050", name: "1050 eFootball Coins" }],
     login_fields: [{ key: "username" }, { key: "password" }], otp: { enabled: true },
-    missing_rules: ["Nạp gói THÀNH CÔNG"], required_phases: ["login", "purchase", "finish"] };
+    missing_rules: ["Nạp gói THÀNH CÔNG"] };
+  // chép bước đời cũ vào kịch bản nhận đơn `sc` (chỉ giai đoạn đang trống, chỉ một lần) → {giai đoạn: số bước}; không phải lúc chép → null
+  function mockAdopt(sc) {
+    if (!sc || sc.mode !== "orders" || !sc.orders || sc.orders.gw_steps_copied || sc.orders.pool !== GWPOOL.code) return null;
+    const copied = {};
+    Object.keys(GW_LEGACY).forEach(k => { if (!(sc.orders.steps[k] || []).length) { sc.orders.steps[k] = JSON.parse(JSON.stringify(GW_LEGACY[k])); copied[k] = GW_LEGACY[k].length; } });
+    sc.orders.gw_steps_copied = true;
+    return copied;
+  }
+  // kịch bản của nhóm theo id / tên; không ghi thì chỉ khi nhóm có đúng một kịch bản
+  function pickScript(g, ref) {
+    const list = (g && g.scripts) || [];
+    return ref ? (list.find(x => x.id === ref || x.name === ref) || null) : (list.length === 1 ? list[0] : null);
+  }
   let RUN = {};   // name -> {running, stopping, status, iter, last_ok, last_msg, group_id, mode, job, counts}
   function mockRun(g, sc, start) {
     const who = { group_name: g && g.name, script_id: sc && sc.id, script_name: sc && sc.name };
     const steps = (sc && sc.steps) || [], s0 = Math.max(0, Math.min(Number(start) || 0, steps.length));
     const prog = sc && sc.mode !== "orders" && steps.length ? { n: steps.length, types: typeof stepsSig === "function" ? stepsSig(steps) : "", iter: 1, start: s0,
       at: Math.min(s0 + 1, steps.length - 1), done: steps.map((_, i) => i).filter(i => i >= s0 && i < Math.min(s0 + 1, steps.length - 1)), skip: [], bad: null, msg: "", next: Math.min(s0 + 1, steps.length - 1) } : null;
-    return g && g.mode === "api"
+    return sc && sc.mode === "orders"                       // máy đang nhận đơn: trạng thái chạy mang mode «api»
       ? { ...who, running: true, stopping: false, mode: "api", group_id: g.id, iter: 2, status: "NG261124A008 · Đang mua 1050 eFootball Coins (1/1)",
           job: "NG261124A008", last_ok: true, last_msg: "NG261124A007: HOÀN TẤT", counts: { done: 2, failed: 1, review: 0 } }
       : { ...who, running: true, stopping: false, mode: (sc && sc.mode) || "once", group_id: g && g.id, iter: 1, status: "đang chạy · vòng 1",
@@ -147,18 +163,36 @@
     run_step: (n, s) => P({ ok: true, msg: "test " + s.type + " OK" }),
     // ---- nhóm & chạy ----
     groups_list: () => P(JSON.parse(JSON.stringify(GROUPS))),
-    group_save: (g) => { g = JSON.parse(JSON.stringify(g)); if (!g.id) g.id = "g" + Date.now(); const i = GROUPS.findIndex(x => x.id === g.id); if (i >= 0) GROUPS[i] = g; else GROUPS.push(g); syncGroupFields(); return P(JSON.parse(JSON.stringify(g))); },
+    group_save: (g) => { g = JSON.parse(JSON.stringify(g)); if (!g.id) g.id = "g" + Date.now(); if (!Array.isArray(g.scripts)) g.scripts = []; const i = GROUPS.findIndex(x => x.id === g.id); if (i >= 0) GROUPS[i] = g; else GROUPS.push(g); syncGroupFields(); return P(JSON.parse(JSON.stringify(g))); },
     group_delete: (id) => { GROUPS = GROUPS.filter(x => x.id !== id); syncGroupFields(); return P({ ok: true }); },
     group_add_device: (gid, name) => { const g = GROUPS.find(x => x.id === gid); if (g && !g.devices.includes(name)) g.devices.push(name); syncGroupFields(); return P({ ok: !!g }); },
     group_remove_device: (gid, name) => { const g = GROUPS.find(x => x.id === gid); if (g) g.devices = g.devices.filter(n => n !== name); syncGroupFields(); return P({ ok: !!g }); },
+    // chạy: phải chỉ rõ kịch bản, trừ khi nhóm có đúng một kịch bản. Kịch bản nhận đơn còn bước đời cũ trên gateway → chép ngay trước khi chạy,
+    // trả thêm {copied, group} để trình sửa nạp lại bản mới.
     group_run: (gid, names, script) => {
-      const g = GROUPS.find(x => x.id === gid); const sc = g && (g.scripts || []).find(x => x.id === script || x.name === script);
-      const targets = (names || (g ? g.devices : [])), busy = {}, started = [];
+      const g = GROUPS.find(x => x.id === gid), sc = pickScript(g, script);
+      if (!sc) return P({ ok: false, error: "Không rõ chạy kịch bản nào của nhóm — phải chỉ rõ kịch bản." });
+      const copied = mockAdopt(sc);
+      const targets = (names || g.devices), busy = {}, started = [];
       targets.forEach(n => { if (RUN[n] && RUN[n].running) busy[n] = [RUN[n].group_name, RUN[n].script_name].filter(Boolean).join(" · "); else { RUN[n] = mockRun(g, sc); started.push(n); } });
-      syncGroupFields(); return P({ ok: true, started, busy });
+      syncGroupFields(); return P(Object.assign({ ok: true, started, busy }, copied ? { copied, group: JSON.parse(JSON.stringify(g)) } : {}));
     },
     group_stop: (gid, force, script) => { const g = GROUPS.find(x => x.id === gid); (g ? g.devices : []).forEach(n => { const r = RUN[n]; if (r && r.group_id === gid && (!script || r.script_id === script)) mockStop(n, force); }); syncGroupFields(); return P({ ok: true }); },
-    machine_run: (gid, name, script, start_at) => { const g = GROUPS.find(x => x.id === gid); const sc = g && (g.scripts || []).find(x => x.id === script || x.name === script) || (g && (g.scripts || [])[0]); RUN[name] = mockRun(g, sc, start_at); syncGroupFields(); return P({ ok: true, started: true }); },
+    machine_run: (gid, name, script, start_at) => {
+      const g = GROUPS.find(x => x.id === gid), sc = pickScript(g, script);
+      if (!sc) return P({ ok: false, error: "Không rõ chạy kịch bản nào của nhóm — phải chỉ rõ kịch bản." });
+      const copied = mockAdopt(sc);
+      RUN[name] = mockRun(g, sc, start_at); syncGroupFields();
+      return P(Object.assign({ ok: true, started: true }, copied ? { copied, group: JSON.parse(JSON.stringify(g)) } : {}));
+    },
+    // chép (một lần) rồi trả nhóm mới nhất; đã chép / không có gì để chép → copied rỗng; không đọc được pool → lỗi, chưa đánh dấu gì
+    orders_adopt: (gid, sid) => {
+      const g = GROUPS.find(x => x.id === gid), sc = g && (g.scripts || []).find(x => x.id === sid);
+      if (!g) return P({ ok: false, error: "nhóm không tồn tại" });
+      const o = sc && sc.mode === "orders" ? sc.orders : null;
+      if (o && o.pool && !o.gw_steps_copied && o.pool !== GWPOOL.code) return P({ ok: false, error: "Không đọc được pool «" + o.pool + "» trên gateway." });
+      return P({ ok: true, copied: mockAdopt(sc) || {}, group: JSON.parse(JSON.stringify(g)) });
+    },
     machine_ack: (name) => { const r = RUN[name]; if (!(r && !r.running && r.hold)) return P({ ok: false, error: "Máy không ở trạng thái chờ kiểm tra." }); r.hold = null; return P({ ok: true }); },
     machine_pause: (name) => { const r = RUN[name] = RUN[name] || { running: false, counts: {} }; r.parked = true; if (r.running) { r.pause_requested = true; r.paused = true; } r.status = "ĐANG DỪNG · xử lý tay rồi bấm Tiếp tục"; return P({ ok: true, running: !!r.running, in_use: false }); },
     machine_resume: (name) => { const r = RUN[name]; if (!(r && r.parked)) return P({ ok: false, error: "Máy không đang dừng." }); r.parked = false; r.pause_requested = false; r.paused = false; r.status = r.running ? "đang chạy · vòng 1" : "nghỉ"; return P({ ok: true }); },

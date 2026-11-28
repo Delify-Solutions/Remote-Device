@@ -35,7 +35,7 @@ INSTRUCTIONS = (
     "All coordinates are pixels of the full-size screenshot (origin top-left), exactly as returned by read_screen. "
     "Pointer actions are slow (a tap takes several seconds) and are verified: a tap is only performed when the pointer was "
     "measured at the target. type_text can only type printable ASCII. The phone UI may be in Vietnamese. "
-    "start_run on a group in «api» mode, or on a script whose mode is «orders» (listed as NHẬN ĐƠN THẬT), makes the phone process REAL paid "
+    "start_run on a script whose mode is «orders» (listed as NHẬN ĐƠN THẬT) makes the phone process REAL paid "
     "top-up orders — only start it when the user asks. "
     "A device shown as ON HOLD stopped in the middle of a paid order and is waiting for a human to reconcile it: do not touch it, "
     "do not try to clear it (stop_run is refused for such a device; only the human can, in the app) and do not restart it."
@@ -542,13 +542,11 @@ class Control:
         if not groups:
             return Result("Chưa có nhóm nào.", {"groups": []})
         def scripts_txt(g):
-            if g["mode"] == "api":
-                return ""
             sc = g.get("scripts") or []
             how = lambda s: ("NHẬN ĐƠN THẬT từ pool «%s»" % (s.get("pool") or "chưa chọn")) if s["mode"] == "orders" else ("lặp" if s["mode"] == "loop" else "1 lần")
             return " — kịch bản: " + (", ".join("«%s» (%d bước, %s)" % (s["name"], s["steps"], how(s)) for s in sc) or "chưa có")
-        return Result("\n".join("%s (id %s) — máy: %s%s%s" % (
-            g["name"], g["id"], ", ".join(g["devices"]) or "chưa có", (" — nhận đơn từ pool «%s»" % g["pool"]) if g["mode"] == "api" else "", scripts_txt(g)) for g in groups),
+        return Result("\n".join("%s (id %s) — máy: %s%s" % (
+            g["name"], g["id"], ", ".join(g["devices"]) or "chưa có", scripts_txt(g)) for g in groups),
             {"groups": groups})
 
     def _group(self, group):
@@ -562,25 +560,24 @@ class Control:
     def start_run(self, group, device=None, script=None):
         g = self._group(group)
         name = self._resolve(device) if device else None
-        if g["mode"] != "api":                       # nhóm chạy KỊCH BẢN: phải biết chạy kịch bản nào (nhóm chỉ có 1 kịch bản thì tự lấy)
-            scripts = g.get("scripts") or []
-            if not scripts:
-                raise ToolError("Nhóm «%s» chưa có kịch bản nào." % g["name"])
-            hits = [s for s in scripts if s["id"] == script or (script and norm_text(s["name"]) == norm_text(script))] if script else (scripts if len(scripts) == 1 else [])
-            if len(hits) != 1:
-                raise ToolError("%s Các kịch bản của nhóm «%s»: %s." % (("Không rõ kịch bản «%s»." % script) if script else "Nhóm có nhiều kịch bản — nêu rõ chạy kịch bản nào (tham số script).",
-                                                                       g["name"], ", ".join("«%s»" % s["name"] for s in scripts)))
-            script = hits[0]["id"]
+        scripts = g.get("scripts") or []           # phải biết chạy kịch bản nào (nhóm chỉ có 1 kịch bản thì tự lấy)
+        if not scripts:
+            raise ToolError("Nhóm «%s» chưa có kịch bản nào." % g["name"])
+        hits = [s for s in scripts if s["id"] == script or (script and norm_text(s["name"]) == norm_text(script))] if script else (scripts if len(scripts) == 1 else [])
+        if len(hits) != 1:
+            raise ToolError("%s Các kịch bản của nhóm «%s»: %s." % (("Không rõ kịch bản «%s»." % script) if script else "Nhóm có nhiều kịch bản — nêu rõ chạy kịch bản nào (tham số script).",
+                                                                   g["name"], ", ".join("«%s»" % s["name"] for s in scripts)))
+        script, orders = hits[0]["id"], hits[0]["mode"] == "orders"
         held = {d["name"]: d["hold"] for d in self.host.devices() if d.get("hold") and d["name"] in ([name] if name else g["devices"])}
         if held:
             raise ToolError("Máy %s đang DỪNG CHỜ NGƯỜI KIỂM TRA (đơn dở cần đối soát): %s. Chỉ chạy lại khi người vận hành đã xử lý — "
                             "chỉ người vận hành gỡ được (nút «Đã kiểm tra xong» / «Chạy lại» trong app)." % (", ".join(held), "; ".join(held.values())))
-        r = self.host.start(g["id"], name, script) if script else self.host.start(g["id"], name)
+        r = self.host.start(g["id"], name, script)
         if not r.get("ok"):
             raise ToolError(r.get("error") or "không chạy được")
-        sc_name = next((s["name"] for s in (g.get("scripts") or []) if s["id"] == script), None)
-        return Result("Đã cho %s của nhóm «%s» chạy%s." % (("máy " + name) if name else "các máy", g["name"],
-                                                       (" kịch bản «%s»" % sc_name) if sc_name else " (nhận đơn từ gateway)"), r)
+        r = {k: v for k, v in r.items() if k != "group"}        # nhóm trả kèm (sau khi chép bước đời cũ) có cả nội dung bước — không đưa cho AI
+        return Result("Đã cho %s của nhóm «%s» chạy kịch bản «%s»%s." % (("máy " + name) if name else "các máy", g["name"], hits[0]["name"],
+                                                                     " (nhận đơn từ gateway)" if orders else ""), r)
 
     def stop_run(self, device=None, group=None, force=False):
         if not device and not group:
@@ -707,17 +704,17 @@ def build_tools(c: Control) -> list:
         Tool("farm_status", "Run status and log", "Show what each machine is doing right now (status, counters) and the recent run log.",
              {"log_lines": {"type": "integer", "minimum": 0, "maximum": 200, "description": "How many recent log lines (default 30)."}},
              fn=c.farm_status, read_only=True, idempotent=True, cli="status", help="Trạng thái các máy + nhật ký chạy gần đây"),
-        Tool("list_groups", "List groups", "List device groups with their member devices and scripts (each script says how it runs: once / loop). A group in «api» mode takes orders from the gateway instead.",
+        Tool("list_groups", "List groups", "List device groups with their member devices and scripts (each script says how it runs: once / loop / NHẬN ĐƠN THẬT = takes real orders from the gateway).",
              fn=c.list_groups, read_only=True, idempotent=True, cli="groups", help="Danh sách nhóm máy"),
         Tool("start_run", "Start a script of a group on its machines",
              "Run one script of a group on all its devices (or just one). A machine runs ONE script at a time — a busy machine is skipped. "
-             "A group in «api» mode, and any script whose mode is «orders» (list_groups shows it as NHẬN ĐƠN THẬT), takes REAL paid top-up orders "
+             "A script whose mode is «orders» (list_groups shows it as NHẬN ĐƠN THẬT) takes REAL paid top-up orders "
              "from the gateway — only start those when the user explicitly asks.",
              {"group": {"type": "string", "description": "Group name or id (see list_groups)."}, "device": dict(_DEV, description="Only this device of the group (optional)."),
-              "script": {"type": "string", "description": "Script name or id (see list_groups). Optional when the group has exactly one script; not used in api mode."}},
+              "script": {"type": "string", "description": "Script name or id (see list_groups). Optional when the group has exactly one script."}},
              ("group",), fn=c.start_run, destructive=True, cli="start", positional=("group", "device"), help="Cho một kịch bản của nhóm (trên mọi máy, hoặc một máy) chạy; --script tên"),
         Tool("stop_run", "Stop a machine or group",
-             "Stop a running machine or a whole group. Default: in api mode it finishes the current order first. "
+             "Stop a running machine or a whole group. Default: a machine taking orders finishes the current order first. "
              "force=true aborts immediately (an order that already touched the purchase flow goes to manual review).",
              {"device": dict(_DEV, description="Machine to stop."), "group": {"type": "string", "description": "Or: group name / id to stop."},
               "force": {"type": "boolean", "description": "Abort immediately (default false)."}},
@@ -884,9 +881,7 @@ class StandaloneHost:
 
 def group_view(g: dict) -> dict:
     """Thông tin một nhóm cho AI/CLI (không kèm các bước có thể chứa dữ liệu riêng)."""
-    api = g.get("api") or {}
-    return {"id": g.get("id"), "name": g.get("name") or g.get("id"), "mode": g.get("mode") or "loop",
-            "devices": list(g.get("devices") or []), "pool": api.get("pool") or None,
+    return {"id": g.get("id"), "name": g.get("name") or g.get("id"), "devices": list(g.get("devices") or []),
             "scripts": [script_view(s) for s in (g.get("scripts") or [])]}
 
 
@@ -1016,9 +1011,7 @@ class AppHost:
         return [group_view(g) for g in store.get_groups()]
 
     def start(self, group_id, name=None, script=None):
-        if script:
-            return self.api.machine_run(group_id, name, script) if name else self.api.group_run(group_id, None, script)
-        return self.api.machine_run(group_id, name) if name else self.api.group_run(group_id)
+        return self.api.machine_run(group_id, name, script) if name else self.api.group_run(group_id, None, script)
 
     def stop(self, name=None, group_id=None, force=False):
         return self.api.machine_stop(name, force) if name else self.api.group_stop(group_id, force)

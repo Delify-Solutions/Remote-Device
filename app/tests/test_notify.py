@@ -241,7 +241,7 @@ def main():
     Rh.alert = R.alert
     Rh._deliver = lambda *a, **k: True
     wh = {"stop": threading.Event(), "abort": threading.Event(), "pause": threading.Event(), "paused": False, "group_name": "Nạp", "script_name": "đơn"}
-    Rh._run_api("H", {"mode": "api", "api": {"pool": "efootball-ios"}}, wh)
+    Rh._run_api("H", {"mode": "api", "api": {"pool": "efootball-ios", "gw_steps_copied": True}}, wh)
     ok(got and got[0][0] == "review" and "DH-1" in got[0][2][-1] and wh.get("hold"),
        "nhận đơn dừng GIỮ máy (đơn bị gián đoạn giữa lúc mua) → «Đơn cần đối soát» qua đúng đường halt(hold=True)", got)
     # Máy nhận đơn đang CHỜ ĐƠN (không chạy bước nào) mất Bluetooth / board → vẫn phải báo (một lần), sẵn sàng lại rồi mất lại → báo lại
@@ -277,9 +277,9 @@ def main():
 
         def claim(self, *a, **k):
             return {}
-    saved = apimode.effective_steps, apimode.validate, boardhealth.recover, runmod.Runner._ensure_logged_out
+    saved = apimode.order_steps, apimode.validate, boardhealth.recover, runmod.Runner._ensure_logged_out
     try:
-        apimode.effective_steps = lambda pool, st: {"login": [1], "finish": [1]}
+        apimode.order_steps = lambda st: {"login": [1], "finish": [1]}
         apimode.validate = lambda pool, st: []
         boardhealth.recover = lambda h, log=None: {"ok": True, "actions": [], "health": None}
         for seq, expect, label in ((["bt"], "link", "Bluetooth rớt lúc chờ đơn"), (["unplugged"], "link", "board rút / cổng hỏng lúc chờ đơn")):
@@ -290,7 +290,7 @@ def main():
             Ri.alert = R.alert
             wi = {"stop": threading.Event(), "abort": threading.Event(), "pause": threading.Event(), "paused": False,
                   "counts": {}, "iter": 0, "group_name": "Nạp", "script_name": "đơn"}
-            th = threading.Thread(target=Ri._run_api, args=("W1", {"mode": "api", "api": {"pool": "p", "check_keyboard": False}}, wi), daemon=True)
+            th = threading.Thread(target=Ri._run_api, args=("W1", {"mode": "api", "api": {"pool": "p", "check_keyboard": False, "gw_steps_copied": True}}, wi), daemon=True)
             th.start(); time.sleep(4.0); wi["stop"].set(); th.join(8)      # mỗi lần kiểm Bluetooth hỏi board 3 lần, nghỉ 0,4 s
             ok(len(got) == 1 and got[0][0] == expect and "chưa sẵn sàng" in got[0][2][-1], label + " → báo «mất kết nối» đúng một lần (dù vẫn chưa sẵn sàng)", got)
         # Ví của máy không đủ tiền (gateway trả wallet_short thay vì đơn) → báo «Ví không đủ tiền» MỘT lần cho mỗi tình trạng
@@ -308,7 +308,7 @@ def main():
         Rw.alert = R.alert
         ww = {"stop": threading.Event(), "abort": threading.Event(), "pause": threading.Event(), "paused": False,
               "counts": {}, "iter": 0, "group_name": "Nạp", "script_name": "đơn"}
-        th = threading.Thread(target=Rw._run_api, args=("W2", {"mode": "api", "api": {"pool": "p", "check_keyboard": False}}, ww), daemon=True)
+        th = threading.Thread(target=Rw._run_api, args=("W2", {"mode": "api", "api": {"pool": "p", "check_keyboard": False, "gw_steps_copied": True}}, ww), daemon=True)
         th.start(); time.sleep(1.5); st_mid = ww.get("status"); ww["stop"].set(); th.join(8)
         wal = [g for g in got if g[0] == "wallet"]
         ok(len(wal) == 2 and "400.000 JPY" not in wal[0][2][-1] and "10.000 JPY" in wal[0][2][-1] and "48.000 JPY" in wal[0][2][-1]
@@ -320,7 +320,7 @@ def main():
         ok(notify.money(40000000, "JPY") == "400.000 JPY" and notify.money(80, "CHF") == "0,80 CHF" and notify.money("x", "JPY") == "?",
            "hiển thị tiền (đơn vị ×100): yên không có phần lẻ, CHF có 2 số lẻ")
     finally:
-        apimode.effective_steps, apimode.validate, boardhealth.recover, runmod.Runner._ensure_logged_out = saved
+        apimode.order_steps, apimode.validate, boardhealth.recover, runmod.Runner._ensure_logged_out = saved
     got.clear()
     w_ = {"stop": threading.Event(), "abort": threading.Event(), "pause": threading.Event(), "group_name": "Nạp", "script_name": "đơn"}
     R2 = runmod.Runner(lambda n: object(), gateway_factory=lambda: None)

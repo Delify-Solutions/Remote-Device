@@ -24,33 +24,7 @@ $cfg['rules'] = [
     ['when' => 'purchase_fail', 'value' => 'Thanh toán thất bại', 'note' => 'Game báo rõ là không trừ tiền'],
     ['when' => 'package_unavailable', 'value' => 'Đã mua', 'note' => 'Gói 1 lần đã mua từ trước'],
 ];
-$cfg['login_steps'] = [
-    ['type' => 'launch', 'value' => 'efootball', 'note' => ''],
-    ['type' => 'wait_text', 'value' => 'Đăng nhập @45s', 'note' => 'chờ màn hình đăng nhập (tối đa 45 giây)'],
-    ['type' => 'tap_text', 'value' => 'Đăng nhập', 'note' => ''],
-    ['type' => 'type', 'value' => '{{username}}', 'note' => ''],
-    ['type' => 'key', 'value' => 'tab', 'note' => ''],
-    ['type' => 'type', 'value' => '{{password}}', 'note' => ''],
-    ['type' => 'key', 'value' => 'enter', 'note' => ''],
-];
-// otp_steps để trống = tool gõ {{otp}} rồi nhấn Enter
-$cfg['nav_steps'] = [
-    ['type' => 'tap_text', 'value' => 'Cửa hàng', 'note' => ''],
-    ['type' => 'tap_text', 'value' => 'eFootball Coins', 'note' => ''],
-];
-$cfg['purchase_steps'] = [
-    ['type' => 'tap_text', 'value' => '{{package.ocr_text}}', 'note' => 'dò đúng ô gói'],
-    ['type' => 'tap_text', 'value' => 'Mua', 'note' => 'sau bước này tool đọc màn hình theo luật ở mục ③'],
-];
-$cfg['after_purchase_steps'] = [
-    ['type' => 'tap_text', 'value' => 'Đóng|OK', 'note' => 'đóng hộp thoại «Mua thành công»', 'optional' => true],
-];
-$cfg['finish_steps'] = [
-    ['type' => 'tap_text', 'value' => 'Đóng|OK', 'note' => 'còn hộp thoại nào thì đóng', 'optional' => true],
-    ['type' => 'tap_text', 'value' => 'Đăng xuất', 'note' => ''],
-    ['type' => 'wait_text', 'value' => 'Đăng nhập @30s', 'note' => 'thấy lại màn hình đăng nhập = đã đăng xuất'],
-    ['type' => 'home', 'value' => '', 'note' => ''],
-];
+// Bước thao tác (đăng nhập, mua, đăng xuất…) soạn trong kịch bản nhận đơn của tool — pool chỉ có trường đăng nhập, luật và gói.
 $id = Pools::save(null, 'efootball-ios', 'eFootball (iOS) — Konami ID', 'eFootball', true, $cfg);
 Pools::savePackages((int) $id, [
     ['code' => 'coin_130', 'name' => '130 eFootball Coins', 'ocr_text' => '130', 'price_text' => '25.000', 'limit_type' => 'multi', 'max_qty' => 10, 'active' => true],

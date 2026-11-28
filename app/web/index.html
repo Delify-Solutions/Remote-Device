@@ -363,7 +363,7 @@
                 </div>
                 <div class="d-flex gap-2 align-items-center flex-wrap">
                   <button class="btn btn-sm btn-primary" id="btn-group-new"><i class="ti tabler-plus me-1"></i>Tạo nhóm</button>
-                  <button class="btn btn-sm btn-label-secondary" id="btn-gw-settings" title="Địa chỉ + khoá của Topup Gateway (để nhóm nhận đơn qua API)"><i class="ti tabler-plug-connected me-1"></i>Gateway <span class="gw-dot" id="gw-dot"></span></button>
+                  <button class="btn btn-sm btn-label-secondary" id="btn-gw-settings" title="Địa chỉ + khoá của Topup Gateway (để kịch bản nhận đơn lấy đơn của khách)"><i class="ti tabler-plug-connected me-1"></i>Gateway <span class="gw-dot" id="gw-dot"></span></button>
                   <button class="btn btn-sm btn-label-secondary" id="btn-tg-settings" title="Bắn thông báo Telegram cho admin khi máy dừng / lỗi / cần đối soát / mất kết nối"><i class="ti tabler-brand-telegram me-1"></i>Telegram <span class="gw-dot" id="tg-dot"></span></button>
                   <button class="btn btn-sm btn-label-secondary" id="btn-ai-screen" title="AI xem màn hình lạ (quảng cáo / hộp thông báo) và bấm đóng / bỏ qua trước khi tạm dừng máy"><i class="ti tabler-sparkles me-1"></i>AI màn hình lạ <span class="gw-dot" id="ai-dot"></span></button>
                 </div>
@@ -394,47 +394,12 @@
               </div>
 
             <div id="group-panel">
-              <!-- cấu hình nhóm -->
+              <!-- cấu hình nhóm (cách chạy nằm trong từng kịch bản) -->
               <div class="card mb-3" id="group-config"><div class="card-body">
                 <div class="row g-3 align-items-end">
                   <div class="col-md-4">
                     <label class="form-label small mb-1">Tên nhóm</label>
                     <input id="group-name" class="form-control form-control-sm" placeholder="VD: iPhone 8 · iOS 16.7">
-                  </div>
-                  <!-- «Chế độ chạy» + «Số vòng»: tạm ẨN (nhóm mặc định chạy kịch bản đang dùng 1 lần trên mỗi máy). Dữ liệu cũ vẫn giữ. -->
-                  <div class="col-md-3" hidden>
-                    <label class="form-label small mb-1">Chế độ chạy</label>
-                    <select id="group-mode" class="form-select form-select-sm">
-                      <option value="loop">Lặp lại kịch bản</option>
-                      <option value="once">Chạy kịch bản 1 lần</option>
-                      <option value="api">Nhận đơn từ Gateway (API)</option>
-                    </select>
-                  </div>
-                  <div class="col-md-2" id="group-loops-wrap" hidden>
-                    <label class="form-label small mb-1">Số vòng (0 = ∞)</label>
-                    <input id="group-loops" type="number" min="0" value="0" class="form-control form-control-sm">
-                  </div>
-                  <div class="col-md-2" id="group-pool-wrap" hidden>
-                    <label class="form-label small mb-1">Pool trên gateway</label>
-                    <select id="group-pool" class="form-select form-select-sm"></select>
-                  </div>
-                  <div class="col-md-3 d-flex gap-2 justify-content-md-end">
-                    <button class="btn btn-sm btn-success" id="btn-group-run"><i class="ti tabler-player-play me-1"></i>Chạy nhóm</button>
-                    <button class="btn btn-sm btn-label-danger" id="btn-group-stop"><i class="ti tabler-player-stop me-1"></i>Dừng nhóm</button>
-                  </div>
-                </div>
-
-                <!-- chỉ hiện ở chế độ API -->
-                <div class="api-row" id="group-api-row" hidden>
-                  <div class="api-note" id="gw-state">—</div>
-                  <div class="api-opts">
-                    <label class="api-opt" title="Sau khi bấm đăng nhập, chờ tối đa bao lâu để thấy kết quả (thành công / thất bại / đòi OTP)">
-                      Chờ đăng nhập <input id="api-login-wait" type="number" min="5" max="600" value="45"> giây</label>
-                    <label class="api-opt" title="Sau khi bấm mua, chờ tối đa bao lâu để thấy kết quả. Hết giờ mà không rõ → đơn sang «chờ đối soát»">
-                      Chờ kết quả mua <input id="api-purchase-wait" type="number" min="5" max="600" value="60"> giây</label>
-                    <label class="api-opt" title="Lúc bắt đầu chạy: thử gõ ở Spotlight xem bàn phím có bị Telex đổi chữ không (gõ sai sẽ làm sai mật khẩu của khách)">
-                      <input id="api-kb" type="checkbox" checked> Kiểm tra bàn phím tiếng Anh</label>
-                    <button class="btn btn-sm btn-label-secondary" id="btn-gw-import" title="Chép các bước đang cấu hình trên gateway vào nhóm để sửa riêng cho loại máy này"><i class="ti tabler-download me-1"></i>Lấy bước từ gateway</button>
                   </div>
                 </div>
               </div></div>
@@ -476,7 +441,6 @@
                   <div class="ed-title">
                     <input id="script-name" class="ed-name" placeholder="Tên kịch bản" maxlength="80" aria-label="Tên kịch bản" title="Bấm để đổi tên kịch bản">
                   </div>
-                  <div id="script-phase-title" class="ed-phase" hidden></div>
                   <span class="ed-dirty" id="ed-dirty" title="Có thay đổi chưa lưu" hidden>Có thay đổi chưa lưu</span>
                   <button class="btn btn-sm btn-primary" id="btn-save"><i class="ti tabler-device-floppy me-1"></i>Lưu kịch bản</button>
                 </header>
@@ -501,6 +465,15 @@
                     <button class="btn btn-sm btn-success" id="btn-script-run"><i class="ti tabler-player-play me-1"></i>Chạy</button>
                     <button class="btn btn-sm btn-label-secondary" id="btn-script-stop"><i class="ti tabler-player-stop me-1"></i>Dừng</button>
                   </div>
+                  <!-- chỉ kịch bản nhận đơn: chờ kết quả tối đa bao lâu + kiểm bàn phím lúc bắt đầu -->
+                  <div class="ed-run-opts" id="script-orders-opts" hidden>
+                    <label class="api-opt" title="Sau khi bấm đăng nhập, chờ tối đa bao lâu để thấy kết quả (thành công / thất bại / đòi OTP)">
+                      Chờ đăng nhập <input id="orders-login-wait" type="number" min="5" max="600" value="45"> giây</label>
+                    <label class="api-opt" title="Sau khi bấm mua, chờ tối đa bao lâu để thấy kết quả. Hết giờ mà không rõ → đơn sang «chờ đối soát»">
+                      Chờ kết quả mua <input id="orders-purchase-wait" type="number" min="5" max="600" value="60"> giây</label>
+                    <label class="api-opt" title="Lúc bắt đầu chạy: thử gõ ở Spotlight xem bàn phím có bị Telex đổi chữ không (gõ sai sẽ làm sai mật khẩu của khách)">
+                      <input id="orders-kb" type="checkbox" checked> Kiểm tra bàn phím tiếng Anh</label>
+                  </div>
                 </section>
 
                 <div class="ed-grid">
@@ -509,13 +482,6 @@
                       <h5 class="mb-0">Các bước <span class="ed-count" id="step-count"></span></h5>
                       <button class="btn btn-sm btn-label-primary" id="btn-flow-test" title="Chạy lần lượt mọi bước trên máy đang chọn ở khung màn hình"><i class="ti tabler-player-play me-1"></i>Chạy thử</button>
                     </div>
-                    <!-- chế độ API: mỗi giai đoạn của 1 đơn có danh sách bước riêng -->
-                    <div id="api-phase-box" hidden>
-                      <div class="seg seg-wrap mb-2" id="api-phases"></div>
-                      <div class="api-warn mb-3" id="api-warn" hidden></div>
-                      <div class="api-hint mb-3" id="api-phase-hint"></div>
-                    </div>
-
                     <!-- kịch bản nhận đơn: còn thiếu gì thì máy chưa nhận đơn được -->
                     <div class="api-warn mb-3" id="orders-warn" hidden></div>
                     <!-- tiến độ của các máy đang / vừa chạy kịch bản này: đang ở bước nào, dừng ở bước nào + «Chạy tiếp từ bước N» -->

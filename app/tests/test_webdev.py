@@ -372,8 +372,9 @@ def main():
         gui.Eyes = FakeEyes
         gui.MGR.session = lambda n: sessions.append(n) or (_ for _ in ()).throw(RuntimeError("máy giả"))
         gui._busy = lambda name=None: None
-        gui.store.get_group = lambda gid: {"id": gid, "name": "Nhóm " + gid, "mode": "api" if gid == "ga" else "once", "devices": ["M-HOLD", "M-API", "M-RANH", "alias"],
-                                           "scripts": [] if gid == "ga" else [{"id": "s", "name": "S", "steps": [{"type": "home"}], "mode": "once", "loops": 1}]}
+        sc_orders = {"id": "nd", "name": "Nhận đơn", "steps": [], "mode": "orders", "loops": 1, "orders": {"pool": "p", "gw_steps_copied": True}}     # nhóm «ga»: một kịch bản NHẬN ĐƠN
+        gui.store.get_group = lambda gid: {"id": gid, "name": "Nhóm " + gid, "devices": ["M-HOLD", "M-API", "M-RANH", "alias"],
+                                           "scripts": [dict(sc_orders)] if gid == "ga" else [{"id": "s", "name": "S", "steps": [{"type": "home"}], "mode": "once", "loops": 1}]}
         fake_web = types.SimpleNamespace(push=lambda js: None, session="S" * 40)
         try:
             gui.RUNNER.workers.clear()
@@ -527,17 +528,17 @@ def main():
             try:
                 gui.RUNNER.allow_api = False                      # như gui.main đặt khi chạy --web
                 r_g, r_m = gui.Api().group_run("ga"), gui.Api().machine_run("ga", "M-RANH")
-                direct = gui.RUNNER.start_machine("M-RANH", {"id": "ga", "name": "Nhóm nhận đơn", "mode": "api", "devices": ["M-RANH"], "api": {"pool": "p"}})
+                direct = gui.RUNNER.start_machine("M-RANH", {"id": "ga", "name": "Nhóm nhận đơn", "devices": ["M-RANH"]}, dict(sc_orders))
                 ok(r_g["ok"] is False and "cửa sổ" in r_g["error"] and r_m["ok"] is False and direct is False and gui.RUNNER.workers == {} and gui.RUNNER.customers() == [],
-                   "chế độ web: nhóm nhận đơn KHÔNG chạy được (giao diện, từng máy, lẫn gọi thẳng bộ chạy) → không bao giờ có máy của khách trong bản web", (r_g, direct))
+                   "chế độ web: kịch bản nhận đơn KHÔNG chạy được (giao diện, từng máy, lẫn gọi thẳng bộ chạy) → không bao giờ có máy của khách trong bản web", (r_g, direct))
                 r_s = gui.Api().group_run("gk", ["M-RANH"], "s")
                 ok(r_s["ok"] is True and r_s["started"] == ["M-RANH"], "…kịch bản thường thì vẫn chạy ở chế độ web", r_s)
                 gui.RUNNER.stop_all(True)
                 gui.RUNNER.workers["M-RANH"]["thread"].join(5)
                 gui.RUNNER.workers.clear()
                 gui.RUNNER.allow_api = True
-                ok(gui.RUNNER.start_machine("M-RANH", {"id": "ga", "name": "Nhóm nhận đơn", "mode": "api", "devices": ["M-RANH"], "api": {"pool": "p"}}) is True,
-                   "app dạng cửa sổ (allow_api): nhóm nhận đơn chạy bình thường")
+                ok(gui.RUNNER.start_machine("M-RANH", {"id": "ga", "name": "Nhóm nhận đơn", "devices": ["M-RANH"]}, dict(sc_orders)) is True,
+                   "app dạng cửa sổ (allow_api): kịch bản nhận đơn chạy bình thường")
                 gui.RUNNER.workers["M-RANH"]["thread"].join(5)
             finally:
                 gui.RUNNER.allow_api, gui.Api._runnable = real_allow, real_runnable2

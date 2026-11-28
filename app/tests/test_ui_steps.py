@@ -6,7 +6,9 @@ Kiểm phần LỘ TRÌNH CÁC BƯỚC của trình sửa kịch bản (app/web/
   • đổi cách chạy của kịch bản sang «nhận đơn» và ngược lại: bước không bị mất, không bị nhân đôi;
   • «bấm lên ảnh để thêm bước chạm»: chèn theo BƯỚC đã chọn (không theo số thứ tự) — xoá / chèn bước khác không làm lệch chỗ;
     kịch bản nhận đơn mà chưa chọn giai đoạn thì không đoán chỗ;
-  • ô bấm «Lấy từ đơn» của bước gõ chữ: đúng các trường đăng nhập của pool trên gateway theo từng giai đoạn, không đoán tên khi chưa đọc được pool.
+  • ô bấm «Lấy từ đơn» của bước gõ chữ: đúng các trường đăng nhập của pool trên gateway theo từng giai đoạn, không đoán tên khi chưa đọc được pool;
+  • bước của kịch bản nhận đơn CHỈ là bước ghi trong kịch bản (không mượn bước của gateway); giai đoạn bắt buộc trống thì có trong dòng «còn thiếu»;
+    dấu «đã chép bước đời cũ từ gateway» được giữ qua các lần nạp / lưu, lời báo sau khi chép.
 
     ./.venv/bin/python app/tests/test_ui_steps.py
 """
@@ -201,10 +203,6 @@ out.monBlocks = monBlocksHtml(EV, "trống");
 out.monEmpty = monBlocksHtml([], X);
 out.monClock = [monClock(0), monClock(1795700000, true)];
 out.imgMin = ["90", "80", "0.8", "1", "", "abc", "-5", "0", "20", "100", "99.6"].map(parseImageMin);
-const POOL = { code: "p", steps: { login: [{ type: "home" }], purchase: [{ type: "tap_text", text: "Mua" }], nav: "rác" } };
-out.gwSteps = [gatewaySteps({ pool: "p" }, POOL, "purchase").length, gatewaySteps({ pool: "khac" }, POOL, "purchase").length, gatewaySteps({ pool: "" }, POOL, "purchase").length,
-               gatewaySteps({ pool: "p" }, null, "purchase").length, gatewaySteps(null, POOL, "purchase").length, gatewaySteps({ pool: "p" }, POOL, "nav").length, gatewaySteps({ pool: "p" }, POOL, "otp").length,
-               gatewaySteps({ pool: "p" }, { code: "p" }, "login").length];
 const px = (list) => { const d = []; list.forEach(([r, g, b]) => d.push(r, g, b, 255)); return d; };
 out.flat = [flatPixels(px(Array(100).fill([255, 0, 0]))), flatPixels(px(Array(100).fill([77, 77, 77]))), flatPixels(px(Array(50).fill([255, 0, 0]).concat(Array(50).fill([0, 255, 0])))),
             flatPixels(px(Array(50).fill([200, 200, 200]).concat(Array(50).fill([20, 20, 20])))), flatPixels([])];
@@ -229,6 +227,29 @@ const G = { id: "g1" }, S = { id: "s1", mode: "orders" };
 out.rerun = [canRerunHeld({ hold: "đơn cần đối soát", group_id: "g1", script_id: "s1" }, G, S), canRerunHeld({ hold: "x", group_id: "g1", script_id: "khac" }, G, S),
              canRerunHeld({ hold: "x", group_id: "khac", script_id: "s1" }, G, S), canRerunHeld({ hold: "x", group_id: "g1", script_id: "s1", running: true }, G, S),
              canRerunHeld({ group_id: "g1", script_id: "s1" }, G, S), canRerunHeld({ hold: "x", group_id: "g1", script_id: "s1" }, G, { id: "s1", mode: "once" }), canRerunHeld(null, G, S)];
+
+// ---- 10. kịch bản nhận đơn: bước chỉ nằm trong kịch bản; chép MỘT LẦN bước đời cũ từ gateway ----
+const own = { type: "tap_text", text: "Mua" };
+const OS = { id: "o", name: "O", steps: [], mode: "orders", loops: 1, orders: normApi({ pool: "p", steps: { purchase: [own] } }) };
+ORDERS = OS;
+// pool đang nạp có kèm khối `steps` kiểu cũ: giao diện không được đọc tới
+GW_POOL = { code: "p", missing_rules: ["Nạp <b>"], required_phases: ["login", "purchase", "finish"], steps: { login: [{ type: "home" }], finish: [{ type: "home" }], nav: [{ type: "home" }] } };
+const L = flowLists();
+out.lists = { keys: L.map(l => l.key), labels: L.map(l => l.label), sameArrays: L.every(l => l.steps === OS.orders.steps[l.key]), counts: L.map(l => l.steps.length),
+              required: L.filter(l => l.required).map(l => l.key), extra: [...new Set(L.flatMap(l => Object.keys(l)))].sort() };
+ORDERS = null; FLOW.steps = [own];
+out.listsPlain = flowLists().map(l => [l.key, l.steps === FLOW.steps]);
+GW = { url: "https://gw", has_key: true };
+out.missPool = ordersMissing(OS);
+OS.orders.steps.login.push({ type: "home" }); OS.orders.steps.finish.push({ type: "home" });
+out.missNone = ordersMissing(OS).filter(m => m.includes("giai đoạn"));
+OS.orders.steps.login.length = 0; GW_POOL = null;
+out.missNoPoolCfg = ordersMissing(OS);                          // chưa đọc được pool: bước bắt buộc còn thiếu vẫn phải được nhắc
+GW = { url: "", has_key: false };
+out.missNoGw = ordersMissing(OS);
+out.copiedFlag = [normApi({}).gw_steps_copied, normApi({ gw_steps_copied: true }).gw_steps_copied, normApi({ gw_steps_copied: "true" }).gw_steps_copied, normApi({ gw_steps_copied: 1 }).gw_steps_copied,
+                  normApi(JSON.parse(JSON.stringify(normApi({ gw_steps_copied: true })))).gw_steps_copied];
+out.adoptText = [adoptedText({ after: 1, finish: 4 }), adoptedText({ finish: 2, login: 7, la: 9, nav: "3", otp: 0, purchase: -1 }), adoptedText({}), adoptedText(null), adoptedText({ login: X })];
 console.log(JSON.stringify(out));
 """
 
@@ -240,13 +261,14 @@ def main():
         return 0
     src = open(APP_JS, encoding="utf-8").read()
     esc_line = next(l for l in src.splitlines() if l.startswith("const esc ="))
-    parts = [esc_line] + [const_source(src, n) for n in ("SWIPE_DIR", "STEP_LABEL", "STEP_KIND", "API_PHASES", "ORDER_LABEL", "TEXT_WAIT_NEW", "REGION_DRAG", "IF_KEYS", "NEAR_DIR_LABEL", "SCROLL_LABEL")]
+    parts = [esc_line] + [const_source(src, n) for n in ("SWIPE_DIR", "STEP_LABEL", "STEP_KIND", "API_PHASES", "ORDER_LABEL", "REQUIRED_PHASES", "TEXT_WAIT_NEW", "REGION_DRAG", "IF_KEYS",
+                                                         "NEAR_DIR_LABEL", "SCROLL_LABEL")]
     parts += [function_source(src, n) for n in ("monDur", "monClock", "monResult", "monItems", "monLiveLine", "monGroup", "monEventHtml", "monBlocksHtml")]
     parts += [function_source(src, n) for n in ("ifCases", "parseIfCases", "stepText", "stepKind", "stepVal", "stepSentence", "normApi", "scriptStepCount", "setScriptMode", "addPicked",
                                                 "orderVars", "varChips", "insertAtCursor", "textWaitField", "setTextWait", "imageSrc", "dragRegion",
-                                                "ifKey", "ifAt", "ifCaseLine", "canRerunHeld", "parseImageMin", "gatewaySteps", "flatPixels",
-                                                "cardText", "setCard", "cardFields")]
-    stubs = ("let FLOW = { steps: [] }; let PICK_TO = null; let ORDERS = null; let RENDERS = 0; const TOASTS = []; let CFG = null; let GW_POOL = null;\n"
+                                                "ifKey", "ifAt", "ifCaseLine", "canRerunHeld", "parseImageMin", "flatPixels",
+                                                "cardText", "setCard", "cardFields", "flowLists", "ordersMissing", "adoptedText")]
+    stubs = ("let FLOW = { steps: [] }; let PICK_TO = null; let ORDERS = null; let RENDERS = 0; const TOASTS = []; let CFG = null; let GW_POOL = null; let GW = { url: \"\", has_key: false };\n"
              "function scriptOrders() { return ORDERS; }\nfunction ordersCfg() { return CFG; }\nfunction renderSteps() { RENDERS++; }\nfunction toast(m) { TOASTS.push(m); }\n")
     r = subprocess.run([node, "-e", stubs + "\n".join(parts) + HARNESS], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
@@ -340,8 +362,6 @@ def main():
     ok(o["imgText"] == ["vùng ảnh 90×90 (chờ 5s)", "vùng ảnh ?×?"] and o["imgKind"] == ["touch", "tabler-photo-search"], "dòng nhật ký ghi cỡ vùng ảnh (cỡ lạ → «?»); bước thuộc nhóm «chạm»", [o["imgText"], o["imgKind"]])
     ok(o["imgMin"] == [90, 80, 80, 99, 90, 90, 90, 90, 50, 99, 99],
        "ô «giống tối thiểu (%)»: gõ 0.8 hiểu là 80%; trống / chữ / số âm / 0 → 90 (mặc định, không tụt về mức dễ dãi nhất); kẹp trong 50…99", o["imgMin"])
-    ok(o["gwSteps"] == [1, 0, 0, 0, 0, 0, 0, 0],
-       "«Thử» giai đoạn chưa có bước riêng: chỉ lấy bước của gateway khi pool đang nạp ĐÚNG là pool của kịch bản (pool khác / chưa nạp / chưa chọn → không có bước nào để chạy thử)", o["gwSteps"])
     ok(o["flat"] == [True, True, False, False, True],
        "vùng «gần như một màu» xét theo TỪNG kênh màu như phía máy: mảng đỏ thuần / xám thuần bị từ chối; hai màu đồng độ sáng hay sáng–tối đều được nhận", o["flat"])
     ok(o["imgSrc"] == [True, "", "", "", "", "", ""], "chỉ chuỗi base64 thuần (không khoảng trắng, không tiền tố, đệm đúng, không quá lớn) mới thành địa chỉ ảnh", o["imgSrc"])
@@ -407,6 +427,28 @@ def main():
     ok("từng ký tự, cách nhau 0.4 giây" in o["gap"][0] and "từng ký tự" not in o["gap"][1] and "từng ký tự" not in o["gap"][2] and "<img" not in o["gap"][2], "câu của «Gõ chữ» nói rõ khi gõ từng ký tự; giá trị lạ không được in ra", o["gap"])
     ok(o["rerun"] == [True, False, False, False, False, False, False],
        "«Chạy lại» chỉ hiện cho máy đang DỪNG CHỜ KIỂM TRA sau đơn của CHÍNH nhóm + kịch bản nhận đơn đang mở (không phải kịch bản khác, nhóm khác, máy đang chạy, máy không giữ, kịch bản thường)", o["rerun"])
+
+    print("== 10. Kịch bản nhận đơn: bước chỉ nằm trong kịch bản; chép một lần bước đời cũ từ gateway ==")
+    phases = ["login", "otp", "nav", "purchase", "after", "finish"]
+    ls = o["lists"]
+    ok(ls["keys"] == phases and ls["sameArrays"] is True and ls["counts"] == [0, 0, 0, 1, 0, 0]
+       and ls["labels"] == ["Đăng nhập", "Nhập OTP", "Vào danh sách gói", "Mua một gói", "Sau mỗi lần mua", "Kết thúc đơn"],
+       "sáu giai đoạn theo thứ tự chạy; bước của mỗi giai đoạn là ĐÚNG danh sách ghi trong kịch bản — pool có kèm bước cũng không được mượn", ls)
+    ok(ls["required"] == ["login", "purchase", "finish"] and ls["extra"] == ["help", "key", "label", "required", "steps"],
+       "giai đoạn bắt buộc: Đăng nhập, Mua một gói, Kết thúc đơn; không còn số «bước của gateway» đi kèm giai đoạn", [ls["required"], ls["extra"]])
+    ok(o["listsPlain"] == [["", True]], "kịch bản thường: một danh sách bước duy nhất", o["listsPlain"])
+    ok(o["missPool"] == ["pool chưa có luật <b>«Nạp &lt;b&gt;»</b> (thêm ở trang quản trị gateway → Pool → mục 3)",
+                         "chưa có bước cho giai đoạn <b>«Đăng nhập»</b>", "chưa có bước cho giai đoạn <b>«Kết thúc đơn»</b>"],
+       "dòng «còn thiếu»: luật pool chưa có (tên luật được thoát) + MỌI giai đoạn bắt buộc đang trống trong kịch bản, dù pool trên gateway có bước cho giai đoạn đó", o["missPool"])
+    ok(o["missNone"] == [], "giai đoạn bắt buộc nào cũng có bước → không còn lời nhắc về giai đoạn", o["missNone"])
+    ok(o["missNoPoolCfg"] == ["chưa có bước cho giai đoạn <b>«Đăng nhập»</b>"] and o["missNoGw"] == ["chưa nối gateway", "chưa có bước cho giai đoạn <b>«Đăng nhập»</b>"],
+       "chưa đọc được pool / chưa nối gateway: giai đoạn bắt buộc đang trống vẫn được nhắc (không còn chờ xem gateway có bước hay không)", [o["missNoPoolCfg"], o["missNoGw"]])
+    ok(o["copiedFlag"] == [False, True, False, False, True],
+       "dấu «đã chép bước đời cũ» (gw_steps_copied): mặc định chưa; chỉ đúng `true` mới tính; giữ nguyên qua nạp → lưu → nạp", o["copiedFlag"])
+    at = o["adoptText"]
+    ok(at[0] == "Đã chép 5 bước cũ từ gateway vào kịch bản (Sau mỗi lần mua: 1, Kết thúc đơn: 4) — từ giờ sửa bước ở đây"
+       and at[1] == "Đã chép 12 bước cũ từ gateway vào kịch bản (Đăng nhập: 7, Vào danh sách gói: 3, Kết thúc đơn: 2) — từ giờ sửa bước ở đây" and at[2:] == ["", "", ""],
+       "lời báo sau khi chép: tổng số bước + từng giai đoạn theo thứ tự chạy; giai đoạn lạ / số lạ bị bỏ; không chép bước nào → không báo", at)
 
     print("\n%s" % ("✅ TẤT CẢ %d kiểm tra đều đạt." % PASS if not FAIL else "❌ %d lỗi / %d kiểm tra." % (FAIL, PASS + FAIL)))
     return 1 if FAIL else 0

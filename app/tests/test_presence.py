@@ -50,7 +50,6 @@ GROUPS = [
     {"id": "g2", "name": "Nhóm 2", "mode": "once", "devices": ["M2", "M3"], "scripts": [
         {"id": "k1", "name": "Kịch bản 1", "mode": "once", "loops": 1, "steps": [{"type": "home"}]},
         {"id": "mã có dấu", "name": "bỏ", "steps": [{"type": "home"}]}]},
-    {"id": "gapi", "name": "Nhận đơn", "mode": "api", "devices": ["M1"], "scripts": [{"id": "x", "name": "không tính", "steps": [{"type": "home"}]}]},
     {"id": "nhóm sai mã", "name": "bỏ", "mode": "once", "devices": ["M1"], "scripts": [{"id": "y", "name": "bỏ", "steps": []}]},
 ]
 READY = {"board_online": True, "udid": True, "ios_connected": True, "ble": True}
@@ -91,7 +90,7 @@ def unit_tests():
     print("== 1. Danh mục kịch bản ==")
     rows, rev = presence.catalog(GROUPS)
     by = {r["uid"]: r for r in rows}
-    ok(sorted(by) == ["g1:nap", "g1:rong", "g2:k1"], "chỉ kịch bản của nhóm chạy kịch bản, mã hợp lệ (bỏ nhóm nhận đơn, bỏ mã có ký tự lạ)", sorted(by))
+    ok(sorted(by) == ["g1:nap", "g1:rong", "g2:k1"], "mọi kịch bản có mã hợp lệ (bỏ nhóm / kịch bản mang mã có ký tự lạ)", sorted(by))
     r = by["g1:nap"]
     ok(r["group"] == "Nhóm 1" and r["name"] == "Nạp gói" and r["mode"] == "loop" and r["loops"] == 3 and r["step_count"] == len(STEPS), "tên, nhóm, cách chạy, số bước", r)
     ok(r["vars"] == ["username", "password", "package.ocr_text"], "biến {{…}} theo thứ tự xuất hiện, không lặp, chịu khoảng trắng", r["vars"])
@@ -128,12 +127,10 @@ def unit_tests():
        "kịch bản nhận đơn trong danh mục: cách chạy «orders», pool, số bước = tổng các giai đoạn, dàn ý kèm giai đoạn (không tính bước của cách chạy khác)", ro["g7:nd"])
     ok(ro["g7:th"]["mode"] == "once" and "pool" not in ro["g7:th"] and ro["g7:th"]["step_count"] == 1, "kịch bản thường không khai pool dù còn giữ cấu hình nhận đơn cũ")
     ok("ten-app-rieng" not in json.dumps(list(ro.values()), ensure_ascii=False) and "KHONG-TINH" not in json.dumps(list(ro.values())), "…vẫn không gửi tên app / chữ gõ")
-    bo, _ = presence.build([fact("M1", running=True, run_mode="api", run_group_id="g7", run_script_id="nd", run_group="Theo đơn", run_script="Nạp theo đơn", iter=3),
-                            fact("M2", running=True, run_mode="api", run_group_id="gapi", run_group="Nhận đơn")], go)
+    bo, _ = presence.build([fact("M1", running=True, run_mode="api", run_group_id="g7", run_script_id="nd", run_group="Theo đơn", run_script="Nạp theo đơn", iter=3)], go)
     do = {x["name"]: x for x in bo["devices"]}
     ok(do["M1"]["status"] == "orders" and do["M1"]["running"] == {"group": "Theo đơn", "script": "Nạp theo đơn", "uid": "g7:nd"} and do["M1"]["scripts"] == ["g7:nd", "g7:th"],
        "máy đang nhận đơn bằng một KỊCH BẢN → báo «orders» kèm kịch bản đang chạy (không kèm số vòng)", do["M1"])
-    ok(do["M2"]["status"] == "orders" and "running" not in do["M2"], "máy của nhóm nhận đơn kiểu cũ (không có kịch bản) → chỉ báo «orders»")
 
     print("== 2. Trạng thái một máy ==")
     S = presence.device_status
@@ -154,15 +151,16 @@ def unit_tests():
     devs = [fact("M2", label="iPhone số 2"), fact("M1", label="M1"),
             fact("M3", running=True, run_mode="loop", run_group_id="g2", run_script_id="k1", run_group="Nhóm 2", run_script="Kịch bản 1", iter=4),
             fact("M4", ios_connected=False), fact("M1", ios_connected=False), {"name": ""},
-            fact("M5", running=True, run_mode="api", run_group_id="gapi", run_group="Nhận đơn")]
+            fact("M5", running=True, run_mode="api", run_group_id="g9", run_script_id="nd", run_group="Nhóm 9", run_script="Nạp theo đơn", iter=2)]
     body, rows2 = presence.build(devs, GROUPS, {"app": "iphone-farm", "mode": "desktop", "accepting": True})
     d = {x["name"]: x for x in body["devices"]}
     ok([x["name"] for x in body["devices"]] == ["M1", "M2", "M3", "M4", "M5"], "mỗi máy một dòng, xếp theo tên (tên trùng / rỗng bị bỏ)", list(d))
     ok(d["M1"]["scripts"] == ["g1:nap", "g1:rong"] and d["M2"]["scripts"] == ["g1:nap", "g1:rong", "g2:k1"] and d["M3"]["scripts"] == ["g2:k1"] and d["M4"]["scripts"] == [],
-       "kịch bản máy chạy được = kịch bản của MỌI nhóm máy đang ở (không tính nhóm nhận đơn)", {k: v["scripts"] for k, v in d.items()})
+       "kịch bản máy chạy được = kịch bản của MỌI nhóm máy đang ở", {k: v["scripts"] for k, v in d.items()})
     ok(d["M1"]["status"] == "idle" and d["M2"]["status"] == "idle" and d["M3"]["status"] == "running" and d["M4"]["status"] == "offline" and d["M5"]["status"] == "orders", "trạng thái từng máy")
     ok(d["M3"]["running"] == {"group": "Nhóm 2", "script": "Kịch bản 1", "uid": "g2:k1", "iter": 4}, "máy đang chạy: nhóm · kịch bản · vòng", d["M3"])
-    ok("running" not in d["M5"] and "running" not in d["M1"], "máy nhận đơn / máy nghỉ không có mục «đang chạy kịch bản»")
+    ok(d["M5"]["running"] == {"group": "Nhóm 9", "script": "Nạp theo đơn", "uid": "g9:nd"} and "running" not in d["M1"],
+       "máy đang nhận đơn: kèm kịch bản nhận đơn đang chạy (không kèm số vòng); máy nghỉ không có mục «đang chạy kịch bản»", d["M5"])
     ok(d["M2"]["label"] == "iPhone số 2" and "label" not in d["M1"] and d["M4"]["note"] == "iPhone chưa cắm USB" and "note" not in d["M1"], "nhãn (khi khác tên) và ghi chú (khi có)")
     ok(body["scripts_rev"] == rev and "scripts" not in body and rows2 == rows and body["tool"]["accepting"] is True, "thân lời báo: mã băm danh mục, KHÔNG kèm danh mục")
     ok("udid" not in json.dumps(body).lower() and "port" not in json.dumps(body).lower(), "không có UDID / cổng serial trong lời báo")

@@ -375,25 +375,15 @@
   font-size: .84rem;
 }
 
-/* ---- chế độ API (nhận đơn từ gateway) ---- */
+/* ---- nhận đơn từ gateway: chấm trạng thái kết nối, dòng ghi chú, ô tuỳ chọn nhỏ ---- */
 .gw-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: .35rem;
   background: var(--bs-secondary); vertical-align: 1px; }
 .gw-dot.ok { background: var(--bs-success); } .gw-dot.bad { background: var(--bs-danger); }
-.api-row { margin-top: .9rem; padding-top: .8rem; border-top: 1px dashed var(--bs-border-color);
-  display: flex; flex-wrap: wrap; gap: .6rem 1.2rem; align-items: center; justify-content: space-between; }
-.api-row[hidden] { display: none; }
 .api-note { font-size: .82rem; color: var(--bs-secondary-color); min-width: 0; }
-.api-opts { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; }
 .api-opt { font-size: .8rem; color: var(--bs-secondary-color); display: inline-flex; align-items: center; gap: .35rem; margin: 0; white-space: nowrap; }
-.api-opt input[type=number] { width: 62px; padding: .15rem .35rem; border-radius: 6px; font-size: .8rem;
+.api-opt input[type=number] { width: 3.4rem; padding: .15rem .35rem; border-radius: 6px; font-size: .8rem;
   border: 1px solid var(--bs-border-color); background: var(--bs-body-bg); color: var(--bs-body-color); }
-.api-hint { font-size: .8rem; line-height: 1.5; color: var(--bs-body-color); padding: .55rem .75rem;
-  border-radius: 8px; background: transparent; border: 1px dashed var(--bs-border-color); }
-.seg.seg-wrap { display: flex; flex-wrap: wrap; }
-.seg-wrap .seg-btn { padding: .32rem .7rem; font-size: .8rem; }
-.seg-c.own { background: var(--bs-success-bg-subtle); color: var(--bs-success); }
-.seg-c.none { opacity: .55; }
-.seg-btn.active .seg-c.own { background: rgba(255,255,255,.3); color: #fff; }
+.api-opt input[type=checkbox] { margin: 0; }
 .mem-counts { font-size: .7rem; font-weight: 500; color: var(--bs-secondary-color); margin-left: .35rem; white-space: nowrap; }
 .mem-row.halted .mem-sub { color: var(--bs-danger); white-space: normal; }
 
@@ -402,7 +392,7 @@
   background: var(--bs-warning-bg-subtle); color: var(--bs-warning); }
 .step .ops button.on { background: var(--bs-warning); color: #fff; border-color: var(--bs-warning); }
 
-/* ---- cảnh báo «máy sẽ không nhận đơn» (pool/nhóm thiếu luật hoặc bước bắt buộc) ---- */
+/* ---- cảnh báo «máy sẽ không nhận đơn» (pool thiếu luật hoặc kịch bản thiếu bước bắt buộc) ---- */
 .api-warn { font-size: .8rem; line-height: 1.5; padding: .55rem .75rem; border-radius: 8px;
   color: var(--bs-warning-text-emphasis, var(--bs-warning)); background: var(--bs-warning-bg-subtle);
   border: 1px solid rgba(var(--bs-warning-rgb), .45); }
@@ -477,7 +467,6 @@ html.ipf-menu-off.layout-navbar-fixed .layout-navbar.navbar-detached { inline-si
 .ed-name:hover { border-color: var(--bs-border-color); }
 .ed-name:focus { border-color: var(--bs-primary); outline: 0; background: var(--bs-body-bg); }
 .ed-name::placeholder { color: var(--bs-secondary-color); font-weight: 400; }
-.ed-phase { flex: 1 1 8rem; min-width: 0; font-size: 1.05rem; font-weight: 600; color: var(--bs-heading-color); }
 .ed-dirty { font-size: .8rem; color: var(--bs-warning); white-space: nowrap; }
 .ed-dirty::before { content: ""; display: inline-block; width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; margin-right: .35rem; vertical-align: .05rem; }
 .ed-head .btn { white-space: nowrap; flex: 0 0 auto; }
@@ -495,6 +484,7 @@ html.ipf-menu-off.layout-navbar-fixed .layout-navbar.navbar-detached { inline-si
 .ed-run-loops { display: inline-flex; align-items: center; gap: .45rem; }
 .ed-run-loops input { width: 5.2rem; }
 .ed-run-acts { display: flex; gap: .5rem; flex: 0 0 auto; }
+.ed-run-opts { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: .3rem 1rem; }   /* tuỳ chọn của kịch bản nhận đơn: một hàng riêng dưới câu «Chạy …» */
 .ed-run .script-machines { flex-direction: row; flex-wrap: wrap; gap: .4rem; }
 .ed-run .script-machine-row { gap: .35rem; padding: .16rem .3rem .16rem .6rem; border: 1px solid var(--bs-border-color); border-radius: 2rem; flex-wrap: nowrap; }
 .ed-run .script-machine { font-size: .85rem; white-space: nowrap; }

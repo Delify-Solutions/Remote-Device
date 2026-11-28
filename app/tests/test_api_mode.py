@@ -380,17 +380,7 @@ $cfg["rules"] = [
     ["when" => "purchase_success", "value" => "Mua thành công"], ["when" => "purchase_fail", "value" => "Thanh toán thất bại"],
     ["when" => "package_unavailable", "value" => "Đã mua gói này"],
 ];
-$cfg["login_steps"] = [
-    ["type" => "launch", "value" => "efootball"], ["type" => "wait_text", "value" => "Konami ID @3s"],
-    ["type" => "tap_text", "value" => "Đăng nhập"], ["type" => "type", "value" => "{{username}}"],
-    ["type" => "key", "value" => "tab"], ["type" => "type", "value" => "{{password}}"], ["type" => "key", "value" => "enter"],
-];
-$cfg["nav_steps"] = [["type" => "tap_text", "value" => "Cửa hàng"]];
-$cfg["purchase_steps"] = [["type" => "tap_text", "value" => "{{package.ocr_text}}"], ["type" => "tap_text", "value" => "Mua ngay"]];
-$cfg["after_purchase_steps"] = [["type" => "tap_text", "value" => "Đóng"]];
-// «Đóng» là bước TUỲ CHỌN: có hộp thoại thì đóng, không có thì bỏ qua → dùng được từ mọi màn hình
-$cfg["finish_steps"] = [["type" => "tap_text", "value" => "Đóng", "optional" => true], ["type" => "tap_text", "value" => "Đăng xuất"],
-                        ["type" => "wait_text", "value" => "Konami ID @3s"], ["type" => "home", "value" => ""]];
+// Bước của đơn soạn ở TOOL (BASE_STEPS bên dưới) — pool trên gateway chỉ có luật + gói.
 $id = Pools::save(null, "game-test", "Game test", "eFootball", true, $cfg);
 if (is_string($id)) { fwrite(STDERR, $id); exit(1); }
 Pools::savePackages($id, [
@@ -402,13 +392,25 @@ Pools::savePackages($id, [
 $bare = $cfg; $bare["rules"] = [["when" => "login_fail", "value" => "không chính xác"]];
 $bid = Pools::save(null, "game-bare", "Game thiếu luật", "eFootball", true, $bare);
 Pools::savePackages($bid, [["code" => "coin_1050", "name" => "1050 Coins", "ocr_text" => "1050|1,050", "limit_type" => "multi", "max_qty" => 5, "active" => true]]);
-// pool có gói nằm ở TRANG 2 của cửa hàng: phải vuốt mới thấy; thêm một bước bấm giữ (tuỳ chọn)
-$sw = $cfg;
-$sw["nav_steps"] = [["type" => "tap_text", "value" => "Cửa hàng"], ["type" => "swipe", "value" => "left"],
-                    ["type" => "hold_text", "value" => "trang 2 @0.5s", "optional" => true]];
-$sid = Pools::save(null, "game-swipe", "Game vuốt trang", "eFootball", true, $sw);
+// pool có gói nằm ở TRANG 2 của cửa hàng: phải vuốt mới thấy (bước vuốt + bấm giữ nằm trong kịch bản của tool — SWIPE_NAV)
+$sid = Pools::save(null, "game-swipe", "Game vuốt trang", "eFootball", true, $cfg);
 if (is_string($sid)) { fwrite(STDERR, $sid); exit(1); }
 Pools::savePackages($sid, [["code" => "legend", "name" => "Gói Huyền thoại", "ocr_text" => "Huyền thoại", "limit_type" => "multi", "max_qty" => 5, "active" => true]]);
+// pool ĐỜI CŨ: còn lưu các danh sách bước soạn ở gateway (dạng {type, value}) — tool đời mới chép chúng về kịch bản đúng MỘT lần
+$old = $cfg;
+$old["login_steps"] = [
+    ["type" => "launch", "value" => "efootball"], ["type" => "wait_text", "value" => "Konami ID @3s"],
+    ["type" => "tap_text", "value" => "Đăng nhập"], ["type" => "type", "value" => "{{username}}"],
+    ["type" => "key", "value" => "tab"], ["type" => "type", "value" => "{{password}}"], ["type" => "key", "value" => "enter"],
+];
+$old["nav_steps"] = [["type" => "tap_text", "value" => "Cửa hàng"]];
+$old["purchase_steps"] = [["type" => "tap_text", "value" => "{{package.ocr_text}}"], ["type" => "tap_text", "value" => "Mua ngay"]];
+$old["after_purchase_steps"] = [["type" => "tap_text", "value" => "Đóng"]];
+$old["finish_steps"] = [["type" => "tap_text", "value" => "Đóng", "optional" => true], ["type" => "tap_text", "value" => "Đăng xuất"],
+                        ["type" => "wait_text", "value" => "Konami ID @3s"], ["type" => "home", "value" => ""]];
+$lid = Pools::save(null, "game-legacy", "Game đời cũ", "eFootball", true, $old);
+if (is_string($lid)) { fwrite(STDERR, $lid); exit(1); }
+Pools::savePackages($lid, [["code" => "coin_1050", "name" => "1050 Coins", "ocr_text" => "1050|1,050", "price_text" => "249.000", "limit_type" => "multi", "max_qty" => 5, "active" => true]]);
 $shop = Keys::create("shop", "Shop test");
 $tool = Keys::create("tool", "Farm test");
 echo json_encode(["shop" => $shop["plain"], "tool" => $tool["plain"]]);
@@ -515,6 +517,30 @@ def customer(gw, jid, codes):
     return t
 
 
+# Bước của MỘT đơn, soạn trong kịch bản nhận đơn ở tool (nơi duy nhất soạn bước). OTP để trống = gõ mã rồi Enter.
+# «Đóng» ở giai đoạn kết thúc là bước TUỲ CHỌN: có hộp thoại thì đóng, không có thì bỏ qua → dùng được từ mọi màn hình.
+BASE_STEPS = {
+    "login": [{"type": "launch", "app": "efootball"}, {"type": "wait_text", "text": "Konami ID", "timeout": 3}, {"type": "tap_text", "text": "Đăng nhập"},
+              {"type": "type", "text": "{{username}}"}, {"type": "key", "name": "tab"}, {"type": "type", "text": "{{password}}"}, {"type": "key", "name": "enter"}],
+    "otp": [],
+    "nav": [{"type": "tap_text", "text": "Cửa hàng"}],
+    "purchase": [{"type": "tap_text", "text": "{{package.ocr_text}}"}, {"type": "tap_text", "text": "Mua ngay"}],
+    "after": [{"type": "tap_text", "text": "Đóng"}],
+    "finish": [{"type": "tap_text", "text": "Đóng", "optional": True}, {"type": "tap_text", "text": "Đăng xuất"},
+               {"type": "wait_text", "text": "Konami ID", "timeout": 3}, {"type": "home"}],
+}
+# pool «game-swipe»: gói nằm ở TRANG 2 của cửa hàng → vuốt mới thấy; thêm một bước bấm giữ (tuỳ chọn)
+SWIPE_NAV = [{"type": "tap_text", "text": "Cửa hàng"}, {"type": "swipe", "dir": "left"}, {"type": "hold_text", "text": "trang 2", "seconds": 0.5, "optional": True}]
+
+
+def order_script(pool="game-test", local_steps=None, check_keyboard=False):
+    """Kịch bản NHẬN ĐƠN cho phép thử: BASE_STEPS, `local_steps` thay nguyên giai đoạn được nêu (đã đánh dấu «đã chép bước đời cũ»: không đụng gateway)."""
+    steps = json.loads(json.dumps(BASE_STEPS))
+    steps.update(json.loads(json.dumps(local_steps or {})))
+    return {"id": "nd-test", "name": "Nạp theo đơn", "mode": "orders", "steps": [], "loops": 1,
+            "orders": {"pool": pool, "steps": steps, "login_wait": 5, "purchase_wait": 5, "check_keyboard": check_keyboard, "gw_steps_copied": True}}
+
+
 class Rig:
     """Một máy giả + bộ chạy thật, nối với gateway tạm."""
     N = 0
@@ -533,11 +559,11 @@ class Rig:
         r = self.runner
         r.POLL_IDLE, r.NOT_READY_WAIT, r.HEARTBEAT_EVERY, r.RESULT_BASE, r.RESULT_TRIES, r.OTP_WAIT = 0.2, 0.3, 0.4, 0.05, 2, 1
         r.CLEAR_WAIT = 0.3
-        self.group = {"id": "g-test", "mode": "api",
-                      "api": {"pool": pool, "steps": local_steps or {}, "login_wait": 5, "purchase_wait": 5, "check_keyboard": check_keyboard}}
+        self.group = {"id": "g-test", "name": "Nhóm thử", "devices": [self.name]}
+        self.script = order_script(pool, local_steps, check_keyboard)
 
     def start(self):
-        return self.runner.start_machine(self.name, self.group)
+        return self.runner.start_machine(self.name, self.group, self.script)
 
     def status(self):
         return self.runner.status().get(self.name, {})
@@ -599,16 +625,35 @@ def run_all(gw, rigs):
     pools = c.pools()
     ok(any(p.get("code") == "game-test" for p in pools), "tool lấy được danh sách pool để chọn", pools)
     pool = c.pool("game-test")
-    steps = apimode.effective_steps(pool, {})
-    ok([len(steps[p]) for p in apimode.PHASES] == [7, 2, 1, 2, 1, 4], "đủ 6 giai đoạn bước từ gateway (OTP mặc định: gõ mã + Enter)",
+    steps = apimode.order_steps(BASE_STEPS)
+    ok([len(steps[p]) for p in apimode.PHASES] == [7, 2, 1, 2, 1, 4], "bước 6 giai đoạn lấy từ KỊCH BẢN của tool (OTP để trống → mặc định: gõ mã + Enter)",
        {p: len(steps[p]) for p in apimode.PHASES})
-    ok(steps["finish"][0].get("optional") is True and "optional" not in steps["finish"][1], "bước «bỏ qua nếu lỗi» của gateway được giữ đúng", steps["finish"][:2])
-    ok(steps["login"][1] == {"type": "wait_text", "text": "Konami ID", "timeout": 3}, "bước «chờ chữ @3s» đổi đúng thời gian chờ", steps["login"][1])
-    over = apimode.effective_steps(pool, {"purchase": [{"type": "tap", "x": 1, "y": 2}]})
-    ok(over["purchase"] == [{"type": "tap", "x": 1, "y": 2}] and len(over["login"]) == 7, "nhóm ghi đè riêng 1 giai đoạn, giai đoạn khác vẫn lấy của gateway")
-    ok(apimode.validate(pool, steps) == [], "pool đủ luật + đủ bước → tool chịu chạy", apimode.validate(pool, steps))
+    only = apimode.order_steps({"purchase": [{"type": "tap", "x": 1, "y": 2}, "rác", {"khong": "co-type"}]})
+    ok(only["purchase"] == [{"type": "tap", "x": 1, "y": 2}] and only["login"] == [] and only["finish"] == [] and len(only["otp"]) == 2,
+       "giai đoạn kịch bản không soạn thì TRỐNG — bộ chạy không lấy bước nào từ gateway; phần tử rác bị bỏ", only)
+    ok(apimode.legacy_gateway_steps(pool) == ({}, {}) and not any(k.endswith("_steps") for k in pool), "pool thường: gateway không giữ (và không trả) bước nào", [k for k in pool if k.endswith("_steps")])
+    legacy, bad = apimode.legacy_gateway_steps(c.pool("game-legacy"))
+    ok(bad == {} and legacy == {p: BASE_STEPS[p] for p in apimode.PHASES if BASE_STEPS[p]},
+       "pool ĐỜI CŨ: bước còn lưu ở gateway đổi đúng sang dạng của tool (giữ cờ «bỏ qua nếu lỗi», «chờ chữ @3s» → chờ 3 giây)", legacy)
+    old_pool = {"login_steps": [{"type": "home", "value": "", "note": " về home "}], "nav_steps": [{"type": "tap_text", "value": "Shop"}, {"type": "tap", "value": "sai"}], "finish_steps": "rác"}
+    lg2, bad2 = apimode.legacy_gateway_steps(old_pool)
+    ok(lg2 == {"login": [{"type": "home", "note": "về home"}]} and list(bad2) == ["nav"] and "x,y" in bad2["nav"],
+       "giai đoạn đời cũ có bước sai dạng → bỏ CẢ giai đoạn đó kèm lời báo theo giai đoạn; giai đoạn khác vẫn đổi (ghi chú của bước đi theo)", (lg2, bad2))
+    # bộ chạy (lưới an toàn khi kịch bản chưa chép): giai đoạn kịch bản đang trống mà bước đời cũ sai dạng → KHÔNG chạy; có bước rồi thì không vướng
+    import store as _store
+    said = []
+    ap1 = _store.api_defaults({"pool": "x", "steps": {"login": [{"type": "home"}]}})
+    stuck = Runner(lambda n: None)._adopt_gateway_steps({"group_id": None, "script_id": None}, ap1, dict(old_pool, finish_steps=[{"type": "home", "value": ""}]), lambda t, k="": said.append(t))
+    ok(bool(stuck) and "sai dạng" in stuck and "Vào danh sách gói" in stuck and ap1["gw_steps_copied"] is False and ap1["steps"]["finish"] == [] and said == [],
+       "bộ chạy: bước đời cũ sai dạng ở giai đoạn kịch bản đang TRỐNG → trả lời báo để dừng máy, không chép gì, không đánh dấu", stuck)
+    ap2 = _store.api_defaults({"pool": "x", "steps": {"login": [{"type": "home"}], "nav": [{"type": "tap_text", "text": "Shop"}]}})
+    free = Runner(lambda n: None)._adopt_gateway_steps({"group_id": None, "script_id": None}, ap2, dict(old_pool, finish_steps=[{"type": "home", "value": ""}]), lambda t, k="": said.append(t))
+    ok(free is None and ap2["gw_steps_copied"] is True and ap2["steps"]["finish"] == [{"type": "home"}] and ap2["steps"]["nav"] == [{"type": "tap_text", "text": "Shop"}]
+       and ap2["steps"]["login"] == [{"type": "home"}] and len(said) == 1 and "Đã chép 1 bước cũ" in said[0],
+       "…giai đoạn sai dạng mà kịch bản đã tự có bước → không vướng: chép các giai đoạn trống còn lại, giữ nguyên bước của kịch bản", (free, said))
+    ok(apimode.validate(pool, steps) == [], "pool đủ luật + kịch bản đủ bước → tool chịu chạy", apimode.validate(pool, steps))
     bare = c.pool("game-bare")
-    miss = apimode.validate(bare, apimode.effective_steps(bare, {}))
+    miss = apimode.validate(bare, steps)
     ok(len(miss) == 3 and all("thiếu luật" in m for m in miss), "pool thiếu 3 luật bắt buộc (chưa đăng nhập / đăng nhập thành công / nạp thành công) → bị từ chối", miss)
     ok(any("chưa có bước" in m for m in apimode.validate(pool, dict(steps, finish=[]))), "thiếu bước kết thúc đơn (đăng xuất) → bị từ chối")
 
@@ -898,7 +943,7 @@ def run_all(gw, rigs):
     # lớp chặn thứ hai (ngay trong lúc làm đơn): game đang đăng nhập sẵn → không gõ tài khoản, báo failed + dừng máy
     pool_cfg = Gateway(gw.url, gw.tool_key).pool("game-test")
     def direct(game, login_steps=None):
-        st = apimode.effective_steps(pool_cfg, {"login": login_steps} if login_steps else {})
+        st = apimode.order_steps(dict(BASE_STEPS, login=login_steps) if login_steps else BASE_STEPS)
         class NoGw:                                # không gọi mạng: chỉ xét quyết định của luồng xử lý đơn
             def progress(self, *a, **k): return {"ok": True}
             def upload_image(self, *a, **k): return {"ok": True}
@@ -1070,7 +1115,7 @@ def run_all(gw, rigs):
         def send(self, cmd, wait=0.5): return "OK home"
     def reader(texts, wait=3.0):
         class NoGw: pass
-        jf = apimode.JobFlow(Seq(texts), NoGw(), {"id": "J", "login": {}, "items": []}, pool_cfg, apimode.effective_steps(pool_cfg, {}),
+        jf = apimode.JobFlow(Seq(texts), NoGw(), {"id": "J", "login": {}, "items": []}, pool_cfg, apimode.order_steps(BASE_STEPS),
                              opts={"login_wait": 1, "purchase_wait": wait, "clear_wait": 0.2})
         return jf._read_result(list(apimode.RESULT_RULES))[0]
     ok(reader(["Đang xử lý", "Thanh toán thất bại", "Mua thành công! Đóng"]) == "purchase_success", "thoáng thấy chữ «thất bại» rồi «thành công» hiện ra → tính là ĐÃ NẠP")
@@ -1266,9 +1311,9 @@ def run_all(gw, rigs):
     ok(g28.purchases == [("a@test.vn", "coin_1050")] and gw.job(j28)["status"] == "review", "mua được 1/2 thì đơn bị đóng → không mua tiếp, đơn vẫn chờ đối soát", (g28.purchases, gw.job(j28)["status"]))
     ok(len(ev) == 1 and "coin_1050" in ev[0] and " 1]" in ev[0], "nhật ký đơn trên gateway có lời báo muộn kèm số đã mua của từng gói", ev)
 
-    print("\n== 24. Vuốt + bấm giữ: cấu hình trên gateway → tool chạy đúng (gói nằm ở trang 2 của cửa hàng) ==")
+    print("\n== 24. Vuốt + bấm giữ trong kịch bản → tool chạy đúng (gói nằm ở trang 2 của cửa hàng) ==")
     g30 = FakeGame(accounts())
-    r30 = rig(g30, pool="game-swipe")
+    r30 = rig(g30, pool="game-swipe", local_steps={"nav": SWIPE_NAV})
     j30 = gw.new_job("T-030", "a@test.vn", "PassA#1", [{"code": "legend", "qty": 1}], pool="game-swipe")
     r30.start()
     job = gw.wait_job(j30, ("done", "failed", "review"))
@@ -1331,7 +1376,7 @@ def run_all(gw, rigs):
 
     print("\n== 27. Máy đang giữ đơn của pool KHÁC với pool của nhóm → đối soát, không chạy bằng cấu hình sai ==")
     g29 = FakeGame(accounts())
-    r29 = rig(g29, pool="game-swipe")
+    r29 = rig(g29, pool="game-swipe", local_steps={"nav": SWIPE_NAV})
     j29 = gw.new_job("T-029", "a@test.vn", "PassA#1", [{"code": "coin_1050", "qty": 1}])
     r29.client.claim(r29.name, "game-test")              # máy này đang giữ một đơn của pool game-test; nhóm vừa bị đổi sang game-swipe
     r29.start()
@@ -2181,13 +2226,20 @@ def run_all(gw, rigs):
             x.stop(force=True, wait=5)
     gk = FakeGame(accounts())
     rk = rig(gk)
-    # bước ĐĂNG NHẬP do kịch bản tự mang (thêm một lần «về home» ở đầu để phân biệt với bước của gateway); các giai đoạn khác lấy từ pool
+    # Kịch bản mới chỉ soạn giai đoạn ĐĂNG NHẬP (thêm một lần «về home» ở đầu để nhận ra); pool của nó là pool ĐỜI CŨ còn lưu bước ở gateway
+    # → lần chạy đầu tool CHÉP các giai đoạn còn trống về kịch bản (một lần), ghi vào kịch bản đã lưu.
+    import store as store_mod
+    real_store = (store_mod.DATA_DIR, store_mod.GROUPS_FILE, store_mod.DEVICES_FILE)
+    tmp_store = tempfile.mkdtemp(prefix="tool-store-")
+    store_mod.DATA_DIR, store_mod.GROUPS_FILE, store_mod.DEVICES_FILE = tmp_store, os.path.join(tmp_store, "groups.json"), os.path.join(tmp_store, "devices.json")
     kb_login = [{"type": "home"}, {"type": "launch", "app": "efootball"}, {"type": "wait_text", "text": "Konami ID", "timeout": 3}, {"type": "tap_text", "text": "Đăng nhập"},
                 {"type": "type", "text": "{{username}}"}, {"type": "key", "name": "tab"}, {"type": "type", "text": "{{password}}"}, {"type": "key", "name": "enter"}]
     script = {"id": "nd", "name": "Nạp theo đơn", "mode": "orders", "steps": [], "loops": 1,
-              "orders": {"pool": "game-test", "steps": {"login": kb_login}, "login_wait": 5, "purchase_wait": 5, "check_keyboard": False}}
-    grp_kb = {"id": "g-kb", "name": "Nhóm kịch bản", "mode": "once", "devices": [rk.name], "scripts": [script]}
-    jk = gw.new_job("T-KB1", "a@test.vn", "PassA#1", [{"code": "coin_1050", "qty": 1}])
+              "orders": {"pool": "game-legacy", "steps": {"login": kb_login}, "login_wait": 5, "purchase_wait": 5, "check_keyboard": False}}
+    grp_kb = {"id": "g-kb", "name": "Nhóm kịch bản", "devices": [rk.name], "scripts": [script]}
+    store_mod.save_group(json.loads(json.dumps(grp_kb)))
+    stored = lambda: next(s for s in store_mod.get_group("g-kb")["scripts"] if s["id"] == "nd")
+    jk = gw.new_job("T-KB1", "a@test.vn", "PassA#1", [{"code": "coin_1050", "qty": 1}], pool="game-legacy")
     ok(rk.runner.start_machine(rk.name, grp_kb, script) is True, "kịch bản nhận đơn khởi động (app cửa sổ)")
     jobk = gw.wait_job(jk, ("done", "failed", "review"))
     ok(jobk["status"] == "done" and gk.purchases == [("a@test.vn", "coin_1050")] and jobk["device"] == rk.name, "đơn hoàn tất qua kịch bản nhận đơn: đúng tài khoản, đúng gói, đúng máy", (jobk["status"], gk.purchases))
@@ -2196,14 +2248,27 @@ def run_all(gw, rigs):
     ok(stk.get("mode") == "api" and stk.get("group_id") == "g-kb" and stk.get("script_id") == "nd" and stk.get("script_name") == "Nạp theo đơn",
        "máy hiện đang chạy «nhóm · kịch bản» ở chế độ nhận đơn", stk)
     ok([c["name"] for c in rk.runner.customers()] == [rk.name], "…và được tính là MÁY CỦA KHÁCH (mọi luật riêng tư / không chạy đè của chế độ nhận đơn áp dụng)")
-    ok(wait_until(lambda: gk.user is None, 5), "xong đơn: đã đăng xuất (bước kết thúc lấy từ pool)", gk.user)
+    ok(wait_until(lambda: gk.user is None, 5), "xong đơn: đã đăng xuất (bước kết thúc là bước vừa chép về kịch bản)", gk.user)
+    so = stored()["orders"]
+    rest = ("nav", "purchase", "after", "finish")
+    ok(rk.text().count("Đã chép 8 bước cũ từ gateway") == 1 and so["gw_steps_copied"] is True and so["steps"]["login"] == kb_login
+       and {p: so["steps"][p] for p in rest} == {p: BASE_STEPS[p] for p in rest} and so["steps"]["otp"] == [],
+       "lần chạy đầu: 4 giai đoạn kịch bản còn trống được CHÉP từ pool đời cũ vào kịch bản ĐÃ LƯU (đăng nhập của kịch bản giữ nguyên), đánh dấu đã chép",
+       ({p: len(so["steps"][p]) for p in apimode.PHASES}, so["gw_steps_copied"]))
     wait_until(lambda: rk.status().get("status") == "Chờ đơn", 8)       # máy báo «trống» cho gateway SAU khi đăng xuất xong → chờ nó về «Chờ đơn» rồi mới đọc
     wait_until(lambda: gw.sql("SELECT state FROM devices WHERE name=?", (rk.name,)) == [("free",)], 5)
     devk = gw.sql("SELECT state, pool_code FROM devices WHERE name=?", (rk.name,))
-    ok(devk == [("free", "game-test")], "gateway thấy máy đang trống ở đúng pool của kịch bản", devk)
+    ok(devk == [("free", "game-legacy")], "gateway thấy máy đang trống ở đúng pool của kịch bản", devk)
     rk.stop()
-    ok(rk.runner.start_machine(rk.name, dict(grp_kb), dict(script, id="nd")) is True and rk.running(), "dừng rồi chạy lại kịch bản nhận đơn được")
+    gone = stored()
+    gone["orders"]["steps"]["after"] = []                          # người dùng xoá hết bước «sau mỗi lần mua» rồi lưu
+    store_mod.save_group(dict(store_mod.get_group("g-kb"), scripts=[gone]))
+    ok(rk.runner.start_machine(rk.name, store_mod.get_group("g-kb"), stored()) is True and rk.running(), "dừng rồi chạy lại kịch bản nhận đơn được")
+    wait_until(lambda: rk.status().get("status") == "Chờ đơn", 8)
+    ok(rk.text().count("Đã chép") == 1 and stored()["orders"]["steps"]["after"] == [], "đã chép MỘT lần thì không chép lại: giai đoạn người dùng xoá trống vẫn trống", stored()["orders"]["steps"]["after"])
     rk.stop()
+    store_mod.DATA_DIR, store_mod.GROUPS_FILE, store_mod.DEVICES_FILE = real_store
+    shutil.rmtree(tmp_store, ignore_errors=True)
     rk.runner.allow_api = False
     ok(rk.runner.start_machine(rk.name, grp_kb, script) is False and not rk.running(), "tiến trình không được nhận đơn (bản web) → kịch bản nhận đơn không khởi động")
     rk.runner.allow_api = True

@@ -6,14 +6,14 @@ store.py — lưu trữ cấu hình dạng JSON (app/data/): máy, nhóm + kịc
 - groups.json  : nhóm máy, mỗi nhóm có danh sách kịch bản (các bước nằm trong kịch bản)
 """
 from __future__ import annotations
-import json, os, time, uuid
+import functools, json, os, threading, time, uuid
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DEVICES_FILE = os.path.join(DATA_DIR, "devices.json")
 GROUPS_FILE = os.path.join(DATA_DIR, "groups.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")     # địa chỉ + khoá gateway (KHÔNG vào git)
 
-# Chế độ "api": các giai đoạn của 1 đơn nạp. Mỗi giai đoạn có danh sách bước riêng.
+# Kịch bản NHẬN ĐƠN: các giai đoạn của 1 đơn nạp. Mỗi giai đoạn có danh sách bước riêng.
 #   login    đăng nhập tài khoản của khách
 #   otp      nhập mã OTP khách vừa gửi ({{otp}})
 #   nav      từ màn hình sau đăng nhập đi tới danh sách gói nạp
@@ -26,6 +26,20 @@ API_PHASES = ["login", "otp", "nav", "purchase", "after", "finish"]
 DEFAULTS_DIR = os.path.join(os.path.dirname(__file__), "defaults")     # dữ liệu mặc định đi kèm bản phát hành (vd nhóm + kịch bản có sẵn)
 
 
+# MỘT khoá cho mọi lần «đọc → sửa → ghi» các tệp ở đây. Giao diện gọi mỗi lệnh ở một luồng riêng, bộ chạy cũng ghi (chép bước đời cũ vào
+# kịch bản): hai luồng cùng đọc-sửa-ghi mà không khoá thì bên ghi sau đè mất thay đổi của bên kia. (Khoá lồng được: hàm có khoá gọi nhau.)
+_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    @functools.wraps(fn)
+    def run(*a, **k):
+        with _LOCK:
+            return fn(*a, **k)
+    return run
+
+
+@_locked
 def _ensure():
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(DEVICES_FILE):
@@ -72,7 +86,7 @@ def _read_strict(path):
 
 def _write(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
+    tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())      # tên tạm RIÊNG từng tiến trình / luồng: không ai ghi đè tệp tạm của ai
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
@@ -87,10 +101,12 @@ def get_devices_strict():
     _ensure(); return _read_strict(DEVICES_FILE)
 
 
+@_locked
 def save_devices(devices):
     _ensure(); _write(DEVICES_FILE, devices); return devices
 
 
+@_locked
 def upsert_device(name, udid, label=None):
     devs = get_devices()
     for d in devs:
@@ -103,11 +119,13 @@ def upsert_device(name, udid, label=None):
     return save_devices(devs)
 
 
+@_locked
 def delete_device(name):
     devs = [d for d in get_devices() if d.get("name") != name]
     return save_devices(devs)
 
 
+@_locked
 def rename_device(old_name, new_name):
     """Đổi tên board: chuyển cấu hình (udid/label) từ tên cũ -> tên mới.
     Dùng khi nạp lại firmware đổi tên BLE, để không để lại 'máy cũ tên cũ'."""
@@ -136,6 +154,7 @@ def get_settings():
         return {}
 
 
+@_locked
 def save_settings(patch):
     s = get_settings()
     s.update(patch)
@@ -148,16 +167,15 @@ def save_settings(patch):
 
 
 # ---- groups (nhóm máy + danh sách kịch bản) ----
-# group = {id, name, devices:[board_name...] (một máy có thể ở NHIỀU nhóm), mode:"loop"|"once"|"api" (giao diện nhóm hiện chỉ dùng "once"),
-#          scripts:[{id, name, steps:[...], mode:"once"|"loop", loops:int}] — cách chạy (1 lần / lặp N vòng) nằm TRONG kịch bản;
-#          một máy chỉ chạy một kịch bản một lúc (runner giữ chỗ theo tên máy),
-#          created, updated,
-#          api:{pool, steps:{login:[],otp:[],nav:[],purchase:[],finish:[]},
-#               login_wait, purchase_wait, check_keyboard}}
-# mode "api": máy trống tự xin đơn ở gateway; `api.steps` để TRỐNG giai đoạn nào thì giai
-# đoạn đó dùng các bước cấu hình trên gateway (pool), có thì ghi đè riêng cho nhóm máy này.
+# group = {id, name, devices:[board_name...] (một máy có thể ở NHIỀU nhóm), created, updated,
+#          scripts:[{id, name, steps:[...], mode:"once"|"loop"|"orders", loops:int, orders:{…}}]}
+# Cách chạy nằm TRONG kịch bản (1 lần / lặp N vòng / nhận đơn từ gateway); một máy chỉ chạy một kịch bản một lúc (runner giữ chỗ theo tên máy).
+# Kịch bản NHẬN ĐƠN mang khối `orders` = {pool, steps:{login:[],otp:[],nav:[],purchase:[],after:[],finish:[]}, login_wait, purchase_wait,
+# check_keyboard, gw_steps_copied, gw_copied_phases}. Bước của một đơn CHỈ soạn ở đây (gateway không còn soạn bước); `gw_steps_copied` = đã
+# chép một lần các bước đời cũ còn lưu ở pool trên gateway vào kịch bản, `gw_copied_phases` = những giai đoạn lần chép đó đã điền (sổ riêng
+# của backend — giao diện không cần gửi lại; xem adopt_gateway_steps, save_group).
 def api_defaults(api=None):
-    """Chuẩn hoá khối cấu hình API của nhóm (thiếu gì bù mặc định)."""
+    """Chuẩn hoá khối cấu hình nhận đơn `orders` của kịch bản (thiếu gì bù mặc định)."""
     api = dict(api) if isinstance(api, dict) else {}
     steps = api.get("steps") if isinstance(api.get("steps"), dict) else {}
     api["pool"] = str(api.get("pool") or "")
@@ -172,6 +190,9 @@ def api_defaults(api=None):
     api["login_wait"] = _num("login_wait", 45, 5, 600)
     api["purchase_wait"] = _num("purchase_wait", 60, 5, 600)
     api["check_keyboard"] = bool(api.get("check_keyboard", True))
+    api["gw_steps_copied"] = api.get("gw_steps_copied") is True
+    filled = api.get("gw_copied_phases")
+    api["gw_copied_phases"] = [ph for ph in API_PHASES if isinstance(filled, list) and ph in filled]
     return api
 
 
@@ -179,11 +200,15 @@ def norm_scripts(group):
     """Chuẩn hoá danh sách kịch bản của nhóm. MỖI kịch bản tự mang cách chạy của nó:
          {id, name, steps:[...], mode:"once"|"loop"|"orders", loops:int (chỉ khi lặp; 0 = vô hạn)}.
     Cách chạy «orders» = KỊCH BẢN NHẬN ĐƠN từ gateway: máy đứng chờ → gateway có đơn → tool giữ chỗ (xin đơn) cho máy → chạy các bước theo
-    giai đoạn của đơn. Cấu hình nằm ở khoá `orders` (cùng dạng với `api` của nhóm nhận đơn: pool + bước từng giai đoạn + thời gian chờ) và
-    được giữ lại cả khi kịch bản tạm chuyển sang cách chạy khác.
-    Nhóm cũ (chỉ có `steps`, chưa có khoá `scripts`) → thành 1 kịch bản «Kịch bản 1» (id cố định «k1»; chạy theo `mode`/`loops` cũ của nhóm).
-    Có khoá `scripts` (kể cả rỗng) thì danh sách đó là chuẩn — không dựng lại từ `steps` cũ. Nhóm không còn `steps` / `active_script`."""
+    giai đoạn của đơn. Cấu hình nằm ở khoá `orders` (pool + bước từng giai đoạn + thời gian chờ) và được giữ lại cả khi kịch bản tạm chuyển
+    sang cách chạy khác.
+    Dữ liệu đời cũ được đổi NGAY KHI ĐỌC (lần lưu kế tiếp ghi lại dạng mới):
+      • nhóm chỉ có `steps`, chưa có khoá `scripts` → 1 kịch bản «Kịch bản 1» (id cố định «k1»; chạy theo `mode`/`loops` cũ của nhóm);
+      • NHÓM NHẬN ĐƠN kiểu cũ (`mode: "api"` + khối `api` của nhóm) → thêm 1 kịch bản nhận đơn «Nhận đơn» (id cố định «don») mang đúng cấu hình đó.
+    Có khoá `scripts` (kể cả rỗng) thì danh sách đó là chuẩn — không dựng lại từ `steps` cũ. Sau khi chuẩn hoá nhóm KHÔNG còn `steps` /
+    `active_script` / `mode` / `loops` / `api`: cách chạy chỉ nằm trong kịch bản."""
     raw = group.get("scripts")
+    legacy_orders = group.get("mode") == "api"
     if raw is None:
         old_mode = "loop" if group.get("mode") == "loop" else "once"
         raw = [{"id": "k1", "name": "Kịch bản 1", "steps": group.get("steps") or [], "mode": old_mode,
@@ -207,9 +232,14 @@ def norm_scripts(group):
         if mode == "orders" or isinstance(s.get("orders"), dict):
             sc["orders"] = api_defaults(s.get("orders") if isinstance(s.get("orders"), dict) else None)
         scripts.append(sc)
+    if legacy_orders:
+        sid = "don"
+        while sid in seen:                      # id phải Y HỆT ở mọi lần đọc (trước khi nhóm được lưu lại) → nối thêm «1», không lấy ngẫu nhiên
+            sid += "1"
+        scripts.append({"id": sid, "name": "Nhận đơn", "steps": [], "mode": "orders", "loops": 1, "orders": api_defaults(group.get("api"))})
     group["scripts"] = scripts
-    group.pop("steps", None)
-    group.pop("active_script", None)
+    for old in ("steps", "active_script", "mode", "loops", "api"):
+        group.pop(old, None)
     return group
 
 
@@ -239,6 +269,7 @@ def get_group(group_id):
     return None
 
 
+@_locked
 def save_group(group):
     _ensure()
     groups = get_groups()
@@ -247,13 +278,22 @@ def save_group(group):
         group["created"] = time.time()
     norm_scripts(group)
     group.setdefault("devices", [])
-    if group.get("mode") not in ("loop", "once", "api"):
-        group["mode"] = "once"                       # «api» = nhóm nhận đơn từ gateway; còn lại nhóm chạy các kịch bản của nó
-    try:
-        group["loops"] = max(0, min(100000, int(group.get("loops", 1))))
-    except (TypeError, ValueError):
-        group["loops"] = 1
-    group["api"] = api_defaults(group.get("api"))
+    # Bản gửi lên có thể CŨ HƠN lần chép bước đời cũ từ gateway (trình sửa giữ bản sao của nhóm; việc chép diễn ra ở backend): kịch bản đã lưu
+    # mang dấu «đã chép» mà bản gửi lên thì chưa → người sửa chưa hề thấy các bước vừa chép. Khi đó dấu được giữ, và CHỈ những giai đoạn lần
+    # chép đã điền (gw_copied_phases) mà bản gửi lên còn để trống mới lấy theo bản đã lưu — giai đoạn khác người dùng xoá trống thì trống thật.
+    was = {s["id"]: s for g in groups if g["id"] == group["id"] for s in g["scripts"] if "orders" in s}
+    for s in group["scripts"]:
+        old = was.get(s["id"])
+        if not (old and "orders" in s):
+            continue
+        saved, new = old["orders"], s["orders"]
+        if saved["gw_steps_copied"] and not new["gw_steps_copied"]:
+            new["gw_steps_copied"] = True
+            for ph in saved["gw_copied_phases"]:
+                if not new["steps"][ph]:
+                    new["steps"][ph] = saved["steps"][ph]
+        if new["gw_steps_copied"] and not new["gw_copied_phases"]:
+            new["gw_copied_phases"] = saved["gw_copied_phases"]          # sổ của backend: bản gửi lên không mang theo thì giữ cái đang có
     group["updated"] = time.time()
     for i, g in enumerate(groups):
         if g["id"] == group["id"]:
@@ -265,6 +305,40 @@ def save_group(group):
     return group
 
 
+@_locked
+def adopt_gateway_steps(group_id, script_id, legacy, bad=None):
+    """CHÉP MỘT LẦN các bước đời cũ còn lưu ở pool trên gateway vào kịch bản nhận đơn. `legacy` = {giai đoạn: [bước dạng của tool]};
+    `bad` = {giai đoạn: lời báo} cho giai đoạn mà bước đời cũ SAI DẠNG (không đổi được).
+    Chỉ điền giai đoạn mà kịch bản đang TRỐNG, rồi đánh dấu `orders.gw_steps_copied` — từ đó không bao giờ chép lại (người dùng xoá hết bước
+    của một giai đoạn thì nó trống thật). Kịch bản đang trống đúng một giai đoạn sai dạng → KHÔNG chép gì, không đánh dấu (`blocked`): trước
+    đây máy từ chối chạy trong trường hợp đó, không được lặng lẽ chạy thiếu một giai đoạn.
+    Trả None nếu nhóm không có kịch bản nhận đơn đó; ngược lại {"copied": {giai đoạn: số bước vừa chép}, "blocked": {giai đoạn: lời báo},
+    "already": đã chép từ trước (không ghi gì)}."""
+    groups = get_groups()
+    g = next((x for x in groups if x["id"] == group_id), None)
+    sc = next((s for s in (g or {}).get("scripts", []) if s["id"] == script_id), None)
+    if sc is None or sc.get("mode") != "orders":
+        return None
+    o = sc["orders"]
+    if o["gw_steps_copied"]:
+        return {"copied": {}, "blocked": {}, "already": True}
+    blocked = {ph: str(msg) for ph, msg in (bad or {}).items() if ph in API_PHASES and not o["steps"][ph]}
+    if blocked:
+        return {"copied": {}, "blocked": blocked, "already": False}
+    copied = {}
+    for ph in API_PHASES:
+        add = [dict(s) for s in (legacy.get(ph) or []) if isinstance(s, dict) and s.get("type")]
+        if add and not o["steps"][ph]:
+            o["steps"][ph] = add
+            copied[ph] = len(add)
+    o["gw_steps_copied"] = True
+    o["gw_copied_phases"] = list(copied)
+    g["updated"] = time.time()
+    _write(GROUPS_FILE, groups)
+    return {"copied": copied, "blocked": {}, "already": False}
+
+
+@_locked
 def delete_group(group_id):
     groups = [g for g in get_groups() if g["id"] != group_id]
     _write(GROUPS_FILE, groups)
@@ -276,6 +350,7 @@ def groups_of_device(name):
     return [g for g in get_groups() if name in g.get("devices", [])]
 
 
+@_locked
 def add_device_to_group(name, group_id):
     """Thêm máy vào nhóm `group_id` (giữ nguyên các nhóm khác của máy). False nếu nhóm không tồn tại."""
     groups = get_groups()
@@ -288,6 +363,7 @@ def add_device_to_group(name, group_id):
     return True
 
 
+@_locked
 def remove_device_from_group(name, group_id):
     """Bỏ máy khỏi MỘT nhóm (các nhóm khác của máy giữ nguyên). False nếu nhóm không tồn tại."""
     groups = get_groups()
@@ -300,6 +376,7 @@ def remove_device_from_group(name, group_id):
     return True
 
 
+@_locked
 def rename_in_groups(old_name, new_name):
     """Máy đổi tên (nạp lại firmware) → đổi tên trong MỌI nhóm chứa nó, giữ vị trí."""
     if not old_name or not new_name or old_name == new_name:

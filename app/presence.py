@@ -74,10 +74,10 @@ def outline(steps) -> list:
 
 
 def catalog(groups) -> tuple:
-    """(danh mục kịch bản, mã băm). Nhóm nhận đơn (mode «api») không có kịch bản riêng → không nằm trong danh mục."""
+    """(danh mục kịch bản, mã băm)."""
     rows = []
     for g in groups or []:
-        if not isinstance(g, dict) or g.get("mode") == "api":
+        if not isinstance(g, dict):
             continue
         for sc in g.get("scripts") or []:
             uid = script_uid(g.get("id"), sc.get("id")) if isinstance(sc, dict) else None
@@ -148,7 +148,7 @@ def build(devices, groups, tool=None) -> tuple:
     rows, rev = catalog(groups)
     by_dev = {}
     for g in groups or []:
-        if not isinstance(g, dict) or g.get("mode") == "api":
+        if not isinstance(g, dict):
             continue
         uids = [u for u in (script_uid(g.get("id"), sc.get("id")) for sc in (g.get("scripts") or []) if isinstance(sc, dict)) if u]
         for name in g.get("devices") or []:
@@ -166,8 +166,8 @@ def build(devices, groups, tool=None) -> tuple:
             entry["label"] = label
         if note:
             entry["note"] = note
-        if f.get("running") and (f.get("run_mode") != "api" or f.get("run_script_id")):
-            # đang chạy kịch bản — kể cả KỊCH BẢN NHẬN ĐƠN (chế độ api nhưng có kịch bản): gateway thấy máy đang nhận đơn bằng kịch bản nào
+        if f.get("running"):
+            # đang chạy kịch bản — kể cả KỊCH BẢN NHẬN ĐƠN (run_mode «api»): gateway thấy máy đang nhận đơn bằng kịch bản nào
             run = {"group": str(f.get("run_group") or "")[:160], "script": str(f.get("run_script") or "")[:160]}
             uid = script_uid(f.get("run_group_id"), f.get("run_script_id"))
             if uid:

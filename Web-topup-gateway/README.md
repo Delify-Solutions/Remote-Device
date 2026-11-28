@@ -56,20 +56,20 @@ Hosting không có crontab CLI thì gọi `GET /cron/tick?key=<CRON_KEY>` mỗi 
 Tool đã cài sẵn vòng lặp ở mục «Vòng lặp mẫu của tool» của `/docs`:
 
 1. Trong tool: **Nhóm & Kịch bản → ⚙ Gateway** → nhập địa chỉ gateway + **khoá Tool** (`gwt_…`).
-2. Tạo nhóm máy, chọn chế độ **«Nhận đơn từ Gateway (API)»**, chọn pool → bấm Chạy. Máy nào trống (Bluetooth nối, chụp được màn hình) sẽ tự xin việc.
-3. Các bước thao tác lấy từ mục ④ của pool, gồm 6 giai đoạn theo thứ tự chạy:
+2. Tạo nhóm máy, thêm một kịch bản và chọn cách chạy **«nhận đơn từ gateway»**, chọn pool → bấm Chạy. Máy nào trống (Bluetooth nối, chụp được màn hình) sẽ tự xin việc.
+3. Các bước thao tác soạn **ngay trong kịch bản đó của tool** (gateway không giữ bước), gồm 6 giai đoạn theo thứ tự chạy:
 
    | Giai đoạn | Khi nào chạy |
    |---|---|
-   | Đăng nhập (`login_steps`) | đầu mỗi đơn; xong thì tool đọc màn hình theo luật ở mục 3 |
-   | Nhập OTP (`otp_steps`) | mỗi lần khách gửi mã (để trống = gõ mã rồi Enter) |
-   | Vào danh sách gói (`nav_steps`) | 1 lần sau khi đăng nhập được |
-   | Mua 1 gói (`purchase_steps`) | lặp theo gói × số lượng; xong thì đọc màn hình theo luật |
-   | Sau mỗi lần mua (`after_purchase_steps`) | sau khi đã chụp ảnh bill |
-   | Kết thúc đơn (`finish_steps`) | đăng xuất — chạy trước khi máy nhận đơn kế tiếp, kể cả sau đơn lỗi (đơn phải đối soát: máy dừng, giữ nguyên màn hình; bấm Chạy lại mới đăng xuất) |
+   | Đăng nhập | đầu mỗi đơn; xong thì tool đọc màn hình theo luật ở mục 3 của pool |
+   | Nhập OTP | mỗi lần khách gửi mã (để trống = gõ mã rồi Enter) |
+   | Vào danh sách gói | 1 lần sau khi đăng nhập được |
+   | Mua 1 gói | lặp theo gói × số lượng; xong thì đọc màn hình theo luật |
+   | Sau mỗi lần mua | sau khi đã chụp ảnh bill |
+   | Kết thúc đơn | đăng xuất — chạy trước khi máy nhận đơn kế tiếp, kể cả sau đơn lỗi (đơn phải đối soát: máy dừng, giữ nguyên màn hình; bấm Chạy lại mới đăng xuất) |
 
-   Bước nào đặt «Nếu lỗi → Bỏ qua, làm tiếp» thì không làm được cũng đi tiếp (vd đóng hộp thoại lúc có lúc không). Nhóm máy có thể **ghi đè riêng từng giai đoạn** ngay trong tool (máy khác cỡ màn hình / khác giao diện).
-4. Pool phải có **ba luật bắt buộc** ở mục 3 — «Màn hình CHƯA đăng nhập», «Đăng nhập THÀNH CÔNG», «Nạp gói THÀNH CÔNG» — và đủ bước đăng nhập / mua / kết thúc; thiếu thì máy không nhận đơn (trang Pool hiện nhãn «thiếu cấu hình»).
+   Bước nào đặt «bỏ qua nếu lỗi» thì không làm được cũng đi tiếp (vd đóng hộp thoại lúc có lúc không). Pool lưu từ bản cũ còn bước soạn ở gateway: tool tự chép về kịch bản ở lần chạy đầu, sau đó xoá bằng nút «Xoá bước cũ» ở trang sửa pool.
+4. Pool phải có **ba luật bắt buộc** ở mục 3 — «Màn hình CHƯA đăng nhập», «Đăng nhập THÀNH CÔNG», «Nạp gói THÀNH CÔNG» (thiếu thì trang Pool hiện nhãn «thiếu cấu hình») — và kịch bản phải đủ bước đăng nhập / mua / kết thúc; thiếu thì máy không nhận đơn.
 5. Trước mỗi lần xin đơn, máy mở game và kiểm là **chưa ai đăng nhập** (còn thì tự đăng xuất). Tool tự dừng máy và chờ người khi: có đơn cần đối soát, không đăng xuất được, pool thiếu cấu hình, bàn phím iPhone đang ở Telex/VNI, hoặc 2 đơn liên tiếp lỗi do máy.
 
 ## Tool tự báo: máy nào rảnh ở kịch bản nào + danh mục kịch bản (`POST /api/tool/sync`)

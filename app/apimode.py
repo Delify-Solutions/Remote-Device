@@ -97,6 +97,8 @@ def gw_step_to_engine(s: dict) -> dict:
     out = _gw_step(s)
     if s.get("optional"):
         out["optional"] = True          # lỗi ở bước này thì BỎ QUA, chạy tiếp bước sau
+    if str(s.get("note") or "").strip():
+        out["note"] = str(s["note"]).strip()        # ghi chú của người soạn đi theo bước
     return out
 
 
@@ -150,17 +152,37 @@ def _gw_step(s: dict) -> dict:
     raise ConfigError(f"loại bước lạ: {t}")
 
 
-def effective_steps(pool: dict, local: dict | None) -> dict:
-    """Danh sách bước thực dùng cho từng giai đoạn: nhóm có bước riêng thì dùng của nhóm,
-    không thì lấy từ cấu hình pool trên gateway."""
+def order_steps(local: dict | None) -> dict:
+    """Bước từng giai đoạn của MỘT đơn = đúng các bước soạn trong kịch bản nhận đơn ở tool (`orders.steps`) — nơi DUY NHẤT soạn bước;
+    bộ chạy không bao giờ đọc bước nào từ gateway. Giai đoạn OTP để trống → gõ {{otp}} rồi nhấn Enter."""
     local = local or {}
-    out = {}
-    for ph in PHASES:
-        mine = [s for s in (local.get(ph) or []) if isinstance(s, dict) and s.get("type")]
-        out[ph] = mine if mine else [gw_step_to_engine(s) for s in (pool.get(GW_LISTS[ph]) or [])]
+    out = {ph: [s for s in (local.get(ph) or []) if isinstance(s, dict) and s.get("type")] for ph in PHASES}
     if not out["otp"]:
         out["otp"] = [dict(s) for s in DEFAULT_OTP_STEPS]
     return out
+
+
+def legacy_gateway_steps(pool: dict) -> tuple:
+    """Bước đời cũ còn lưu ở POOL trên gateway (trước đây bước soạn được ở cả hai nơi), đổi sang dạng của tool.
+    Trả ({giai đoạn: [bước]}, {giai đoạn: lời báo}) — vế sau là giai đoạn có bước SAI DẠNG, bỏ cả giai đoạn đó (không chép nửa chừng).
+    CHỈ dùng để chép MỘT LẦN vào kịch bản nhận đơn (store.adopt_gateway_steps)."""
+    out, bad = {}, {}
+    for ph in PHASES:
+        try:
+            steps = [gw_step_to_engine(s) for s in (pool.get(GW_LISTS[ph]) or []) if isinstance(s, dict)]
+        except ConfigError as e:
+            bad[ph] = str(e)
+            continue
+        if steps:
+            out[ph] = steps
+    return out, bad
+
+
+def legacy_blocked_text(blocked: dict) -> str:
+    """Lời báo khi KHÔNG chép được bước đời cũ: kịch bản đang trống đúng giai đoạn mà bước lưu ở gateway sai dạng."""
+    return ("bước đời cũ lưu ở gateway sai dạng nên chưa chép được về kịch bản (%s) — soạn bước cho giai đoạn đó ngay trong kịch bản rồi chạy lại "
+            "(các giai đoạn còn lại sẽ được chép); chỉ xoá bước cũ ở gateway SAU khi kịch bản đã đủ bước"
+            % "; ".join("%s: %s" % (PHASE_LABEL.get(p, p), m) for p, m in blocked.items()))
 
 
 def subst(text: str, vars: dict) -> str:
@@ -1276,7 +1298,7 @@ def validate(pool: dict, steps: dict) -> list:
 
 
 def missing_rules(pool: dict) -> list:
-    """Tên các luật bắt buộc mà pool chưa có (luật chỉ đặt được trên gateway, nhóm máy không ghi đè được)."""
+    """Tên các luật bắt buộc mà pool chưa có (luật đặt ở pool trên gateway; bước thì soạn trong kịch bản nhận đơn ở tool)."""
     have = {r.get("when") for r in (pool.get("rules") or []) if str(r.get("value") or "").strip()}
     return [label for when, label in REQUIRED_RULES.items() if when not in have]
 

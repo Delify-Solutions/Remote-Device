@@ -4,14 +4,14 @@ runner.py — chạy kịch bản của NHÓM trên từng máy bằng worker ri
 
 Mỗi máy = 1 thread + cờ dừng riêng → dừng 1 máy không ảnh hưởng máy khác.
 
-Chế độ của nhóm:
-  "loop"  lặp kịch bản N vòng (0 = vô hạn)        ─┐ dùng `group.steps`
-  "once"  chạy kịch bản 1 lần                      ─┘
-  "api"   NHẬN ĐƠN TỪ GATEWAY: máy trống tự xin việc → đăng nhập → OTP → mua gói → chụp bill
-          → báo kết quả → đăng xuất → xin việc tiếp. Các bước lấy từ cấu hình pool trên gateway,
-          nhóm có thể ghi đè từng giai đoạn (`group.api.steps`).
+Cách chạy nằm trong từng KỊCH BẢN của nhóm (nhóm không tự chạy):
+  "loop"    lặp kịch bản N vòng (0 = vô hạn)       ─┐ dùng `script.steps`
+  "once"    chạy kịch bản 1 lần                     ─┘
+  "orders"  NHẬN ĐƠN TỪ GATEWAY (trong worker gọi là chế độ «api»): máy trống tự xin việc → đăng nhập → OTP → mua gói → chụp bill
+            → báo kết quả → đăng xuất → xin việc tiếp. Bước của từng giai đoạn soạn trong kịch bản (`script.orders.steps`) — tool là nơi
+            DUY NHẤT soạn bước; pool trên gateway cho luật nhận diện màn hình, gói và giá.
 
-Dừng ở chế độ api:
+Dừng khi đang nhận đơn:
   * Dừng thường  = KHÔNG nhận đơn mới; đơn đang làm vẫn làm cho xong (an toàn tiền).
   * Dừng ngay    = bỏ dở: chưa chạm luồng mua → báo `failed`; đã chạm → báo `review`.
 Máy tự dừng khi: có đơn cần đối soát, bước đăng xuất lỗi, hoặc lỗi do máy/tool liên tiếp.
@@ -391,29 +391,38 @@ class Runner:
 
     # ====================== điều khiển ======================
     def start_machine(self, name, group, script=None, start_at=0):
-        """Cho máy `name` chạy: nhóm nhận đơn API → chạy chế độ API; còn lại chạy KỊCH BẢN `script` của nhóm (cách chạy 1 lần / lặp N vòng
-        nằm trong kịch bản). Máy đang chạy việc gì (kể cả của nhóm / kịch bản khác) → False: một máy chỉ chạy MỘT kịch bản một lúc.
+        """Cho máy `name` chạy KỊCH BẢN `script` của nhóm — cách chạy nằm trong kịch bản: 1 lần / lặp N vòng / NHẬN ĐƠN từ gateway (`orders`).
+        Nhóm không tự chạy được: không nêu kịch bản → False. Máy đang chạy việc gì (kể cả của nhóm / kịch bản khác) → False: một máy chỉ
+        chạy MỘT kịch bản một lúc.
         start_at: (chỉ kịch bản 1 lần / lặp) vòng ĐẦU bắt đầu từ bước thứ start_at (0 = đầu) — «chạy tiếp từ bước N» sau khi máy dừng vì
-        lỗi; các vòng sau (lặp) chạy từ đầu. Chế độ nhận đơn không nhận start_at (không bao giờ nhảy vào giữa đơn của khách) → False."""
+        lỗi; các vòng sau (lặp) chạy từ đầu. Kịch bản nhận đơn không nhận start_at (không bao giờ nhảy vào giữa đơn của khách) → False."""
         if isinstance(start_at, bool):
             return False
         try:
             start_at = int(start_at or 0)
         except (TypeError, ValueError):
             return False
-        if start_at and (group.get("mode") == "api" or (script and script.get("mode") == "orders")):
+        if not isinstance(script, dict):
             return False
-        if script and script.get("mode") == "orders" and group.get("mode") != "api":
-            # KỊCH BẢN NHẬN ĐƠN: từ đây nó là một lần chạy «api» đúng nghĩa — cùng vòng xin đơn, cùng sổ đơn, cùng luật «dừng chờ kiểm tra»,
-            # cùng lệnh cấm ở bản web. Chuyển TRƯỚC mọi phép kiểm bên dưới để không phép kiểm nào của chế độ nhận đơn bị bỏ sót.
-            group = dict(group, mode="api", api=store.api_defaults(script.get("orders")))
+        # KẾ HOẠCH CHẠY của worker, dựng từ KỊCH BẢN (ở cấp nhóm chỉ lấy mã + tên). mode «api» = lần chạy NHẬN ĐƠN: vòng xin đơn, sổ đơn, luật
+        # «dừng chờ kiểm tra», lệnh cấm ở bản web. Dựng TRƯỚC mọi phép kiểm bên dưới để không phép kiểm nào của việc nhận đơn bị bỏ sót.
+        if script.get("mode") == "orders":
+            if start_at:
+                return False
+            plan = {"id": group.get("id"), "name": group.get("name"), "mode": "api", "api": store.api_defaults(script.get("orders"))}
+        else:                     # «1 lần» / «lặp» — giá trị lạ coi là «1 lần»
+            plan = {"id": group.get("id"), "name": group.get("name"), "mode": "loop" if script.get("mode") == "loop" else "once",
+                    "loops": script.get("loops", 0), "steps": list(script.get("steps") or [])}
+            if start_at and not 0 < start_at < len(plan["steps"]):
+                return False                          # «chạy từ bước N» mà kịch bản không có bước N
+        mode = plan["mode"]
         with self.lock:
             if self.is_running(name):
                 return False
             if name in self.parked:
                 return False                              # máy đang dừng để xử lý tay — bấm Tiếp tục trên máy đó rồi mới chạy được
             held = self.workers.get(name)
-            if group.get("mode") == "api" and not self.allow_api:
+            if mode == "api" and not self.allow_api:
                 return False                              # tiến trình này không chạy đơn của khách (chế độ web dev)
             udid, port = self._ident(name)
             other = self.conflict(name, udid, port)
@@ -421,36 +430,28 @@ class Runner:
                 # Tên này đang trỏ vào CÙNG iPhone / board với một máy của khách (đang làm đơn / đang dừng chờ kiểm tra) dưới tên khác:
                 # chạy gì lên nó cũng là đọc / bấm lên máy của khách → không chạy.
                 return False
-            same_api_group = (group.get("mode") == "api" and group.get("id") is not None and held is not None
-                              and held.get("group_id") == group.get("id") and held.get("script_id") == (script or {}).get("id"))
-            if held is not None and held.get("hold") and not same_api_group:
+            same_orders = (mode == "api" and plan["id"] is not None and script.get("id") is not None and held is not None
+                           and held.get("group_id") == plan["id"] and held.get("script_id") == script.get("id"))
+            if held is not None and held.get("hold") and not same_orders:
                 # Máy đang DỪNG CHỜ NGƯỜI KIỂM TRA sau đơn của khách (màn hình giữ nguyên, game có thể còn đăng nhập tài khoản của khách).
-                # Chỉ «Chạy lại» của CHÍNH nhóm nhận đơn đó mới được chạy tiếp (đường đó tự đăng xuất + kiểm game sạch trước). Nhóm / kịch bản
-                # khác không được chạy đè lên: người vận hành phải xác nhận «Đã kiểm tra xong» (ack_hold) trước.
+                # Chỉ «Chạy lại» của CHÍNH kịch bản nhận đơn đó mới được chạy tiếp (đường đó tự đăng xuất + kiểm game sạch trước). Nhóm /
+                # kịch bản khác không được chạy đè lên: người vận hành phải xác nhận «Đã kiểm tra xong» (ack_hold) trước.
                 return False
-            if group.get("mode") != "api":
-                if script:        # tới đây kịch bản chỉ còn «1 lần» / «lặp» (kịch bản nhận đơn đã thành chế độ api ở đầu hàm) — giá trị lạ coi là «1 lần»
-                    group = dict(group, steps=list(script.get("steps") or []), mode="loop" if script.get("mode") == "loop" else "once", loops=script.get("loops", 0))
-                elif not group.get("steps"):
-                    return False                      # không có kịch bản nào để chạy (nhóm thật luôn truyền `script`; `steps` trần chỉ còn ở dữ liệu thử)
-                if start_at and not 0 < start_at < len(group.get("steps") or []):
-                    return False                      # «chạy từ bước N» mà kịch bản không có bước N
-            mode = group.get("mode", "loop")
             w = {"stop": threading.Event(), "abort": threading.Event(), "pause": threading.Event(), "paused": False, "name": name,
                  "udid": udid, "port": port,
                  # «Chạy lại» máy đang giữ: lý do giữ được MANG THEO cho tới khi lần chạy mới kiểm xong «game đã đăng xuất» (clean). Lần chạy mới
                  # mà dừng sớm (không mở được máy, cấu hình sai, bị bấm Dừng…) thì máy VẪN đang giữ — chưa ai kiểm tra gì cả.
                  "carry_hold": (held.get("hold") if held is not None else None),
-                 "group_id": group.get("id"), "mode": mode,
-                 "group_name": group.get("name"), "script_id": (script or {}).get("id"), "script_name": (script or {}).get("name"),
+                 "group_id": plan["id"], "mode": mode,
+                 "group_name": plan["name"], "script_id": script.get("id"), "script_name": script.get("name"),
                  "iter": 0, "status": "chuẩn bị", "last_ok": None, "last_msg": None, "start_at": start_at,
                  # tiến độ lượt trước của CHÍNH kịch bản này được giữ cho tới khi vòng mới thật sự bắt đầu: «chạy tiếp» mà không mở được máy
                  # (board mất kết nối…) thì dải tiến độ + nút «Chạy tiếp từ bước N» vẫn còn
-                 "prog": (held.get("prog") if held is not None and held.get("group_id") == group.get("id")
-                          and held.get("script_id") == (script or {}).get("id") else None),
+                 "prog": (held.get("prog") if held is not None and held.get("group_id") == plan["id"]
+                          and held.get("script_id") == script.get("id") else None),
                  "job_id": None, "job_ref": None, "pool": None, "counts": {"done": 0, "failed": 0, "review": 0}}
             target = self._run_api if mode == "api" else self._run
-            t = threading.Thread(target=self._guard, args=(target, name, dict(group), w), daemon=True)
+            t = threading.Thread(target=self._guard, args=(target, name, plan, w), daemon=True)
             w["thread"] = t
             self.workers[name] = w
             t.start()
@@ -465,7 +466,7 @@ class Runner:
                 w["stop"].set()
                 if force:
                     w["abort"].set()
-        return True          # KHÔNG gỡ trạng thái giữ: gỡ giữ chỉ qua ack_hold (lời xác nhận rõ ràng) hoặc «Chạy lại» của chính nhóm nhận đơn
+        return True          # KHÔNG gỡ trạng thái giữ: gỡ giữ chỉ qua ack_hold (lời xác nhận rõ ràng) hoặc «Chạy lại» của chính kịch bản nhận đơn
 
     def pause_machine(self, name):
         """DỪNG MÁY để người xử lý tay — không kết thúc việc đang chạy, và máy giữ trạng thái «đang dừng» cho tới khi bấm Tiếp tục.
@@ -516,13 +517,13 @@ class Runner:
                 if force:
                     w["abort"].set()
 
-    def _guard(self, target, name, group, w):
+    def _guard(self, target, name, plan, w):
         """Bọc worker: lỗi bất ngờ không được làm thread chết im lặng."""
         tr = self._tracker(name)
         if tr is not None:
             tr.run_begin("nhận đơn" if w.get("mode") == "api" else "kịch bản", w.get("group_name"), w.get("script_name"), w.get("mode"))
         try:
-            target(name, group, w)
+            target(name, plan, w)
         except Exception as e:
             w["status"] = "DỪNG: lỗi không mong đợi — %s" % e
             if w.get("mode") == "api":
@@ -544,11 +545,11 @@ class Runner:
                 w["hold"] = w["carry_hold"]
 
     # ====================== chế độ loop / once ======================
-    def _run(self, name, group, w):
+    def _run(self, name, plan, w):
         stop = w["stop"]
-        mode = group.get("mode", "loop")
-        loops = int(group.get("loops") or 0)
-        steps = group.get("steps", [])
+        mode = plan["mode"]
+        loops = int(plan.get("loops") or 0)
+        steps = plan["steps"]
         if not steps:
             w["status"] = "nhóm chưa có bước nào"
             self._alert(name, "failed", "kịch bản chưa có bước nào", w)
@@ -645,9 +646,40 @@ class Runner:
         w["status"] = "đã dừng" if stop.is_set() else "xong"
 
     # ====================== chế độ api (nhận đơn từ gateway) ======================
-    def _run_api(self, name, group, w):
+    def _adopt_gateway_steps(self, w, api, pool, say):
+        """MỘT LẦN cho mỗi kịch bản nhận đơn: chép các bước đời cũ còn lưu ở pool trên gateway vào những giai đoạn kịch bản đang TRỐNG
+        (trước đây giai đoạn trống thì máy chạy bước của gateway; giờ bước chỉ soạn ở tool). Ghi vào kịch bản đã lưu lẫn cấu hình của lần
+        chạy này, rồi đánh dấu đã chép — không bao giờ chép lại. Trả None, hoặc LỜI BÁO khi không chép được (bước đời cũ sai dạng ở giai
+        đoạn kịch bản đang trống) — khi đó máy không được chạy thiếu giai đoạn."""
+        legacy, bad = apimode.legacy_gateway_steps(pool)
+        res = None
+        try:
+            res = store.adopt_gateway_steps(w.get("group_id"), w.get("script_id"), legacy, bad)
+        except Exception as e:
+            say("Chưa ghi được bước đời cũ vào kịch bản đã lưu (%s) — lần chạy này vẫn dùng chúng" % e, "warn")
+        if res and res["already"]:               # kịch bản ĐÃ LƯU đã chép từ trước (lần chạy này cầm bản cũ hơn) → chạy theo bước của bản đã lưu
+            saved = next((s for s in (store.get_group(w.get("group_id")) or {}).get("scripts", []) if s["id"] == w.get("script_id")), None)
+            if saved and saved.get("orders"):
+                api["steps"] = store.api_defaults(saved["orders"])["steps"]
+            api["gw_steps_copied"] = True
+            return None
+        blocked = res["blocked"] if res else {ph: msg for ph, msg in bad.items() if not api["steps"][ph]}
+        if blocked:
+            return apimode.legacy_blocked_text(blocked)
+        copied = {}
+        for ph, steps in legacy.items():
+            if not api["steps"][ph]:
+                api["steps"][ph] = [dict(s) for s in steps]
+                copied[ph] = len(steps)
+        api["gw_steps_copied"] = True
+        if copied:
+            say("Đã chép %d bước cũ từ gateway vào kịch bản (%s) — từ giờ sửa bước ngay trong kịch bản này"
+                % (sum(copied.values()), ", ".join("%s: %d" % (apimode.PHASE_LABEL[p], n) for p, n in copied.items())))
+        return None
+
+    def _run_api(self, name, plan, w):
         stop, abort = w["stop"], w["abort"]
-        api = store.api_defaults(group.get("api"))
+        api = store.api_defaults(plan.get("api"))
         pool_code = api["pool"]
         w["pool"] = pool_code
 
@@ -667,7 +699,7 @@ class Runner:
             self._alert(name, "review" if hold else ("link" if notify.link_trouble(text) else "failed"), text, w)
 
         if not pool_code:
-            return halt("nhóm chưa chọn pool của gateway")
+            return halt("kịch bản nhận đơn chưa chọn pool của gateway")
         try:
             gw = self._gateway()
         except Exception as e:
@@ -723,10 +755,7 @@ class Runner:
             if pool is None or time.time() - pool_at > self.POOL_REFRESH:
                 try:
                     pool = gw.pool(pool_code)
-                    steps = apimode.effective_steps(pool, api["steps"])
                     pool_at = time.time()
-                except apimode.ConfigError as e:
-                    return halt("cấu hình bước sai — %s" % e)
                 except GatewayError as e:
                     if e.status == 404:
                         return halt("gateway không có pool «%s»" % pool_code)
@@ -735,10 +764,15 @@ class Runner:
                     status(e.vi())
                     stop.wait(self.NOT_READY_WAIT)
                     continue
+                if not api["gw_steps_copied"]:
+                    stuck = self._adopt_gateway_steps(w, api, pool, say)
+                    if stuck:
+                        return halt(stuck)
+                steps = apimode.order_steps(api["steps"])
                 missing = apimode.validate(pool, steps)
                 if missing:
-                    return halt("pool «%s» chưa đủ cấu hình để máy tự chạy: %s — bổ sung ở trang quản trị gateway (Pool & gói nạp)"
-                                % (pool_code, "; ".join(missing)))
+                    return halt("chưa đủ cấu hình để máy tự chạy đơn của pool «%s»: %s — luật thì thêm ở trang quản trị gateway (Pool), "
+                                "bước thì thêm trong kịch bản nhận đơn ở tool" % (pool_code, "; ".join(missing)))
 
             # --- máy có sẵn sàng không? (không nhận đơn khi máy đang hỏng) ---
             try:
@@ -769,7 +803,7 @@ class Runner:
                     kb_errors += 1
                     if kb_errors >= 3:
                         return halt("không kiểm tra được bàn phím iPhone (%s) — kiểm tra máy rồi bấm Chạy lại "
-                                    "(hoặc tắt «Kiểm tra bàn phím» của nhóm nếu chắc chắn máy đang gõ tiếng Anh)" % e)
+                                    "(hoặc tắt «Kiểm tra bàn phím» của kịch bản nhận đơn nếu chắc chắn máy đang gõ tiếng Anh)" % e)
                     status("Chưa kiểm tra được bàn phím (%s) — thử lại" % e)
                     stop.wait(self.NOT_READY_WAIT)
                     continue
@@ -778,7 +812,7 @@ class Runner:
                     kb_errors += 1
                     if kb_errors >= 3:
                         return halt("không đọc được chữ gõ thử trong ô tìm kiếm của iPhone để kiểm bàn phím — kiểm tra máy rồi bấm Chạy lại "
-                                    "(hoặc tắt «Kiểm tra bàn phím» của nhóm nếu chắc chắn máy đang gõ tiếng Anh)")
+                                    "(hoặc tắt «Kiểm tra bàn phím» của kịch bản nhận đơn nếu chắc chắn máy đang gõ tiếng Anh)")
                     status("Chưa đọc được chữ gõ thử để kiểm bàn phím — thử lại")
                     stop.wait(self.NOT_READY_WAIT)
                     continue

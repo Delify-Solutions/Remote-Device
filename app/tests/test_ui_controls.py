@@ -6,7 +6,7 @@ Lấy đúng mã nguồn các hàm từ app.js, chạy bằng `node` trên MỌI
   • không bao giờ hiện cùng lúc «Dừng máy / Tạm dừng» và «Tiếp tục»;
   • máy đang nghỉ → «Dừng máy»; đang dừng để xử lý tay → «Tiếp tục»; đang chạy → «Tạm dừng» + «Dừng»;
   • máy đang GIỮ chờ kiểm tra → «Đã kiểm tra xong»; nếu đồng thời đang dừng để xử lý tay thì CÓ CẢ «Tiếp tục»
-    (không có nút này thì «Chạy lại» của nhóm nhận đơn bị từ chối mà không gỡ được);
+    (không có nút này thì «Chạy lại» của kịch bản nhận đơn bị từ chối mà không gỡ được);
   • tên máy lạ không chèn được mã HTML.
 
     ./.venv/bin/python app/tests/test_ui_controls.py        (cần lệnh `node`; không có thì bỏ qua)

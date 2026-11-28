@@ -35,14 +35,6 @@ $rowRule = static function (array $r) use ($in, $dd, $tools): string {
         . $in('ru_note[]', $r['note'] ?? '', 'Ghi chú')
         . $tools . '</div>';
 };
-$rowStep = static function (string $list, array $s) use ($in, $dd, $tools): string {
-    return '<div class="rep-row cols-st">'
-        . $dd($list . '_type[]', Pools::STEP_TYPES, (string) ($s['type'] ?? 'tap_text'))
-        . $in($list . '_value[]', $s['value'] ?? '', 'Giá trị (chữ / x,y / giây / {{username}})')
-        . $in($list . '_note[]', $s['note'] ?? '', 'Ghi chú')
-        . $dd($list . '_optional[]', ['0' => 'Dừng đơn', '1' => 'Bỏ qua, làm tiếp'], !empty($s['optional']) ? '1' : '0', 'Bước không làm được thì sao?')
-        . $tools . '</div>';
-};
 // các loại tiền đang có cột giá trong form (ví tài khoản Apple trả bằng loại tiền nào thì đơn lấy giá ở cột đó)
 $curCols = !empty($wallets) ? array_values((array) ($pool['pk_cols'] ?? $cfg['currencies'])) : [];
 // ô giá của MỘT loại tiền trong một dòng gói (JS dựng y hệt khi gõ thêm loại tiền — xem khối «POOL: loại tiền» trong app.js)
@@ -166,23 +158,15 @@ $addBtn = static fn (string $tpl, string $into, string $label): string
   </div>
 
   <div class="card mb-6">
-    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-      <h5 class="card-title mb-0"><span class="sec-no">4</span>Các bước thao tác</h5><small class="text-body-secondary">Theo đúng thứ tự máy chạy · nhóm máy trong tool có thể thay bằng kịch bản riêng</small></div>
+    <div class="card-header"><h5 class="card-title mb-0"><span class="sec-no">4</span>Các bước thao tác</h5></div>
     <div class="card-body">
-      <?php $no = 0; foreach (Pools::STEP_LISTS as $list => $label): $no++; ?>
-      <div class="phase">
-        <h6 class="mb-1 d-flex align-items-center"><span class="phase-no"><?= $no ?></span><?= e($label) ?></h6>
-        <p class="form-text mt-0 mb-3"><?= e(Pools::STEP_HELP[$list]) ?></p>
-        <div class="rep-head cols-st"><span>Thao tác</span><span>Giá trị</span><span>Ghi chú</span><span>Nếu lỗi</span><span></span></div>
-        <div class="rep" id="rep-<?= $list ?>"><?php foreach ($cfg[$list] as $s) { echo $rowStep($list, $s); } ?></div>
-        <?= $addBtn('tpl-' . $list, 'rep-' . $list, 'Thêm bước') ?>
+      <p class="mb-0">Bước bấm / gõ của một đơn (đăng nhập, nhập OTP, vào danh sách gói, mua, kết thúc đơn) soạn <b>trong tool</b>: iPhone Farm → <b>Nhóm &amp; Kịch bản</b> → kịch bản có cách chạy <b>«nhận đơn»</b> phục vụ pool này. Gateway chỉ giữ luật nhận diện màn hình (mục 3) và gói nạp (mục 5).</p>
+      <?php if (!empty($legacy)): $parts = []; foreach ($legacy as $list => $n) { $parts[] = Pools::LEGACY_STEP_LISTS[$list] . ': ' . $n; } ?>
+      <div class="alert alert-warning mt-4 mb-0 d-flex justify-content-between align-items-center flex-wrap gap-3" role="alert">
+        <span>Pool này còn lưu <b><?= array_sum($legacy) ?> bước soạn ở gateway từ bản cũ</b> (<?= e(implode(' · ', $parts)) ?>). Tool tự chép chúng về kịch bản nhận đơn ở lần chạy đầu; khi kịch bản trong tool đã đủ bước thì xoá ở đây.</span>
+        <button type="submit" form="drop-steps" class="btn btn-sm btn-outline-danger"><i class="ti tabler-trash me-1"></i>Xoá bước cũ</button>
       </div>
-      <?php endforeach; ?>
-      <div class="alert alert-secondary mt-5 mb-0 small" role="alert">
-        <p class="mb-2"><b>Biến</b> dùng trong «Giá trị»: <code>{{username}}</code> <code>{{password}}</code> (mọi key ở mục 1) · <code>{{otp}}</code> · <code>{{package.ocr_text}}</code> <code>{{package.price_text}}</code> <code>{{package.name}}</code> <code>{{package.code}}</code>.</p>
-        <p class="mb-2"><b>Cách viết giá trị</b>: «Tap toạ độ» = <code>375,820</code> · «Chờ» = số giây · «Chờ tới khi thấy chữ» mặc định chờ 20 giây, muốn lâu hơn thêm <code>@45s</code> vào cuối (vd <code>Trang chủ @45s</code>) · chữ cần dò có nhiều cách viết thì ngăn bằng <code>|</code> (vd <code>Mua|Buy</code>) · «Vuốt» = <code>left</code> / <code>right</code> (lật trang), <code>up</code> / <code>down</code> (cuộn, quãng chỉ xấp xỉ) hoặc <code>x1,y1 &gt; x2,y2</code> · «Bấm giữ» = <code>636,468 @1.5s</code> hoặc <code>Chữ @1.5s</code>.</p>
-        <p class="mb-0"><b>Nếu lỗi → Bỏ qua, làm tiếp</b>: dùng cho bước có thể không cần làm (đóng một hộp thoại lúc có lúc không). Mặc định bước lỗi là dừng đơn.</p>
-      </div>
+      <?php endif; ?>
     </div>
   </div>
 
@@ -218,5 +202,7 @@ $addBtn = static fn (string $tpl, string $into, string $label): string
 
 <template id="tpl-lf"><?= $rowField([]) ?></template>
 <template id="tpl-ru"><?= $rowRule([]) ?></template>
-<?php foreach (array_keys(Pools::STEP_LISTS) as $list): ?><template id="tpl-<?= $list ?>"><?= $rowStep($list, []) ?></template><?php endforeach; ?>
+<?php if (!empty($legacy)): ?>
+<form method="post" action="/admin/pools/<?= (int) $pool['id'] ?>/drop-steps" id="drop-steps" data-confirm="Xoá <?= array_sum($legacy) ?> bước cũ lưu ở gateway của pool này? Chỉ xoá khi kịch bản nhận đơn trong tool đã có đủ bước — tool đời cũ (còn lấy bước từ gateway) sẽ không nhận đơn của pool này nữa."><?= Csrf::field() ?></form>
+<?php endif; ?>
 <template id="tpl-pk"><?= $rowPk([]) ?></template>

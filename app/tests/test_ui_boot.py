@@ -6,6 +6,9 @@ Kiểm GIAO DIỆN KHỞI ĐỘNG TRỌN VẸN: nạp đủ các tệp JS của 
 Vì sao cần: các bài test giao diện khác chỉ lấy riêng từng hàm trong app.js ra chạy. Lỗi ở cấp cả trang — vd xoá một hàm mà chỗ khác còn gọi —
 làm init() dừng giữa chừng và nửa số nút không còn tác dụng mà không bài nào bắt được (verify 2026-11-28: xoá nhầm loadAiScreen).
 
+Sau đó mở KỊCH BẢN NHẬN ĐƠN của nhóm mẫu (cả trình sửa chạy trên DOM giả) và kiểm việc chép MỘT LẦN bước đời cũ từ gateway vào kịch bản:
+lúc mở kịch bản, lúc bấm chạy (backend chép rồi trả bản mới của nhóm), sau khi lưu; đang sửa dở / đang mở hộp thoại thì không nạp đè.
+
     ./.venv/bin/python app/tests/test_ui_boot.py        (cần lệnh `node`; không có thì bỏ qua)
 """
 from __future__ import annotations
@@ -45,9 +48,10 @@ function any(name) {
 }
 const listeners = {};
 const docProxy = any("document");
+const modal = any("modal"); modal.hidden = true;                // hộp thoại nhập liệu: đang đóng (phần tử duy nhất giữ trạng thái giữa các lần hỏi)
 const document = new Proxy({}, {
   get(t, k) {
-    if (k === "querySelector" || k === "getElementById") return () => any("el");
+    if (k === "querySelector" || k === "getElementById") return (s) => s === "#modal" ? modal : any("el");
     if (k === "querySelectorAll") return () => [];
     if (k === "addEventListener") return (ev, f) => { (listeners["doc:" + ev] = listeners["doc:" + ev] || []).push(f); };
     if (k === "createElement") return () => any("created");
@@ -82,14 +86,52 @@ for (const f of ["_mock.js", "app.js", "ai.js", "alerts.js", "wallets.js"]) {
   catch (e) { errors.push("load " + f + ": " + (e && e.stack ? e.stack.split("\n").slice(0, 2).join(" | ") : e)); }
 }
 (listeners["doc:DOMContentLoaded"] || []).forEach(f => { try { f(); } catch (e) { errors.push("DOMContentLoaded: " + e.stack.split("\n").slice(0, 2).join(" | ")); } });
-const run = (label, src) => { try { new vm.Script(src, { filename: label }).runInContext(ctx); } catch (e) { errors.push(label + ": " + e.stack.split("\n").slice(0, 2).join(" | ")); } };
-setTimeout(() => {
+const run = (label, src) => { try { return new vm.Script(src, { filename: label }).runInContext(ctx); } catch (e) { errors.push(label + ": " + e.stack.split("\n").slice(0, 2).join(" | ")); return null; } };
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const snap = (label) => JSON.parse(run(label, "__snap()") || "null");
+(async () => {
+  await sleep(200);
   run("init", "init()");
-  setTimeout(() => {
-    for (const v of ["overview", "devices", "esp", "flows", "monitor", "ai", "alerts", "wallets"]) run("showView(" + v + ")", `showView(${JSON.stringify(v)})`);
-    setTimeout(() => { process.stdout.write(JSON.stringify(errors)); process.exit(0); }, 600);
-  }, 600);
-}, 200);
+  await sleep(600);
+  for (const v of ["overview", "devices", "esp", "flows", "monitor", "ai", "alerts", "wallets"]) run("showView(" + v + ")", `showView(${JSON.stringify(v)})`);
+  await sleep(600);
+
+  // ---- kịch bản nhận đơn của nhóm mẫu (g2 / «don»): chép một lần bước đời cũ từ gateway ----
+  const flow = {};
+  run("flow-setup", `
+    var __T = [], __CALLS = [];
+    (() => {
+      const toast0 = toast; toast = function (m, k) { __T.push(String(m)); return toast0(m, k); };
+      const api = window.pywebview.api;
+      for (const n of ["orders_adopt", "group_run", "group_save"]) { const f = api[n]; api[n] = function () { __CALLS.push(n); return f.apply(api, arguments); }; }
+      window.confirm = () => true;
+    })();
+    function __snap() {
+      const sc = currentScript(), saved = (GROUPS.find(g => g.id === "g2") || { scripts: [] }).scripts.find(x => sc && x.id === sc.id);
+      return JSON.stringify({ sub: GROUP_SUB, sid: EDIT_SID, dirty: groupDirty(), calls: __CALLS.splice(0), toasts: __T.splice(0),
+        flag: sc && sc.orders.gw_steps_copied, counts: sc && API_PHASES.map(([k]) => sc.orders.steps[k].length), first: sc && API_PHASES.map(([k]) => (sc.orders.steps[k][0] || {}).type || ""),
+        savedFlag: saved && saved.orders.gw_steps_copied });
+    }
+    function __add(id, steps) { GROUP.scripts.push({ id, name: id, steps: [], mode: "orders", loops: 1, orders: normApi({ pool: "efootball-ios", steps }) }); openScript(id, false); }
+    showView("flows");`);
+  await sleep(700);
+  run("flow-open", `openGroup("g2", false, "don")`);            // 1. mở kịch bản (nhóm không có thay đổi chưa lưu) → hỏi backend chép
+  await sleep(700);
+  flow.open = snap("flow-open");
+  run("flow-run", `__add("moi", {}); var __snap0 = __snap(); runScript(null)`);     // 2. kịch bản mới đang sửa dở: không hỏi; bấm chạy → backend chép, trả bản mới
+  flow.dirty = JSON.parse(run("flow-run", "__snap0") || "null");
+  await sleep(800);
+  flow.run = snap("flow-run");
+  run("flow-save", `__add("ba", { login: [{ type: "home" }] }); saveGroup(null)`);    // 3. sửa dở rồi lưu → sau khi lưu mới hỏi; giai đoạn đã có bước thì giữ nguyên
+  await sleep(800);
+  flow.save = snap("flow-save");
+  // 4. đang mở hộp thoại sửa bước lúc backend trả lời → không nạp đè bản đang sửa (GROUPS vẫn nhận bản mới)
+  run("flow-modal", `currentScript().orders.gw_steps_copied = false; GROUP_SNAP = groupState(); document.querySelector("#modal").hidden = false; adoptGwSteps()`);
+  await sleep(400);
+  flow.modal = snap("flow-modal");
+  process.stdout.write(JSON.stringify({ errors, flow }));
+  process.exit(0);
+})();
 """
 
 
@@ -109,22 +151,47 @@ def main():
     print("== Khởi động cả trang (init + mở từng trang) ==")
     r = subprocess.run([node, "-e", HARNESS, WEB], capture_output=True, text=True, timeout=60)
     try:
-        errs = json.loads(r.stdout)                     # không in ra gì (node sập) = HỎNG, không phải «không có lỗi»
+        res = json.loads(r.stdout)                      # không in ra gì (node sập) = HỎNG, không phải «không có lỗi»
+        errs, flow = res["errors"], res["flow"]
     except Exception:
-        errs = ["load: không đọc được kết quả (node thoát mã %s): %s %s" % (r.returncode, r.stdout[-300:], r.stderr[-400:])]
+        errs, flow = ["load: không đọc được kết quả (node thoát mã %s): %s %s" % (r.returncode, r.stdout[-300:], r.stderr[-400:])], {}
     refs = [e for e in errs if "ReferenceError" in e or "is not defined" in e or e.startswith("load ")]
     ok(not refs, "không có hàm / biến nào bị gọi mà không tồn tại, không tệp JS nào nạp lỗi", refs)
     syntax = [e for e in errs if "SyntaxError" in e]
     ok(not syntax, "không có lỗi cú pháp", syntax)
-    names = ["loadAiScreen", "loadTelegram", "alertsBadge", "loadAlerts", "renderTelegram", "renderAiProviders", "showView", "init", "paintProgress", "runFrom", "loadWallets", "renderWallets", "walletEdit"]
+    names = ["loadAiScreen", "loadTelegram", "alertsBadge", "loadAlerts", "renderTelegram", "renderAiProviders", "showView", "init", "paintProgress", "runFrom", "loadWallets", "renderWallets", "walletEdit",
+             "adoptGwSteps", "applyAdopted"]
     # kiểm ở phía node (không qua vm.run): hàm khai báo kiểu `function x()` ở cấp tệp là thuộc tính của ngữ cảnh vm
-    probe = HARNESS.replace("setTimeout(() => {\n  run(\"init\"",
-                            "process.stdout.write('MISSING[' + %s.filter(n => typeof ctx[n] !== 'function').join(',') + ']\\n');\nsetTimeout(() => {\n  run(\"init\"" % json.dumps(names), 1)
+    probe = HARNESS.replace("(async () => {\n  await sleep(200);",
+                            "process.stdout.write('MISSING[' + %s.filter(n => typeof ctx[n] !== 'function').join(',') + ']\\n');\nprocess.exit(0);\n(async () => {\n  await sleep(200);" % json.dumps(names), 1)
     assert probe != HARNESS, "không chèn được phép kiểm tên hàm"
     r2 = subprocess.run([node, "-e", probe, WEB], capture_output=True, text=True, timeout=60)
     line = next((ln for ln in (r2.stdout or "").splitlines() if ln.startswith("MISSING[")), None)
     missing = [n for n in line[len("MISSING["):].rstrip("]").split(",") if n] if line else None
     ok(missing == [], "các hàm chính của trang đều có: " + ", ".join(names), missing if missing is not None else (r2.stdout[-200:], r2.stderr[-200:]))
+
+    print("== Kịch bản nhận đơn: chép một lần bước đời cũ từ gateway ==")
+    ok(not errs, "mở nhóm + trình sửa kịch bản nhận đơn, chạy, lưu: không lỗi nào", errs)
+    tail = " — từ giờ sửa bước ở đây"
+    o = flow.get("open") or {}
+    ok(o.get("calls") == ["orders_adopt"] and o.get("flag") is True and o.get("savedFlag") is True and o.get("counts") == [7, 0, 2, 2, 1, 2] and (o.get("first") or [""] * 4)[3] == "tap",
+       "mở kịch bản nhận đơn chưa chép → hỏi backend đúng MỘT lần; giai đoạn trống nhận bước cũ, giai đoạn đã có bước giữ nguyên bước của mình; đánh dấu đã chép", o)
+    ok(o.get("sub") == "script" and o.get("sid") == "don" and o.get("dirty") is False
+       and o.get("toasts") == ["Đã chép 12 bước cũ từ gateway vào kịch bản (Đăng nhập: 7, Vào danh sách gói: 2, Sau mỗi lần mua: 1, Kết thúc đơn: 2)" + tail],
+       "nạp lại nhóm từ bản backend trả về mà vẫn ở đúng trình sửa kịch bản đó, không thành «có thay đổi chưa lưu»; báo một lần số bước đã chép", o)
+    d = flow.get("dirty") or {}
+    ok(d.get("sid") == "moi" and d.get("dirty") is True and d.get("calls") == [] and d.get("flag") is False, "nhóm đang có thay đổi chưa lưu → KHÔNG hỏi backend chép", d)
+    rn = flow.get("run") or {}
+    ok(rn.get("calls") == ["group_save", "group_run"] and rn.get("flag") is True and rn.get("counts") == [7, 0, 2, 2, 1, 2] and rn.get("sid") == "moi" and rn.get("sub") == "script"
+       and rn.get("dirty") is False and (rn.get("toasts") or [""])[0] == "Đã chép 14 bước cũ từ gateway vào kịch bản (Đăng nhập: 7, Vào danh sách gói: 2, Mua một gói: 2, Sau mỗi lần mua: 1, Kết thúc đơn: 2)" + tail,
+       "bấm chạy: backend chép ngay trước khi chạy và trả bản mới của nhóm → trình sửa nạp lại bản đó (lần lưu sau không ghi đè mất bước vừa chép) + báo số bước", rn)
+    sv = flow.get("save") or {}
+    ok(sv.get("calls") == ["group_save", "orders_adopt"] and sv.get("flag") is True and sv.get("counts") == [1, 0, 2, 2, 1, 2] and (sv.get("first") or [""])[0] == "home" and sv.get("dirty") is False
+       and sv.get("toasts") == ["Đã lưu kịch bản: ba", "Đã chép 7 bước cũ từ gateway vào kịch bản (Vào danh sách gói: 2, Mua một gói: 2, Sau mỗi lần mua: 1, Kết thúc đơn: 2)" + tail],
+       "sửa dở rồi bấm Lưu → lưu xong mới hỏi backend chép; giai đoạn người dùng đã soạn không bị đụng tới", sv)
+    md = flow.get("modal") or {}
+    ok(md.get("calls") == ["orders_adopt"] and md.get("flag") is False and md.get("savedFlag") is True and md.get("toasts") == [] and md.get("sid") == "ba",
+       "backend trả lời lúc đang mở hộp thoại sửa bước → không nạp đè bản đang sửa (danh sách nhóm vẫn nhận bản mới)", md)
     print("\n%s" % ("✅ TẤT CẢ %d kiểm tra đều đạt." % PASS if not FAIL else "❌ %d lỗi / %d kiểm tra." % (FAIL, PASS + FAIL)))
     return 1 if FAIL else 0
 

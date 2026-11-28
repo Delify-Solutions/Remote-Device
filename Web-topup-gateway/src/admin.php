@@ -58,6 +58,11 @@ final class Admin
                 }
                 Res::redirect('/admin/pools');
             }
+            if ($m === 'POST' && $id && $act === 'drop-steps') {
+                $n = Pools::dropLegacySteps($id);
+                Flash::set($n ? 'Đã xoá ' . $n . ' bước cũ lưu ở gateway. Bước của đơn giờ chỉ nằm trong kịch bản nhận đơn ở tool.' : 'Pool này không còn bước cũ nào.');
+                Res::redirect('/admin/pools/' . $id);
+            }
             if ($m === 'POST' && $id && $act === 'delete') {
                 Pools::delete($id) ? Flash::set('Đã xoá pool.') : Flash::set('Pool đã có đơn nên không xoá được — hãy tạm dừng.', 'bad');
                 Res::redirect('/admin/pools');
@@ -252,8 +257,11 @@ final class Admin
         } else {
             $pool = ['id' => 0, 'code' => '', 'name' => '', 'game' => '', 'active' => 1, 'cfg' => Pools::defaults(), 'pk' => []];
         }
+        // bước đời cũ còn lưu ở pool (đọc từ CSDL, không lấy từ form đang gửi dở)
+        $saved = $pool['id'] ? Pools::find((int) $pool['id']) : null;
         view('pool-edit', ['user' => $user, 'nav' => 'pools', 'title' => $pool['id'] ? 'Sửa pool' : 'Tạo pool', 'pool' => $pool, 'error' => $error,
-                           'missing' => $pool['id'] ? Pools::missing($pool) : [], 'wallets' => Wallets::enabled()]);
+                           'missing' => $pool['id'] ? Pools::missing($pool) : [], 'wallets' => Wallets::enabled(),
+                           'legacy' => $saved ? Pools::legacySteps($saved['cfg']) : []]);
     }
 
     /** Ghép các cột lf_key[], lf_label[]… của form lặp thành danh sách dòng. */
@@ -297,9 +305,6 @@ final class Admin
             'queue_ttl' => (int) Req::post('queue_ttl_min', '30') * 60,
             'silent_timeout' => (int) Req::post('silent_min', '15') * 60,
         ];
-        foreach (array_keys(Pools::STEP_LISTS) as $list) {
-            $config[$list] = self::rows(['type' => $list . '_type', 'value' => $list . '_value', 'note' => $list . '_note', 'optional' => $list . '_optional']);
-        }
         // loại tiền của pool (ô chữ «JPY, CHF…»)
         $curRaw = (string) Req::post('currencies', '');
         [$config['currencies'], $curErr] = Pools::parseCurrencies($curRaw);

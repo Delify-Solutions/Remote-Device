@@ -37,21 +37,12 @@ final class Pools
 {
     public const FIELD_TYPES = ['text' => 'Chữ', 'password' => 'Mật khẩu', 'textarea' => 'Nhiều dòng', 'select' => 'Danh sách chọn'];
     public const ALWAYS_SECRET = ['password', 'pass', 'pin', 'cookie', 'cookies', 'token', 'otp', 'backup_code', 'secret'];
-    public const STEP_TYPES = [
-        'launch'      => 'Mở app',
-        'tap_text'    => 'Tap vào chữ',
-        'tap'         => 'Tap toạ độ (x,y)',
-        'type'        => 'Gõ chữ',
-        'key'         => 'Phím',
-        'combo'       => 'Tổ hợp phím',
-        'home'        => 'Về màn hình chính',
-        'wait'        => 'Chờ (giây)',
-        'wait_text'   => 'Chờ tới khi thấy chữ',
-        'assert_text' => 'Kiểm có chữ',
-        'swipe'       => 'Vuốt (left / right / up / down)',
-        'hold'        => 'Bấm giữ toạ độ (x,y)',
-        'hold_text'   => 'Bấm giữ vào chữ',
-    ];
+    /**
+     * BƯỚC ĐỜI CŨ. Trước đây bước thao tác soạn được cả ở pool trên gateway; giờ bước CHỈ soạn ở tool (kịch bản nhận đơn) và gateway không
+     * còn chỗ soạn bước. Gateway chỉ GIỮ NGUYÊN các danh sách đã lưu từ trước (và của tệp dữ liệu mặc định đời cũ) để tool đời mới chép về
+     * kịch bản đúng một lần; chép xong thì xoá bằng nút ở trang sửa pool (dropLegacySteps).
+     */
+    public const LEGACY_STEP_TYPES = ['launch', 'tap_text', 'tap', 'type', 'key', 'combo', 'home', 'wait', 'wait_text', 'assert_text', 'swipe', 'hold', 'hold_text'];
     public const RULE_WHEN = [
         'logged_out'          => 'Màn hình CHƯA đăng nhập (màn chào / form đăng nhập)',
         'login_success'       => 'Đăng nhập THÀNH CÔNG',
@@ -70,8 +61,8 @@ final class Pools
         'weekly'  => '1 lần / tuần',
         'monthly' => '1 lần / tháng',
     ];
-    /** Sáu giai đoạn thao tác của một đơn, theo đúng thứ tự máy chạy. */
-    public const STEP_LISTS = [
+    /** Sáu danh sách bước đời cũ, theo đúng thứ tự máy chạy (xem LEGACY_STEP_TYPES). */
+    public const LEGACY_STEP_LISTS = [
         'login_steps'          => 'Đăng nhập',
         'otp_steps'            => 'Nhập OTP',
         'nav_steps'            => 'Vào danh sách gói nạp',
@@ -85,15 +76,6 @@ final class Pools
         'login_success'    => 'để biết đã vào được game',
         'purchase_success' => 'chỉ tính là đã nạp khi thấy chữ này xuất hiện SAU khi bấm mua',
     ];
-    public const STEP_HELP = [
-        'login_steps'          => 'Mở game và nhập tài khoản. Ngay trước bước gõ {{biến}} đầu tiên (tài khoản của khách) máy kiểm phải thấy luật «Màn hình CHƯA đăng nhập». Chạy xong thì máy đọc màn hình theo mục 3 để biết đăng nhập được, sai mật khẩu hay game đòi OTP.',
-        'otp_steps'            => 'Chạy mỗi lần có mã khách gửi sang. Để trống = gõ {{otp}} rồi nhấn Enter.',
-        'nav_steps'            => 'Từ màn hình sau đăng nhập đi tới trang bán gói. Chạy 1 lần cho mỗi đơn. Cần vuốt / cuộn để thấy gói thì đặt bước vuốt ở ĐÂY (hoặc ở «Sau mỗi lần mua»), đừng đặt đầu «Các bước mua».',
-        'purchase_steps'       => 'Lặp lại cho từng gói × số lượng. Trước mỗi lần mua máy kiểm màn hình KHÔNG còn chữ «nạp thành công» của lần trước; chạy xong thì đọc màn hình theo mục 3 để biết mua được hay chưa. Từ bước ĐẦU TIÊN có chạm vào máy trong danh sách này, mọi trục trặc đều được coi là «không chắc đã mua» → đơn chuyển đối soát.',
-        'after_purchase_steps' => 'Chạy sau mỗi lần mua ĐÃ chụp ảnh bill: đóng hộp thoại, quay lại danh sách gói.',
-        'finish_steps'         => 'Đăng xuất, về màn hình chính. Chạy trước khi máy nhận đơn kế tiếp (kể cả sau đơn lỗi) — để đơn sau không nạp nhầm tài khoản này. Đơn phải đối soát thì máy dừng và giữ nguyên màn hình; bấm chạy lại mới đăng xuất.',
-    ];
-
     public static function defaults(): array
     {
         return [
@@ -103,7 +85,6 @@ final class Pools
             ],
             'otp' => ['enabled' => true, 'timeout' => 300, 'max_requests' => 3, 'hint' => 'Mã xác thực gửi về email / số điện thoại của tài khoản game.'],
             'rules' => [],
-        ] + array_fill_keys(array_keys(self::STEP_LISTS), []) + [
             'require_image' => true,
             'queue_ttl' => 1800,
             'silent_timeout' => 900,
@@ -206,10 +187,11 @@ final class Pools
         }
         $out['rules'] = $rules;
 
-        foreach (array_keys(self::STEP_LISTS) as $list) {
+        // bước đời cũ: giữ nguyên trạng cái đang có; danh sách rỗng thì không còn khoá nào (pool mới không bao giờ có)
+        foreach (array_keys(self::LEGACY_STEP_LISTS) as $list) {
             $steps = [];
             foreach ((array) ($in[$list] ?? []) as $s) {
-                if (!is_array($s) || !isset(self::STEP_TYPES[$s['type'] ?? ''])) {
+                if (!is_array($s) || !in_array($s['type'] ?? '', self::LEGACY_STEP_TYPES, true)) {
                     continue;
                 }
                 // optional = «bỏ qua nếu lỗi»: bước không làm được thì máy đi tiếp (vd đóng một hộp thoại có thể không hiện)
@@ -219,7 +201,9 @@ final class Pools
                     break;
                 }
             }
-            $out[$list] = $steps;
+            if ($steps) {
+                $out[$list] = $steps;
+            }
         }
 
         $out['require_image']  = array_key_exists('require_image', $in) ? !empty($in['require_image']) : $def['require_image'];
@@ -278,6 +262,14 @@ final class Pools
         if ($name === '') {
             return 'Chưa nhập tên pool.';
         }
+        if ($id && ($cur = self::find($id))) {
+            // form sửa pool không còn gửi bước lên: bước đời cũ đang lưu được GIỮ NGUYÊN qua mọi lần lưu (chỉ dropLegacySteps mới xoá)
+            foreach (array_keys(self::LEGACY_STEP_LISTS) as $list) {
+                if (!array_key_exists($list, $config) && isset($cur['cfg'][$list])) {
+                    $config[$list] = $cur['cfg'][$list];
+                }
+            }
+        }
         $data = [
             'code' => $code, 'name' => $name, 'game' => clean($game, 120), 'active' => $active ? 1 : 0,
             'config' => jenc(self::sanitize($config)), 'updated_at' => time(),
@@ -295,6 +287,29 @@ final class Pools
             }
             throw $e;
         }
+    }
+
+    /** Bước đời cũ pool còn lưu: [tên danh sách => số bước] (chỉ danh sách có bước). */
+    public static function legacySteps(array $cfg): array
+    {
+        $out = [];
+        foreach (array_keys(self::LEGACY_STEP_LISTS) as $list) {
+            if (!empty($cfg[$list])) {
+                $out[$list] = count($cfg[$list]);
+            }
+        }
+        return $out;
+    }
+
+    /** Xoá hẳn các bước đời cũ của pool (tool đã chép chúng về kịch bản). Trả số bước đã xoá. */
+    public static function dropLegacySteps(int $id): int
+    {
+        $pool = self::find($id);
+        $n = $pool ? array_sum(self::legacySteps($pool['cfg'])) : 0;
+        if ($n > 0) {
+            Db::update('pools', ['config' => jenc(array_diff_key($pool['cfg'], self::LEGACY_STEP_LISTS)), 'updated_at' => time()], 'id=?', [$id]);
+        }
+        return $n;
     }
 
     public static function delete(int $id): bool
@@ -439,8 +454,8 @@ final class Pools
     }
 
     /**
-     * Pool còn thiếu gì để máy nạp tự chạy được? Trả danh sách câu mô tả (rỗng = đủ).
-     * Tool kiểm lại y như vậy trước khi nhận đơn (và tính cả bước ghi đè của nhóm máy).
+     * Pool còn thiếu gì để máy nạp tự chạy được? Trả danh sách câu mô tả (rỗng = đủ). Chỉ xét thứ pool quản: luật + gói.
+     * Bước thao tác soạn ở tool (kịch bản nhận đơn) — tool tự kiểm đủ bước đăng nhập / mua / kết thúc trước khi nhận đơn.
      */
     public static function missing(array $pool): array
     {
@@ -450,11 +465,6 @@ final class Pools
         foreach (self::RULES_REQUIRED as $when => $why) {
             if (!in_array($when, $has, true)) {
                 $out[] = 'Thiếu luật «' . self::RULE_WHEN[$when] . '» — ' . $why . '.';
-            }
-        }
-        foreach (['login_steps' => 'đăng nhập', 'purchase_steps' => 'mua 1 gói', 'finish_steps' => 'kết thúc đơn (đăng xuất)'] as $list => $label) {
-            if (!$cfg[$list]) {
-                $out[] = 'Chưa có bước «' . $label . '».';
             }
         }
         if (isset($pool['id']) && (int) $pool['id'] > 0 && !self::packages((int) $pool['id'], true)) {
@@ -511,7 +521,7 @@ final class Pools
         }
         if ($forTool) {
             $out['rules'] = $cfg['rules'];
-            foreach (array_keys(self::STEP_LISTS) as $list) {
+            foreach (self::legacySteps($cfg) as $list => $n) {      // chỉ pool còn bước đời cũ mới có các khoá này (tool chép về kịch bản một lần)
                 $out[$list] = $cfg[$list];
             }
             $out['require_image'] = $cfg['require_image'];
