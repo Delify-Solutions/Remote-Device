@@ -145,8 +145,12 @@ ok(http('GET', '/api/shop/ping', $SK)['code'] === 200 && http('GET', '/api/tool/
 
 echo "\n== Lược đồ ==\n";
 $my = implode("\n", array_merge(...array_values(Schema::migrations('mysql'))));
-ok(substr_count($my, 'utf8mb4_bin') >= 22 && preg_match('/utf8mb4_[a-z0-9_]*_ci/', $my) !== 1,
-    'MySQL/MariaDB: mọi bảng so khớp CHÍNH XÁC (utf8mb4_bin) — không gộp mã đơn / tên máy khác hoa-thường, khác dấu');
+$creates = array_values(array_filter(array_merge(...array_values(Schema::migrations('mysql'))), static fn (string $s): bool => str_starts_with(trim($s), 'CREATE TABLE')));
+$noBin = array_filter($creates, static fn (string $s): bool => !str_ends_with(trim($s), 'COLLATE=utf8mb4_bin'));
+ok(count($creates) === 15 && !$noBin && substr_count($my, 'utf8mb4_bin') >= 26 && preg_match('/utf8mb4_[a-z0-9_]*_ci/', $my) !== 1,
+    'MySQL/MariaDB: mọi bảng (cả 3 bảng ví / sổ cái / giá theo loại tiền) so khớp CHÍNH XÁC (utf8mb4_bin) — không gộp mã đơn / tên máy khác hoa-thường, khác dấu', [count($creates), array_map(static fn ($s) => substr(trim($s), 0, 40), $noBin)]);
+ok(!str_contains(implode("\n", Schema::migrations('sqlite')[5]), 'ENGINE') && count(Schema::migrations('sqlite')[5]) === count(Schema::migrations('mysql')[5]),
+    'migration 5 (ví) có cùng các câu lệnh cho SQLite và MySQL (SQLite không kèm ENGINE / COLLATE)');
 ok(Schema::migrations('sqlite')[2] === [] && count(Schema::migrations('mysql')[2]) === 11, 'migration 2 đổi collation cho bản cài MySQL cũ; SQLite không cần đổi');
 ok((int) Db::val('SELECT COUNT(*) FROM schema_version') === Schema::LATEST, 'đã áp đủ ' . Schema::LATEST . ' migration');
 
@@ -681,10 +685,15 @@ Db::insert('schema_version', ['version' => 3, 'applied_at' => time()]);
 $r3 = new ReflectionProperty(Schema::class, 'version'); $r3->setAccessible(true); $r3->setValue(null, null);     // (bỏ giá trị đã nhớ: bài thử vừa tự áp một phiên bản)
 $out['v3'] = ['version' => Schema::version(), 'sync' => Tools::sync(Keys::find((int) $k['id']), ['devices' => []])[0], 'board' => Tools::board(), 'byPool' => Tools::scriptsByPool(),
               'devices' => array_column(Devices::all(), 'name')];
+Db::insert('jobs', ['pid' => 'JCU', 'pool_id' => 1, 'shop_key_id' => 1, 'ref' => 'DON-CU', 'status' => 'done', 'created_at' => time(), 'updated_at' => time()]);
 $out['applied'] = Schema::migrate();
 $out['version_after'] = Schema::version();
 $out['after'] = Tools::sync(Keys::find((int) $k['id']), ['devices' => [['name' => 'x', 'status' => 'idle']]]);
 $out['again'] = Schema::migrate();
+$old = Db::one("SELECT wallet_id, wallet_state, account_key FROM jobs WHERE pid='JCU'");
+$out['v5'] = ['wallets' => (int) Db::val('SELECT COUNT(*) FROM wallets'), 'wallet_entries' => (int) Db::val('SELECT COUNT(*) FROM wallet_entries'),
+              'package_prices' => (int) Db::val('SELECT COUNT(*) FROM package_prices'),
+              'jobs_cols' => (bool) Db::one('SELECT wallet_id, currency, cost, wallet_state, account_key FROM jobs LIMIT 1'), 'old_job' => $old];
 echo json_encode($out);
 PHP);
 $v2 = proc_open([PHP_BINARY, "$tmp/v2.php"], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pp, $tmp, array_merge(getenv(), $env, ['DB_DSN' => "sqlite:$tmp/v2.sqlite", 'DB_USER' => '', 'DB_PASS' => '', 'GW_ROOT' => dirname(__DIR__)]));
@@ -696,8 +705,339 @@ ok(($v['version'] ?? 0) === 2 && ($v['sync'][0] ?? 0) === 503 && ($v['sync'][1][
     'CSDL chưa áp migration 3: sync trả 503 needs_migration; bảng máy / trang kịch bản vẫn chạy (không lỗi SQL)', mb_substr($v2out, 0, 300));
 ok(($v['v3']['version'] ?? 0) === 3 && ($v['v3']['sync'] ?? 0) === 503 && ($v['v3']['board'] ?? null) === [] && ($v['v3']['byPool'] ?? null) === [] && ($v['v3']['devices'] ?? null) === ['May-cu'],
     'CSDL ở bản 3 (chưa có cột pool của kịch bản): sync vẫn báo cần cập nhật, các trang vẫn chạy', $v['v3'] ?? null);
-ok(($v['applied'] ?? null) === [4] && ($v['version_after'] ?? 0) === Schema::LATEST && ($v['after'][0] ?? 0) === 200 && ($v['again'] ?? null) === [],
-    'chạy migrate trên CSDL cũ → lên bản mới nhất, sync dùng được ngay; chạy lại lần nữa không làm gì', [$v['applied'] ?? null, $v['after'][0] ?? null]);
+ok(($v['applied'] ?? null) === [4, 5] && ($v['version_after'] ?? 0) === Schema::LATEST && ($v['after'][0] ?? 0) === 200 && ($v['again'] ?? null) === [],
+    'chạy migrate trên CSDL cũ → lên bản mới nhất (4 rồi 5), sync dùng được ngay; chạy lại lần nữa không làm gì', [$v['applied'] ?? null, $v['after'][0] ?? null]);
+ok(($v['v5'] ?? null) === ['wallets' => 0, 'wallet_entries' => 0, 'package_prices' => 0, 'jobs_cols' => true, 'old_job' => ['wallet_id' => null, 'wallet_state' => null, 'account_key' => null]],
+    'migration 5 trên CSDL cũ: có bảng ví / sổ cái / giá theo loại tiền + các cột mới của đơn; đơn cũ không bị gắn ví', $v['v5'] ?? null);
+
+echo "\n== Ví tài khoản Apple: tiền (×100), giá gói theo loại tiền, sổ cái ==\n";
+ok(Money::parse('1.500', 'JPY') === 150000 && Money::parse('1500', 'JPY') === 150000 && Money::parse('1,500', 'JPY') === 150000 && Money::parse('63.5', 'CHF') === 6350
+    && Money::parse('63,50', 'CHF') === 6350 && Money::parse('1.234,56', 'CHF') === 123456 && Money::parse('1,234.56', 'CHF') === 123456 && Money::parse('0', 'JPY') === 0
+    && Money::parse('1500.50', 'JPY') === null && Money::parse('-5', 'JPY') === null && Money::parse('-1.000', 'JPY', true) === -100000 && Money::parse('abc', 'JPY') === null
+    && Money::parse('1.5.0', 'CHF') === null && Money::parse('', 'JPY') === null && Money::parse('12.', 'CHF') === null,
+    'số tiền admin nhập → số nguyên ×100 (dấu nghìn / phần lẻ kiểu Việt lẫn kiểu Anh; JPY không có phần lẻ; âm chỉ khi chỉnh số dư)');
+ok(Money::fmt(150000, 'JPY') === '1.500 JPY' && Money::fmt(6350, 'CHF') === '63,50 CHF' && Money::fmt(-100000, 'JPY') === '-1.000 JPY' && Money::plain(6300, 'CHF') === '63.00' && Money::plain(150000, 'JPY') === '1500',
+    'hiện số tiền giống thông báo của tool (1.500 JPY · 63,50 CHF); ô nhập điền sẵn không dấu nghìn');
+ok(Wallets::mask('apple01@example.com') === 'a***@example.com' && Wallets::mask('0912345678') === '09***78', 'tài khoản Apple gửi cho tool được che (a***@example.com)');
+ok(Pools::parseCurrencies('jpy, CHF  usd;JPY') === [['JPY', 'CHF', 'USD'], null] && Pools::parseCurrencies('JPY, XX1')[1] !== null, 'loại tiền của pool: mã ISO 3 chữ, viết hoa, bỏ trùng; mã sai bị từ chối');
+
+$wc = Pools::defaults();
+$wc['rules'] = [['when' => 'logged_out', 'value' => 'Đăng nhập'], ['when' => 'login_success', 'value' => 'Trang chủ'], ['when' => 'purchase_success', 'value' => 'Thành công']];
+$wc['login_steps'] = [['type' => 'launch', 'value' => 'game']];
+$wc['purchase_steps'] = [['type' => 'tap_text', 'value' => '{{package.price_text}}']];
+$wc['finish_steps'] = [['type' => 'home', 'value' => '']];
+$wc['currencies'] = ['jpy', 'CHF', 'sai-ma'];
+$wpId = Pools::save(null, 'wallet-pool', 'Pool ví', 'Game', true, $wc);
+ok(Pools::find($wpId)['cfg']['currencies'] === ['JPY', 'CHF'], 'pool lưu danh sách loại tiền trong cấu hình (bỏ mã sai)');
+$perr = Pools::savePackages($wpId, [['code' => 'x', 'name' => 'x', 'prices' => ['JPY' => ['amount' => '12.5', 'display' => '']]]]);
+ok(is_string($perr) && str_contains($perr, 'JPY') && Pools::packages($wpId) === [], 'giá JPY có phần lẻ → báo lỗi rõ ràng, không lưu gì', $perr);
+$pe = Pools::savePackages($wpId, [
+    ['code' => 'gem_s', 'name' => 'Gói nhỏ', 'price_text' => '25.000', 'limit_type' => 'multi', 'max_qty' => 5, 'active' => true,
+     'prices' => ['JPY' => ['amount' => '1.500', 'display' => '¥1,500'], 'CHF' => ['amount' => '9.00', 'display' => 'CHF 9.00']]],
+    ['code' => 'gem_l', 'name' => 'Gói lớn', 'price_text' => '249.000', 'limit_type' => 'multi', 'max_qty' => 5, 'active' => true, 'prices' => ['JPY' => ['amount' => '12000', 'display' => '']]],
+    ['code' => 'pass', 'name' => 'Gói 1 lần', 'price_text' => '50.000', 'limit_type' => 'once', 'active' => true, 'prices' => ['JPY' => ['amount' => '3000', 'display' => '¥3,000']]],
+    ['code' => 'noprice', 'name' => 'Gói chưa có giá JPY', 'limit_type' => 'multi', 'active' => true, 'prices' => ['CHF' => ['amount' => '1', 'display' => ''], 'USD' => ['amount' => '1', 'display' => '']]],
+]);
+$pid = array_column(Pools::packages($wpId), 'id', 'code');
+$pr = Pools::prices($wpId);
+ok($pe === null && ($pr[$pid['gem_s']]['JPY'] ?? null) === ['amount' => '1500', 'display' => '¥1,500'] && ($pr[$pid['gem_s']]['CHF']['amount'] ?? '') === '9.00'
+    && (int) Db::val("SELECT amount FROM package_prices WHERE package_id=? AND currency='JPY'", [$pid['gem_s']]) === 150000
+    && !isset($pr[$pid['noprice']]['JPY']) && !isset($pr[$pid['noprice']]['USD']),
+    'giá gói theo từng loại tiền lưu ×100 kèm chữ giá trên máy; loại tiền không thuộc pool bị bỏ', $pr);
+
+// ---- trang quản trị: ví (có CSRF) ----
+$ah = ['Cookie: ' . $cookie, 'X-Forwarded-For: 203.0.113.50'];
+$wl = http('GET', '/admin/wallets', null, null, $ah);
+preg_match('/name="_csrf" value="([^"]+)"/', $wl['text'], $cs);
+$csrf = $cs[1] ?? '';
+$post = static fn (string $path, array $f): array => http('POST', $path, null, http_build_query($f + ['_csrf' => $csrf]), array_merge($ah, ['Content-Type: application/x-www-form-urlencoded']));
+ok($wl['code'] === 200 && str_contains($wl['text'], 'Thêm ví cho một máy') && str_contains($wl['text'], 'Ví &amp; tài khoản Apple') && str_contains($wl['text'], 'tabler-wallet'),
+    'trang «Ví & tài khoản Apple» hiển thị, có trong menu', $wl['code']);
+ok(http('GET', '/admin/wallets')['code'] === 302, '/admin/wallets chưa đăng nhập → chuyển về trang đăng nhập');
+$kidT = (int) $tool['id'];
+$noCsrf = http('POST', '/admin/wallets/create', null, http_build_query(['tool_key_id' => $kidT, 'device' => 'Vi-01', 'apple_account' => 'x@example.com', 'currency' => 'JPY']),
+    array_merge($ah, ['Content-Type: application/x-www-form-urlencoded']));
+ok($noCsrf['code'] === 419 && (int) Db::val('SELECT COUNT(*) FROM wallets') === 0, 'thêm ví không có mã CSRF → 419, không ghi gì');
+$bad = $post('/admin/wallets/create', ['tool_key_id' => $kidT, 'device' => 'Vi-01', 'apple_account' => 'apple01@example.com', 'currency' => 'JP', 'balance' => '1000']);
+$bad2 = $post('/admin/wallets/create', ['tool_key_id' => (int) $shop['id'], 'device' => 'Vi-01', 'apple_account' => 'apple01@example.com', 'currency' => 'JPY']);
+ok($bad['code'] === 302 && $bad2['code'] === 302 && (int) Db::val('SELECT COUNT(*) FROM wallets') === 0
+    && str_contains(http('GET', '/admin/wallets', null, null, $ah)['text'], 'Loại tiền phải là mã ISO'), 'loại tiền sai / khoá không phải khoá Tool → báo lỗi, không tạo ví');
+$c1 = $post('/admin/wallets/create', ['tool_key_id' => $kidT, 'device' => 'Vi-01', 'apple_account' => 'apple01@example.com', 'currency' => 'jpy', 'balance' => '20.000', 'note' => 'vùng Nhật']);
+preg_match('#Location: /admin/wallets/(\d+)#', $c1['head'], $wm);
+$W1 = (int) ($wm[1] ?? 0);
+$w1 = Wallets::find($W1);
+$e1 = Wallets::entries($W1, 10, 0);
+ok($c1['code'] === 302 && $w1 && $w1['currency'] === 'JPY' && (int) $w1['balance'] === 2000000 && (int) $w1['active'] === 1 && $w1['device'] === 'Vi-01'
+    && count($e1) === 1 && $e1[0]['kind'] === 'topup' && (int) $e1[0]['amount'] === 2000000 && (int) $e1[0]['balance_after'] === 2000000 && $e1[0]['note'] === 'Số dư ban đầu' && $e1[0]['actor'] === 'admin:chu',
+    'thêm ví (khoá Tool + máy + tài khoản Apple + loại tiền + số dư ban đầu) → ghi sổ cái «Số dư ban đầu»', [$w1, $e1]);
+$c2 = $post('/admin/wallets/create', ['tool_key_id' => $kidT, 'device' => 'Vi-01', 'apple_account' => 'apple02@example.com', 'currency' => 'CHF', 'balance' => '']);
+preg_match('#Location: /admin/wallets/(\d+)#', $c2['head'], $wm2);
+$W2 = (int) ($wm2[1] ?? 0);
+$act = static fn (): array => array_map('intval', array_column(Db::all("SELECT id FROM wallets WHERE tool_key_id=? AND device='Vi-01' AND active=1", [$kidT]), 'id'));
+ok($W2 > 0 && $act() === [$W2] && Wallets::entries($W2, 10, 0) === [], 'thêm ví thứ hai cho cùng máy → ví cũ thôi dùng (mỗi máy chỉ MỘT ví đang dùng); số dư 0 thì không ghi sổ', $act());
+$post("/admin/wallets/$W1/toggle", []);
+ok($act() === [$W1], '«Dùng lại» ví cũ → ví kia tự thôi dùng', $act());
+$post("/admin/wallets/$W1/topup", ['amount' => '5000', 'note' => 'thẻ quà tặng …1234']);
+$neg = $post("/admin/wallets/$W1/topup", ['amount' => '-5']);
+$noNote = $post("/admin/wallets/$W1/adjust", ['amount' => '-1.000', 'note' => '']);
+$post("/admin/wallets/$W1/adjust", ['amount' => '-1.000', 'note' => 'đối chiếu số dư trên máy']);
+$kinds = array_column(Wallets::entries($W1, 10, 0), 'kind');
+ok((int) Wallets::find($W1)['balance'] === 2400000 && $kinds === ['adjust', 'topup', 'topup'] && $neg['code'] === 302 && $noNote['code'] === 302,
+    'nạp thêm 5.000 + chỉnh −1.000 (bắt buộc lý do) → số dư 24.000 JPY; nạp số âm / chỉnh không lý do bị từ chối', [Wallets::find($W1)['balance'], $kinds]);
+$wd = http('GET', "/admin/wallets/$W1", null, null, $ah);
+ok($wd['code'] === 200 && str_contains($wd['text'], 'Số dư ban đầu') && str_contains($wd['text'], 'đối chiếu số dư trên máy') && str_contains($wd['text'], '24.000 JPY')
+    && str_contains($wd['text'], 'thẻ quà tặng …1234') && str_contains($wd['text'], 'Chỉnh số dư'), 'trang chi tiết ví: số dư + sổ cái (mới nhất trước) + nút nạp / chỉnh', $wd['code']);
+$wlist = http('GET', '/admin/wallets', null, null, $ah)['text'];
+ok(str_contains($wlist, 'apple01@example.com') && str_contains($wlist, 'apple02@example.com') && str_contains($wlist, 'ngừng dùng') && str_contains($wlist, 'Vi-01'), 'danh sách ví theo máy: tài khoản đầy đủ cho admin, ví nào đang dùng');
+
+// ---- giao đơn theo ví ----
+$wbase = ['pool' => 'wallet-pool', 'login' => ['username' => 'vi-khach@example.com', 'password' => 'pw']];
+$mk = static function (string $ref, array $items, string $user = 'vi-khach@example.com') use ($SK, $wbase): array {
+    return http('POST', '/api/shop/jobs', $SK, ['ref' => $ref, 'items' => $items, 'login' => ['username' => $user, 'password' => 'pw']] + $wbase);
+};
+$claimW = static fn (string $dev): array => http('POST', '/api/tool/claim', $TK, ['device' => $dev, 'pool' => 'wallet-pool'])['json'];
+$WJ0 = $mk('W-0', [['code' => 'gem_s', 'qty' => 1]])['json']['job']['id'] ?? '';
+$free = $claimW('Vi-free');
+ok(($free['job']['id'] ?? '') === $WJ0 && !isset($free['job']['wallet']) && !isset($free['job']['items'][0]['price']) && ($free['job']['items'][0]['price_text'] ?? '') === '25.000' && !isset($free['wallet_short']),
+    'máy KHÔNG có ví nhận đơn như cũ: không kiểm tiền, không có trường ví / giá, chữ giá mặc định', $free);
+http('POST', "/api/tool/jobs/$WJ0/result", $TK, ['result' => 'failed', 'message' => 'thử']);
+ok(Db::one('SELECT wallet_id, wallet_state, cost FROM jobs WHERE pid=?', [$WJ0]) === ['wallet_id' => null, 'wallet_state' => null, 'cost' => null], '…và đơn đó không gắn ví nào');
+
+$WJ1 = $mk('W-1', [['code' => 'gem_l', 'qty' => 3]])['json']['job']['id'] ?? '';
+$s1 = $claimW('Vi-01');
+ok(array_key_exists('job', $s1) && $s1['job'] === null && ($s1['wallet_short'] ?? null) === ['reason' => 'insufficient', 'account' => 'a***@example.com', 'currency' => 'JPY',
+        'available' => 2400000, 'need' => 3600000, 'package_codes' => ['gem_l']]
+    && Db::val('SELECT status FROM jobs WHERE pid=?', [$WJ1]) === 'queued' && (int) Db::val('SELECT short_notified_at FROM wallets WHERE id=?', [$W1]) > 0,
+    'ví 24.000 JPY không đủ cho đơn 36.000 JPY → không giao, trả wallet_short (thiếu tiền, cần bao nhiêu, gói nào) để tool báo admin; đơn vẫn chờ', $s1);
+http('POST', "/api/shop/jobs/$WJ1/cancel", $SK);
+$WJ2 = $mk('W-2', [['code' => 'noprice', 'qty' => 1]])['json']['job']['id'] ?? '';
+$s2 = $claimW('Vi-01');
+ok($s2['job'] === null && ($s2['wallet_short']['reason'] ?? '') === 'no_price' && $s2['wallet_short']['package_codes'] === ['noprice'] && $s2['wallet_short']['need'] === null,
+    'gói chưa có giá ở loại tiền của ví → bỏ qua đơn, wallet_short no_price kèm mã gói thiếu giá', $s2);
+http('POST', "/api/shop/jobs/$WJ2/cancel", $SK);
+$WJ3 = $mk('W-3', [['code' => 'gem_l', 'qty' => 3]])['json']['job']['id'] ?? '';               // quá giá, nằm ĐẦU hàng chờ suốt phần sau
+$WJ4 = $mk('W-4', [['code' => 'gem_s', 'qty' => 2], ['code' => 'gem_l', 'qty' => 1]])['json']['job']['id'] ?? '';
+$g4 = $claimW('Vi-01');
+$j4 = $g4['job'] ?? [];
+$it4 = array_column($j4['items'] ?? [], null, 'code');
+ok(($j4['id'] ?? '') === $WJ4 && ($it4['gem_s']['price'] ?? 0) === 150000 && ($it4['gem_s']['currency'] ?? '') === 'JPY' && ($it4['gem_s']['price_text'] ?? '') === '¥1,500'
+    && ($it4['gem_l']['price'] ?? 0) === 1200000 && ($it4['gem_l']['price_text'] ?? '') === '249.000'
+    && ($j4['wallet'] ?? null) === ['account' => 'a***@example.com', 'currency' => 'JPY', 'balance' => 2400000, 'available' => 2400000],
+    'đơn đầu hàng quá giá bị bỏ qua, máy nhận đơn sau vừa ví: mỗi gói kèm đơn giá ×100 + loại tiền + chữ giá đúng vùng (trống thì dùng chữ mặc định), kèm ví (tài khoản đã che)', $j4);
+$r4 = Db::one('SELECT wallet_id, currency, cost, wallet_state FROM jobs WHERE pid=?', [$WJ4]);
+ok((int) $r4['wallet_id'] === $W1 && $r4['currency'] === 'JPY' && (int) $r4['cost'] === 1500000 && $r4['wallet_state'] === null && Db::val('SELECT status FROM jobs WHERE pid=?', [$WJ3]) === 'queued',
+    'đơn ghi ví, loại tiền, chi phí cả đơn (2×1.500 + 12.000 = 15.000 JPY) lúc giao; chưa tính tiền khi còn chạy', $r4);
+$res4 = $claimW('Vi-01');
+ok(($res4['resumed'] ?? false) === true && ($res4['job']['id'] ?? '') === $WJ4 && array_column($res4['job']['items'], 'price') === [150000, 1200000],
+    'máy hỏi lại khi đang giữ đơn → trả lại đúng đơn, KHÔNG tính lại giá', $res4['job']['items'] ?? null);
+
+// sửa giá gói qua trang quản trị SAU khi đơn đã giao → đơn đó vẫn trừ theo giá lúc giao
+$poolForm = static function (int $id): array {
+    $p = Pools::find($id);
+    $cfg = $p['cfg'];
+    $f = ['id' => $id, 'code' => $p['code'], 'name' => $p['name'], 'game' => $p['game'], 'active' => (int) $p['active'] ? '1' : '0',
+          'otp_enabled' => $cfg['otp']['enabled'] ? '1' : '0', 'otp_timeout' => $cfg['otp']['timeout'], 'otp_max' => $cfg['otp']['max_requests'], 'otp_hint' => $cfg['otp']['hint'],
+          'require_image' => $cfg['require_image'] ? '1' : '0', 'queue_ttl_min' => intdiv($cfg['queue_ttl'], 60), 'silent_min' => intdiv($cfg['silent_timeout'], 60),
+          'currencies' => implode(', ', $cfg['currencies']), 'pk_currencies' => implode(',', $cfg['currencies'])];
+    foreach ($cfg['login_fields'] as $lf) {
+        $f['lf_key'][] = $lf['key']; $f['lf_label'][] = $lf['label']; $f['lf_type'][] = $lf['type']; $f['lf_required'][] = $lf['required'] ? '1' : '0';
+        $f['lf_secret'][] = $lf['secret'] ? '1' : '0'; $f['lf_hint'][] = $lf['hint']; $f['lf_options'][] = implode(', ', $lf['options']);
+    }
+    foreach ($cfg['rules'] as $r) {
+        $f['ru_when'][] = $r['when']; $f['ru_value'][] = $r['value']; $f['ru_note'][] = $r['note'];
+    }
+    foreach (array_keys(Pools::STEP_LISTS) as $list) {
+        foreach ($cfg[$list] as $s) {
+            $f[$list . '_type'][] = $s['type']; $f[$list . '_value'][] = $s['value']; $f[$list . '_note'][] = $s['note']; $f[$list . '_optional'][] = $s['optional'] ? '1' : '0';
+        }
+    }
+    $prices = Pools::prices($id);
+    foreach (Pools::packages($id) as $k) {
+        $f['pk_id'][] = $k['id']; $f['pk_code'][] = $k['code']; $f['pk_name'][] = $k['name']; $f['pk_ocr'][] = $k['ocr_text']; $f['pk_price'][] = $k['price_text'];
+        $f['pk_limit'][] = $k['limit_type']; $f['pk_max'][] = $k['max_qty']; $f['pk_active'][] = $k['active'] ? '1' : '0';
+        foreach ($cfg['currencies'] as $c) {
+            $f['pp_' . $c . '_amount'][] = $prices[(int) $k['id']][$c]['amount'] ?? '';
+            $f['pp_' . $c . '_display'][] = $prices[(int) $k['id']][$c]['display'] ?? '';
+        }
+    }
+    return $f;
+};
+$pf = http('GET', "/admin/pools/$wpId", null, null, $ah)['text'];
+ok(str_contains($pf, 'Loại tiền dùng trong pool') && str_contains($pf, 'JPY · giá') && str_contains($pf, 'JPY · chữ hiện trên máy') && str_contains($pf, 'CHF · giá')
+    && str_contains($pf, 'name="pp_JPY_amount[]" value="1500"') && str_contains($pf, 'value="¥1,500"') && str_contains($pf, 'Chữ giá (mặc định, khi không có giá theo loại tiền)')
+    && substr_count($pf, 'name="pp_JPY_amount[]"') === 5,
+    'trang sửa pool: ô loại tiền + cột «giá» và «chữ hiện trên máy» cho từng loại tiền ở mỗi gói (cả dòng mẫu để thêm gói)', mb_substr(strip_tags($pf), 0, 120));
+$f = $poolForm($wpId);
+$f['currencies'] = 'JPY, XX1';
+$pv = $post('/admin/pools/save', $f);
+ok($pv['code'] === 200 && str_contains($pv['text'], 'XX1') && str_contains($pv['text'], 'không hợp lệ') && str_contains($pv['text'], 'value="¥1,500"')
+    && Pools::find($wpId)['cfg']['currencies'] === ['JPY', 'CHF'], 'loại tiền gõ sai → báo lỗi, giữ nguyên các ô giá đang nhập, không lưu gì', $pv['code']);
+$f = $poolForm($wpId);
+$f['pp_JPY_amount'][0] = 'mười';
+$pv = $post('/admin/pools/save', $f);
+ok($pv['code'] === 200 && str_contains($pv['text'], 'giá JPY') && (int) Db::val("SELECT amount FROM package_prices WHERE package_id=? AND currency='JPY'", [$pid['gem_s']]) === 150000,
+    'giá gõ sai → báo lỗi rõ gói nào / loại tiền nào, giá cũ giữ nguyên', mb_substr(strip_tags($pv['text']), 0, 80));
+$f = $poolForm($wpId);
+$f['pp_JPY_amount'][0] = '2.000';
+$f['pp_JPY_display'][0] = '¥2,000';
+$pv = $post('/admin/pools/save', $f);
+ok($pv['code'] === 302 && (int) Db::val("SELECT amount FROM package_prices WHERE package_id=? AND currency='JPY'", [$pid['gem_s']]) === 200000
+    && Db::val("SELECT display FROM package_prices WHERE package_id=? AND currency='JPY'", [$pid['gem_s']]) === '¥2,000'
+    && (int) Db::val("SELECT amount FROM package_prices WHERE package_id=? AND currency='CHF'", [$pid['gem_s']]) === 900,
+    'admin sửa giá JPY của gói qua trang pool → lưu (giá loại tiền khác giữ nguyên)', $pv['code']);
+
+http('POST', "/api/tool/jobs/$WJ4/images?seq=1", $TK, png(), ['Content-Type: image/png']);
+$d4 = http('POST', "/api/tool/jobs/$WJ4/result", $TK, ['result' => 'done', 'items' => [['code' => 'gem_s', 'qty_done' => 2, 'status' => 'done'], ['code' => 'gem_l', 'qty_done' => 1, 'status' => 'done']]]);
+$p4 = Db::all("SELECT kind, amount, balance_after, package_code, qty, actor FROM wallet_entries WHERE job_id=(SELECT id FROM jobs WHERE pid=?) ORDER BY id", [$WJ4]);
+ok(($d4['json']['status'] ?? '') === 'done' && array_column($p4, 'kind') === ['purchase', 'purchase'] && array_map('intval', array_column($p4, 'amount')) === [-300000, -1200000]
+    && array_column($p4, 'package_code') === ['gem_s', 'gem_l'] && array_map('intval', array_column($p4, 'qty')) === [2, 1] && array_map('intval', array_column($p4, 'balance_after')) === [2100000, 900000]
+    && $p4[0]['actor'] === 'tool' && (int) Wallets::find($W1)['balance'] === 900000 && Db::val('SELECT wallet_state FROM jobs WHERE pid=?', [$WJ4]) === 'charged',
+    'tool báo done → mỗi gói một dòng «mua gói» = số đã mua × đơn giá LÚC GIAO (1.500, không phải giá mới 2.000) → số dư 9.000 JPY', $p4);
+$again = http('POST', "/api/tool/jobs/$WJ4/result", $TK, ['result' => 'done', 'items' => [['code' => 'gem_s', 'qty_done' => 2, 'status' => 'done']]]);
+ok($again['code'] === 200 && (int) Db::val('SELECT COUNT(*) FROM wallet_entries WHERE job_id=(SELECT id FROM jobs WHERE pid=?)', [$WJ4]) === 2 && (int) Wallets::find($W1)['balance'] === 900000,
+    'tool gửi lại kết quả (mất phản hồi) → không trừ tiền lần hai');
+
+$WJ5 = $mk('W-5', [['code' => 'gem_s', 'qty' => 1]])['json']['job']['id'] ?? '';
+$g5 = $claimW('Vi-01');
+$f5 = http('POST', "/api/tool/jobs/$WJ5/result", $TK, ['result' => 'failed', 'message' => 'Sai mật khẩu']);
+ok(($g5['job']['id'] ?? '') === $WJ5 && ($g5['job']['items'][0]['price'] ?? 0) === 200000 && ($g5['job']['items'][0]['price_text'] ?? '') === '¥2,000' && ($f5['json']['status'] ?? '') === 'failed'
+    && Db::val('SELECT wallet_state FROM jobs WHERE pid=?', [$WJ5]) === 'none' && (int) Db::val('SELECT COUNT(*) FROM wallet_entries WHERE job_id=(SELECT id FROM jobs WHERE pid=?)', [$WJ5]) === 0
+    && (int) Wallets::find($W1)['balance'] === 900000,
+    'đơn mới giao sau khi sửa giá dùng giá mới (2.000); tool báo failed → không trừ tiền, không ghi sổ', $g5['job']['items'] ?? null);
+
+$WJ6 = $mk('W-6', [['code' => 'gem_s', 'qty' => 2]])['json']['job']['id'] ?? '';
+$claimW('Vi-01');
+$rv6 = http('POST', "/api/tool/jobs/$WJ6/result", $TK, ['result' => 'review', 'message' => 'Không chắc đã mua']);
+$id6 = (int) Db::val('SELECT id FROM jobs WHERE pid=?', [$WJ6]);
+$h6 = Db::all('SELECT kind, amount, balance_after FROM wallet_entries WHERE job_id=?', [$id6]);
+$w1 = Wallets::find($W1);
+ok(($rv6['json']['status'] ?? '') === 'review' && Db::val('SELECT wallet_state FROM jobs WHERE id=?', [$id6]) === 'held'
+    && count($h6) === 1 && $h6[0]['kind'] === 'hold' && (int) $h6[0]['amount'] === -400000 && (int) $h6[0]['balance_after'] === 900000
+    && (int) $w1['balance'] === 900000 && Wallets::held($W1) === 400000 && Wallets::available($w1) === 500000,
+    'tool báo review → TẠM GIỮ cả chi phí đơn (4.000): số dư không đổi (9.000), còn dùng được giảm (5.000)', [$h6, Wallets::available($w1)]);
+http('POST', "/api/tool/jobs/$WJ6/result", $TK, ['result' => 'done', 'message' => 'Thật ra mua rồi']);
+ok((int) Db::val('SELECT COUNT(*) FROM wallet_entries WHERE job_id=?', [$id6]) === 1 && Db::val('SELECT wallet_state FROM jobs WHERE id=?', [$id6]) === 'held',
+    'báo muộn sau khi đã sang đối soát → không trừ / giữ thêm gì');
+$jp = http('GET', "/admin/jobs/$id6", null, null, $ah)['text'];
+ok(str_contains($jp, 'Số tiền đã trừ (JPY)') && str_contains($jp, 'name="charge"') && str_contains($jp, 'value="4000"') && str_contains($jp, 'tạm giữ 4.000 JPY')
+    && str_contains($jp, 'apple01@example.com') && str_contains($jp, 'đang tạm giữ') && str_contains($jp, 'Tạm giữ'),
+    'trang đơn chờ đối soát: ô «Số tiền đã trừ» điền sẵn chi phí (JPY không phần lẻ), tài khoản Apple, trạng thái tiền + sổ cái của đơn', mb_substr(strip_tags($jp), 0, 120));
+$big = $post("/admin/jobs/$id6/resolve", ['to' => 'done', 'charge' => '40001']);
+$negc = $post("/admin/jobs/$id6/resolve", ['to' => 'done', 'charge' => '-1']);
+ok($big['code'] === 302 && $negc['code'] === 302 && Db::val('SELECT status FROM jobs WHERE id=?', [$id6]) === 'review' && (int) Db::val('SELECT COUNT(*) FROM wallet_entries WHERE job_id=?', [$id6]) === 1
+    && str_contains(http('GET', "/admin/jobs/$id6", null, null, $ah)['text'], 'vượt quá 10 lần'), 'số tiền đã trừ > 10 lần chi phí / âm → từ chối, đơn vẫn chờ đối soát');
+$ok6 = $post("/admin/jobs/$id6/resolve", ['to' => 'done', 'charge' => '2.500', 'note' => 'mua được 1/2 gói + phí']);
+$c6 = Db::all('SELECT kind, amount, balance_after, note, actor FROM wallet_entries WHERE job_id=? ORDER BY id', [$id6]);
+$w1 = Wallets::find($W1);
+ok($ok6['code'] === 302 && Db::val('SELECT status FROM jobs WHERE id=?', [$id6]) === 'done' && Db::val('SELECT wallet_state FROM jobs WHERE id=?', [$id6]) === 'charged'
+    && array_column($c6, 'kind') === ['hold', 'charge'] && (int) $c6[1]['amount'] === -250000 && (int) $c6[1]['balance_after'] === 650000 && $c6[1]['note'] === 'mua được 1/2 gói + phí' && $c6[1]['actor'] === 'admin:chu'
+    && (int) $w1['balance'] === 650000 && Wallets::held($W1) === 0 && Wallets::available($w1) === 650000,
+    'admin chốt «đã nạp» với số tiền thật 2.500 → dòng «trừ khi đối soát» −2.500, tạm giữ đóng lại → số dư = còn dùng được = 6.500', $c6);
+ok(!Jobs::adminResolve($id6, 'failed', 'chu') && (int) Db::val('SELECT COUNT(*) FROM wallet_entries WHERE job_id=?', [$id6]) === 2, 'chốt lần hai bị từ chối, sổ cái không đổi');
+
+$WJ7 = $mk('W-7', [['code' => 'gem_s', 'qty' => 1]])['json']['job']['id'] ?? '';
+$claimW('Vi-01');
+$nb = http('POST', "/api/tool/jobs/$WJ7/result", $TK, ['result' => 'done', 'items' => [['code' => 'gem_s', 'qty_done' => 1, 'status' => 'done']]]);
+$id7 = (int) Db::val('SELECT id FROM jobs WHERE pid=?', [$WJ7]);
+ok(($nb['json']['status'] ?? '') === 'review' && Db::val('SELECT review_reason FROM jobs WHERE id=?', [$id7]) === 'no_bill' && Db::val('SELECT wallet_state FROM jobs WHERE id=?', [$id7]) === 'held'
+    && array_column(Db::all('SELECT kind FROM wallet_entries WHERE job_id=?', [$id7]), 'kind') === ['hold'] && Wallets::available(Wallets::find($W1)) === 450000,
+    'báo done mà thiếu ảnh → đối soát (no_bill) → TẠM GIỮ như review, chưa trừ tiền');
+$rel = $post("/admin/jobs/$id7/resolve", ['to' => 'failed', 'note' => 'lịch sử Apple không có giao dịch']);
+$e7 = Db::all('SELECT kind, amount, balance_after, note FROM wallet_entries WHERE job_id=? ORDER BY id', [$id7]);
+ok($rel['code'] === 302 && Db::val('SELECT status FROM jobs WHERE id=?', [$id7]) === 'failed' && Db::val('SELECT wallet_state FROM jobs WHERE id=?', [$id7]) === 'released'
+    && array_column($e7, 'kind') === ['hold', 'release'] && (int) $e7[1]['amount'] === 0 && $e7[1]['note'] === 'lịch sử Apple không có giao dịch'
+    && (int) Wallets::find($W1)['balance'] === 650000 && Wallets::available(Wallets::find($W1)) === 650000,
+    'admin chốt «chưa nạp» → dòng «nhả tạm giữ» (0, kèm ghi chú), số dư giữ nguyên, còn dùng được trở lại 6.500', $e7);
+
+$WJ8 = $mk('W-8', [['code' => 'gem_s', 'qty' => 1]])['json']['job']['id'] ?? '';
+$claimW('Vi-01');
+$id8 = (int) Db::val('SELECT id FROM jobs WHERE pid=?', [$WJ8]);
+Db::run('UPDATE jobs SET seen_at=? WHERE id=?', [time() - 7200, $id8]);
+$sw = http('GET', '/cron/tick?key=cronkey123')['json'];
+$e8 = Db::all('SELECT kind, amount, actor FROM wallet_entries WHERE job_id=?', [$id8]);
+ok(($sw['sweep']['timeout'] ?? 0) >= 1 && Db::val('SELECT status FROM jobs WHERE id=?', [$id8]) === 'review' && Db::val('SELECT wallet_state FROM jobs WHERE id=?', [$id8]) === 'held'
+    && count($e8) === 1 && $e8[0]['kind'] === 'hold' && (int) $e8[0]['amount'] === -200000 && $e8[0]['actor'] === 'system',
+    'tool im lặng quá lâu → đối soát (timeout) → hệ thống TẠM GIỮ chi phí đơn', [$sw, $e8]);
+http('POST', "/api/tool/jobs/$WJ8/result", $TK, ['result' => 'done']);
+ok((int) Db::val('SELECT COUNT(*) FROM wallet_entries WHERE job_id=?', [$id8]) === 1, 'tool báo done muộn sau timeout → không trừ thêm');
+ok(Jobs::adminResolve($id8, 'done', 'chu') && (int) Wallets::find($W1)['balance'] === 450000
+    && array_column(Db::all('SELECT kind FROM wallet_entries WHERE job_id=? ORDER BY id', [$id8]), 'kind') === ['hold', 'charge'],
+    'chốt «đã nạp» không nhập số tiền (gọi trong mã) → trừ đúng chi phí đơn (2.000) → số dư 4.500');
+$jl = http('GET', '/admin/jobs?pool=' . $wpId, null, null, $ah)['text'];
+ok(str_contains($jl, 'Tài khoản Apple') && str_contains($jl, 'a***@example.com') && !str_contains($jl, 'apple01@example.com'), 'danh sách đơn: cột «Tài khoản Apple» (đã che)');
+$j4p = http('GET', '/admin/jobs/' . Db::val('SELECT id FROM jobs WHERE pid=?', [$WJ4]), null, null, $ah)['text'];
+ok(str_contains($j4p, 'Tiền của đơn trong ví') && str_contains($j4p, 'Mua gói') && str_contains($j4p, '15.000 JPY') && str_contains($j4p, 'đã trừ tiền') && str_contains($j4p, '1.500 JPY / gói'),
+    'trang đơn: tài khoản Apple, chi phí, trạng thái tiền và các dòng sổ cái của đơn');
+$dash = http('GET', '/admin', null, null, $ah)['text'];
+ok(str_contains($dash, 'Ví sắp hết tiền') && str_contains($dash, 'apple01@example.com') && str_contains($dash, '12.000 JPY'), 'Tổng quan: ví còn dùng được thấp hơn gói đắt nhất (12.000 JPY) được nêu ra');
+$ov = Db::all("SELECT j.pid FROM jobs j WHERE j.wallet_id IS NOT NULL AND j.status='done' AND j.wallet_state<>'charged'");
+ok($ov === [] && (int) Wallets::find($W1)['balance'] === (int) Db::val('SELECT SUM(amount) FROM wallet_entries WHERE wallet_id=? AND kind IN (\'topup\',\'purchase\',\'charge\',\'adjust\')', [$W1]),
+    'sổ cái khớp số dư: số dư = tổng các dòng đổi số dư (tạm giữ / nhả không tính)');
+// bỏ ví: máy lại nhận đơn như máy không có ví (đơn quá giá ở đầu hàng giờ giao được)
+$post("/admin/wallets/$W1/toggle", []);
+$g3 = $claimW('Vi-01');
+ok(($g3['job']['id'] ?? '') === $WJ3 && !isset($g3['job']['wallet']) && !isset($g3['job']['items'][0]['price']) && Db::val('SELECT wallet_id FROM jobs WHERE pid=?', [$WJ3]) === null,
+    '«Ngừng dùng» ví → máy nhận đơn như máy không có ví (không kiểm tiền, không gắn ví)', $g3);
+http('POST', "/api/tool/jobs/$WJ3/result", $TK, ['result' => 'failed']);
+
+// ---- gói «chỉ 1 lần / tài khoản game» ----
+$o1 = $mk('O-1', [['code' => 'pass', 'qty' => 1]], 'Khach.Once@Example.com');
+$o2 = $mk('O-2', [['code' => 'pass', 'qty' => 1], ['code' => 'gem_s', 'qty' => 1]], '  khach.once@example.com ');
+$o3 = $mk('O-3', [['code' => 'gem_s', 'qty' => 1]], 'khach.once@example.com');
+$o1row = Db::one('SELECT account_key, login_enc FROM jobs WHERE pid=?', [$o1['json']['job']['id'] ?? '']);
+ok($o1['code'] === 201 && $o2['code'] === 422 && ($o2['json']['error'] ?? '') === 'already_bought' && ($o2['json']['code'] ?? '') === 'pass' && str_contains($o2['json']['message'] ?? '', 'Gói 1 lần')
+    && $o3['code'] === 201, 'gói «1 lần / tài khoản»: cùng tài khoản game (khác hoa/thường, khoảng trắng) đặt lại → 422 already_bought; gói thường vẫn đặt được', [$o2['code'], $o2['json']]);
+ok($o1row && $o1row['account_key'] === hash_hmac('sha256', $wpId . ':khach.once@example.com', 'account-key:' . (string) Env::get('APP_KEY', ''))
+    && $o1row['account_key'] !== hash('sha256', $wpId . ':khach.once@example.com')
+    && !str_contains(json_encode(Db::all('SELECT account_key, account_hint, items, note FROM jobs')), 'khach.once'),
+    'đơn chỉ lưu MÃ BĂM CÓ KHOÁ (HMAC bằng APP_KEY) của pool:tài khoản — không lưu định danh thô, không đoán ngược được bằng cách thử email');
+http('POST', '/api/shop/jobs/' . ($o1['json']['job']['id'] ?? '') . '/cancel', $SK);
+$o4 = $mk('O-4', [['code' => 'pass', 'qty' => 1]], 'khach.once@example.com');
+ok($o4['code'] === 201, 'đơn trước bị huỷ (chưa mất tiền) → tài khoản đó mua lại được gói 1 lần', $o4['json']);
+Pools::savePackages($wpId2 = Pools::save(null, 'wallet-pool-2', 'Pool ví 2', 'Game', true, $wc), [['code' => 'pass', 'name' => 'Gói 1 lần (pool 2)', 'limit_type' => 'once', 'active' => true]]);
+$o5 = http('POST', '/api/shop/jobs', $SK, ['ref' => 'O-5', 'pool' => 'wallet-pool-2', 'login' => ['username' => 'khach.once@example.com', 'password' => 'x'], 'items' => [['code' => 'pass', 'qty' => 1]]]);
+ok($o5['code'] === 201, 'giới hạn tính theo TỪNG pool: cùng tài khoản, cùng mã gói ở pool khác vẫn đặt được', $o5['json']);
+http('POST', '/api/shop/jobs/' . ($o5['json']['job']['id'] ?? '') . '/cancel', $SK);
+// pool có ô CHỌN server đứng trước ô tài khoản: định danh là ô CHỮ bắt buộc (tài khoản), không phải server — khách khác cùng server không bị chặn nhầm
+$wc3 = $wc;
+$wc3['login_fields'] = [['key' => 'server', 'label' => 'Server', 'type' => 'select', 'required' => true, 'options' => ['Asia', 'EU']],
+                        ['key' => 'username', 'label' => 'Tài khoản', 'type' => 'text', 'required' => true],
+                        ['key' => 'password', 'label' => 'Mật khẩu', 'type' => 'password', 'required' => true]];
+Pools::savePackages(Pools::save(null, 'wallet-pool-3', 'Pool ví 3', 'Game', true, $wc3), [['code' => 'pass', 'name' => 'Gói 1 lần (pool 3)', 'limit_type' => 'once', 'active' => true]]);
+$sv = static fn (string $ref, string $u) => http('POST', '/api/shop/jobs', $SK, ['ref' => $ref, 'pool' => 'wallet-pool-3', 'login' => ['server' => 'Asia', 'username' => $u, 'password' => 'x'], 'items' => [['code' => 'pass', 'qty' => 1]]]);
+$s1 = $sv('S-1', 'nguoi.a@example.com'); $s2 = $sv('S-2', 'nguoi.b@example.com'); $s3 = $sv('S-3', 'Nguoi.A@example.com');
+ok($s1['code'] === 201 && $s2['code'] === 201 && $s3['code'] === 422 && ($s3['json']['error'] ?? '') === 'already_bought',
+    'ô chọn server đứng đầu: hai khách khác nhau cùng server đều đặt được; đúng tài khoản cũ đặt lại thì bị chặn', [$s1['code'], $s2['code'], $s3['code']]);
+foreach ([$s1, $s2] as $sj) { http('POST', '/api/shop/jobs/' . ($sj['json']['job']['id'] ?? '') . '/cancel', $SK); }
+ok(Money::parse('+5', 'JPY') === null && Money::parse('+5', 'JPY', true) === 500, 'số tiền không dấu không nhận «+»; chỉnh số dư (có dấu) thì nhận');
+ok(Money::example('DKK') === '63,00 kr' && Money::example('JPY') === '¥1,500' && str_contains(Money::example('XYZ'), 'XYZ'), 'chữ giá mẫu theo ĐÚNG loại tiền (không gợi ý «CHF» cho ô DKK)');
+Db::insert('wallets', ['tool_key_id' => $kid, 'device' => 'Ten-Go-Nham', 'apple_account' => 'x@example.com', 'currency' => 'JPY', 'balance' => 0, 'active' => 0, 'note' => '', 'created_at' => time(), 'updated_at' => time()]);
+$wlp = http('GET', '/admin/wallets', null, null, $ah)['text'];
+ok(str_contains($wlp, 'Ten-Go-Nham') && str_contains($wlp, 'chưa thấy máy này'), 'danh sách ví: tên máy tool chưa từng báo (gõ nhầm) → có nhãn cảnh báo');
+// nhiều đơn khác ref cho cùng tài khoản + gói 1 lần gửi CÙNG LÚC → đúng MỘT đơn được nhận
+$mh = curl_multi_init();
+$hs = [];
+for ($i = 1; $i <= 6; $i++) {
+    $ch = curl_init("http://127.0.0.1:$port/api/shop/jobs");
+    curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_RETURNTRANSFER => true, CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $SK, 'Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => json_encode(['pool' => 'wallet-pool', 'ref' => "RACE-$i", 'login' => ['username' => 'dua@example.com', 'password' => 'x'], 'items' => [['code' => 'pass', 'qty' => 1]]])]);
+    curl_multi_add_handle($mh, $ch);
+    $hs[$i] = $ch;
+}
+do {
+    curl_multi_exec($mh, $running);
+    curl_multi_select($mh, 0.2);
+} while ($running > 0);
+$codes = [];
+foreach ($hs as $ch) {
+    $codes[] = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+}
+sort($codes);
+ok($codes === [201, 422, 422, 422, 422, 422] && (int) Db::val("SELECT COUNT(*) FROM jobs WHERE ref LIKE 'RACE-%'") === 1,
+    '6 đơn khác ref, cùng tài khoản + gói 1 lần gửi cùng lúc → đúng 1 đơn được nhận, 5 đơn 422', $codes);
+foreach (Db::all("SELECT pid FROM jobs WHERE pool_id=? AND status='queued'", [$wpId]) as $q) {
+    http('POST', '/api/shop/jobs/' . $q['pid'] . '/cancel', $SK);
+}
 
 echo "\n== Trang quản trị + tài liệu ==\n";
 $docs = http('GET', '/docs');
@@ -705,6 +1045,8 @@ ok(str_contains($docs['text'], '/api/tool/sync') && str_contains($docs['text'], 
 ok($docs['code'] === 200 && str_contains($docs['text'], '/api/tool/claim'), 'trang /docs hiển thị');
 ok(str_contains($docs['text'], 'job.cancelled') && str_contains($docs['text'], 'attempt') && str_contains($docs['text'], 'logged_out') && str_contains($docs['text'], 'resumed'),
     'tài liệu có đủ: webhook job.cancelled, tham số attempt, luật logged_out, cách xử lý đơn resumed');
+ok(str_contains($docs['text'], 'wallet_short') && str_contains($docs['text'], 'already_bought') && str_contains($docs['text'], 'package_codes') && str_contains($docs['text'], 'a***@example.com'),
+    'tài liệu có phần ví: wallet_short, giá / loại tiền của gói, job.wallet, lỗi 422 already_bought');
 ok(http('GET', '/admin')['code'] === 302, '/admin chưa đăng nhập → chuyển về trang đăng nhập');
 ok(http('GET', '/admin/login')['code'] === 200, 'trang đăng nhập hiển thị');
 

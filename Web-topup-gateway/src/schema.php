@@ -193,11 +193,65 @@ final class Schema
             4 => [
                 'ALTER TABLE tool_scripts ADD COLUMN pool_code VARCHAR(40) NULL',
             ],
+
+            // VÍ của tài khoản Apple trên từng máy + sổ cái + giá gói theo loại tiền (xem Wallets trong repo.php).
+            // Số tiền luôn là SỐ NGUYÊN = số tiền × 100 (1.500 JPY → 150000, 63,00 CHF → 6300) — không bao giờ dùng số thực.
+            5 => [
+                // một máy (khoá Tool + tên máy) có thể có nhiều ví theo thời gian, nhưng chỉ MỘT ví đang dùng (mã bảo đảm, không phải CSDL)
+                "CREATE TABLE wallets (
+                    id $pk,
+                    tool_key_id $ref NOT NULL,
+                    device VARCHAR(80) NOT NULL,
+                    apple_account VARCHAR(160) NOT NULL,
+                    currency VARCHAR(8) NOT NULL,
+                    balance BIGINT NOT NULL DEFAULT 0,
+                    active INT NOT NULL DEFAULT 1,
+                    note VARCHAR(200) NOT NULL DEFAULT '',
+                    short_notified_at INT NULL,
+                    created_at INT NOT NULL,
+                    updated_at INT NOT NULL
+                )$opt",
+                'CREATE INDEX wallets_device ON wallets (tool_key_id, device, active)',
+                // sổ cái CHỈ GHI THÊM: mọi thay đổi số dư (và mọi lần tạm giữ / nhả) đều là một dòng ở đây
+                "CREATE TABLE wallet_entries (
+                    id $pk,
+                    wallet_id $ref NOT NULL,
+                    at INT NOT NULL,
+                    kind VARCHAR(12) NOT NULL,
+                    amount BIGINT NOT NULL,
+                    balance_after BIGINT NOT NULL,
+                    job_id $ref NULL,
+                    job_pid VARCHAR(24) NULL,
+                    package_code VARCHAR(60) NULL,
+                    qty INT NULL,
+                    note VARCHAR(300) NOT NULL DEFAULT '',
+                    actor VARCHAR(40) NOT NULL
+                )$opt",
+                'CREATE INDEX wallet_entries_wallet ON wallet_entries (wallet_id, id)',
+                'CREATE INDEX wallet_entries_job ON wallet_entries (job_id)',
+                // giá của một gói theo từng loại tiền (vùng App Store) + chữ giá đúng như máy hiện ở vùng đó
+                "CREATE TABLE package_prices (
+                    id $pk,
+                    package_id $ref NOT NULL,
+                    currency VARCHAR(8) NOT NULL,
+                    amount BIGINT NOT NULL,
+                    display VARCHAR(80) NOT NULL DEFAULT '',
+                    UNIQUE (package_id, currency)
+                )$opt",
+                "ALTER TABLE jobs ADD COLUMN wallet_id $ref NULL",
+                'ALTER TABLE jobs ADD COLUMN currency VARCHAR(8) NULL',
+                'ALTER TABLE jobs ADD COLUMN cost BIGINT NULL',
+                'ALTER TABLE jobs ADD COLUMN wallet_state VARCHAR(12) NULL',
+                // HMAC-SHA256(pool_id:định danh tài khoản game, APP_KEY) — để chặn mua lại gói «1 lần / tài khoản»; KHÔNG lưu định danh thô
+                // (đổi APP_KEY thì các mã cũ không còn khớp → giới hạn «1 lần» cũ coi như xoá)
+                'ALTER TABLE jobs ADD COLUMN account_key VARCHAR(64) NULL',
+                'CREATE INDEX jobs_account ON jobs (pool_id, account_key)',
+            ],
         ];
     }
 
     /** Phiên bản migration mới nhất mà mã này cần. */
-    public const LATEST = 4;
+    public const LATEST = 5;
 
     private static ?int $version = null;
 

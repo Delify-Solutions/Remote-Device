@@ -43,17 +43,29 @@ $rowStep = static function (string $list, array $s) use ($in, $dd, $tools): stri
         . $dd($list . '_optional[]', ['0' => 'Dừng đơn', '1' => 'Bỏ qua, làm tiếp'], !empty($s['optional']) ? '1' : '0', 'Bước không làm được thì sao?')
         . $tools . '</div>';
 };
-$rowPk = static function (array $p) use ($in, $dd, $tools): string {
+// các loại tiền đang có cột giá trong form (ví tài khoản Apple trả bằng loại tiền nào thì đơn lấy giá ở cột đó)
+$curCols = !empty($wallets) ? array_values((array) ($pool['pk_cols'] ?? $cfg['currencies'])) : [];
+$rowPk = static function (array $p) use ($in, $dd, $tools, $curCols): string {
+    $prices = '';
+    foreach ($curCols as $c) {
+        $pp = (array) ($p['prices'][$c] ?? []);
+        $prices .= '<label class="pp"><span class="pp-cap">' . e($c) . ' · giá</span>'
+            . $in('pp_' . $c . '_amount[]', $pp['amount'] ?? '', Money::decimals($c) === 0 ? '1500' : '63.00', 'inputmode="decimal"') . '</label>'
+            . '<label class="pp"><span class="pp-cap">' . e($c) . ' · chữ hiện trên máy</span>'
+            . $in('pp_' . $c . '_display[]', $pp['display'] ?? '', Money::example($c)) . '</label>';
+    }
     return '<div class="rep-row cols-pk">'
         . '<input type="hidden" name="pk_id[]" value="' . e((string) ($p['id'] ?? '')) . '">'
         . $in('pk_code[]', $p['code'] ?? '', 'coin_1050')
         . $in('pk_name[]', $p['name'] ?? '', '1050 eFootball Coins')
         . $in('pk_ocr[]', $p['ocr_text'] ?? '', '1050|1,050')
-        . $in('pk_price[]', $p['price_text'] ?? '', '249.000')
+        . $in('pk_price[]', $p['price_text'] ?? '', '249.000', 'title="Chữ giá (mặc định, khi không có giá theo loại tiền)"')
         . $dd('pk_limit[]', Pools::LIMIT_TYPES, (string) ($p['limit_type'] ?? 'multi'))
         . '<input class="form-control form-control-sm" type="number" name="pk_max[]" value="' . e((string) ($p['max_qty'] ?? 0)) . '" min="0" max="99" title="0 = không giới hạn (tối đa 99)">'
         . $dd('pk_active[]', ['1' => 'Bán', '0' => 'Tắt'], !isset($p['active']) || !empty($p['active']) ? '1' : '0')
-        . $tools . '</div>';
+        . $tools
+        . ($prices !== '' ? '<div class="pk-prices">' . $prices . '</div>' : '')
+        . '</div>';
 };
 $addBtn = static fn (string $tpl, string $into, string $label): string
     => '<button type="button" class="btn btn-sm btn-label-primary mt-3" data-add="' . $tpl . '" data-into="' . $into . '"><i class="ti tabler-plus me-1"></i>' . e($label) . '</button>';
@@ -174,11 +186,20 @@ $addBtn = static fn (string $tpl, string $into, string $label): string
     <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
       <h5 class="card-title mb-0"><span class="sec-no">5</span>Gói nạp</h5><small class="text-body-secondary">Mã gói là thứ shop gửi sang trong <code>items[].code</code></small></div>
     <div class="card-body">
-      <div class="rep-head cols-pk"><span>Mã gói</span><span>Tên gói</span><span>Chữ OCR để dò</span><span>Giá hiển thị</span><span>Giới hạn mua</span><span>SL tối đa</span><span>Bán</span><span></span></div>
+      <?php if (!empty($wallets)): ?>
+      <div class="row g-4 mb-5">
+        <div class="col-md-6 col-xl-4"><label class="form-label" for="pool-cur">Loại tiền dùng trong pool</label>
+          <input class="form-control mono" id="pool-cur" type="text" name="currencies" value="<?= e($pool['currencies_raw'] ?? implode(', ', $cfg['currencies'])) ?>" placeholder="JPY, CHF" autocomplete="off">
+          <input type="hidden" name="pk_currencies" value="<?= e(implode(',', $curCols)) ?>"></div>
+        <div class="col-md-6 col-xl-8 d-flex align-items-end"><div class="form-text mb-md-2">Mã ISO 3 chữ cái, ngăn bằng dấu phẩy / khoảng trắng — mỗi loại là một vùng App Store của các tài khoản Apple trên máy. Mỗi gói có <b>giá</b> và <b>chữ giá hiện trên máy</b> theo từng loại tiền; máy có ví chỉ nhận đơn khi mọi gói của đơn có giá ở loại tiền của ví. Thêm loại tiền thì <b>lưu xong</b> mới hiện cột giá; bỏ một loại tiền là xoá giá loại đó.</div></div>
+      </div>
+      <?php endif; ?>
+      <div class="rep-head cols-pk"><span>Mã gói</span><span>Tên gói</span><span>Chữ OCR để dò</span><span>Chữ giá (mặc định, khi không có giá theo loại tiền)</span><span>Giới hạn mua</span><span>SL tối đa</span><span>Bán</span><span></span></div>
       <div class="rep" id="rep-pk"><?php foreach ($pool['pk'] as $p) { echo $rowPk($p); } ?></div>
       <?= $addBtn('tpl-pk', 'rep-pk', 'Thêm gói') ?>
-      <div class="form-text mt-3"><b>Chữ OCR</b>: chữ in trên ô gói trong game để tool dò đúng gói — nhiều cách viết thì ngăn bằng <code>|</code> (vd <code>1050|1,050</code>). <b>Giá hiển thị</b> giúp phân biệt khi hai gói trùng tên.
-        <b>Giới hạn mua</b>: gói «chỉ 1 lần» thì một đơn chỉ đặt được số lượng 1; nếu tài khoản đã mua từ trước, tool báo gói đó <code>unavailable</code>. <b>SL tối đa</b> = 0 là không giới hạn.</div>
+      <div class="form-text mt-3"><b>Chữ OCR</b>: chữ in trên ô gói trong game để tool dò đúng gói — nhiều cách viết thì ngăn bằng <code>|</code> (vd <code>1050|1,050</code>). <b>Chữ giá</b> giúp phân biệt khi hai gói trùng tên; máy có ví thì dùng <b>chữ hiện trên máy</b> của đúng loại tiền (để trống thì dùng chữ giá mặc định).
+        <b>Giá theo loại tiền</b>: số tiền một gói trừ vào ví (viết <code>1500</code> / <code>1.500</code> cho JPY, <code>63.00</code> / <code>63,00</code> cho CHF; để trống = chưa có giá loại đó). Đơn đã giao máy giữ giá lúc giao — sửa giá không đổi tiền của đơn đó.
+        <b>Giới hạn mua</b>: gói «chỉ 1 lần» thì một đơn chỉ đặt được số lượng 1, và <b>mỗi tài khoản game của khách chỉ mua được một lần</b> (đơn thứ hai bị từ chối <code>already_bought</code>; đơn trước thất bại / huỷ / quá hạn thì mua lại được). <b>SL tối đa</b> = 0 là không giới hạn.</div>
     </div>
   </div>
 

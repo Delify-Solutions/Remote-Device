@@ -43,6 +43,14 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// chọn khoá Tool → ô tên máy gợi ý đúng các máy của khoá đó (vẫn gõ tự do được)
+document.addEventListener('change', (e) => {
+  const sel = e.target.closest('[data-devlist]');
+  if (!sel) return;
+  const input = document.querySelector(sel.dataset.devlist);
+  if (input) input.setAttribute('list', 'dl-dev-' + sel.value);
+});
+
 // hộp xác nhận cho thao tác khó đảo ngược
 document.addEventListener('submit', (e) => {
   const msg = e.target.dataset.confirm;

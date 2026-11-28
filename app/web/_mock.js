@@ -104,7 +104,7 @@
     json: JSON.stringify({ mcpServers: { "iphone-farm": { command: "/duong/dan/Remote-Device/farm", args: ["mcp"] } } }, null, 2),
     tools: AI_TOOLS.map(([name, cli, help, read_only]) => ({ name, cli, help, read_only })),
   });
-  const TG = { token: "", chat: "", events: ["paused", "review", "failed", "link"] };
+  const TG = { token: "", chat: "", events: ["paused", "review", "failed", "link", "wallet"] };
   const AIS = { provider: "anthropic", enabled: true, p: { anthropic: { key: "", model: "", base_url: "" }, openai: { key: "", model: "", base_url: "" } } };
   window.pywebview = { api: {
     sys_overview: () => P(OV),
@@ -179,7 +179,8 @@
     gateway_test: () => P({ ok: true, key: "iPhone Farm (demo)" }),
     telegram_get: () => P({ has_token: !!TG.token, token_hint: TG.token ? TG.token.split(":")[0] + ":…" : "", chat: TG.chat, events: TG.events,
                             all_events: [{ key: "paused", label: "Máy dừng chờ admin" }, { key: "review", label: "Đơn cần đối soát" },
-                                         { key: "failed", label: "Bước lỗi / kịch bản dừng" }, { key: "link", label: "Board / Bluetooth mất kết nối" }],
+                                         { key: "failed", label: "Bước lỗi / kịch bản dừng" }, { key: "link", label: "Board / Bluetooth mất kết nối" },
+                                         { key: "wallet", label: "Ví tài khoản Apple không đủ tiền" }],
                             last_error: "", sent: 0 }),
     telegram_save: (token, chat, events) => { if (token) TG.token = token; if (chat != null) TG.chat = chat; if (events) TG.events = events;
                                              return P({ ok: true, has_token: !!TG.token, chat: TG.chat, events: TG.events }); },

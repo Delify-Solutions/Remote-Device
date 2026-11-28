@@ -75,7 +75,17 @@ final class Admin
             }
             if ($m === 'POST' && $id && $act === 'resolve') {
                 $to = (string) Req::post('to', '');
-                Jobs::adminResolve($id, $to, $user['username'])
+                $job = Jobs::byId($id);
+                $charge = null;
+                if ($job && $to === 'done' && Wallets::enabled() && ($job['wallet_state'] ?? null) === 'held') {
+                    // đơn đang tạm giữ ví: admin nhập số tiền THẬT đã bị trừ ở tài khoản Apple
+                    [$charge, $err] = Jobs::chargeInput($job, (string) Req::post('charge', ''));
+                    if ($err !== null) {
+                        Flash::set($err, 'bad');
+                        Res::redirect('/admin/jobs/' . $id);
+                    }
+                }
+                Jobs::adminResolve($id, $to, $user['username'], $charge, (string) Req::post('note', ''))
                     ? Flash::set($to === 'done' ? 'Đã chốt: ĐÃ NẠP ĐỦ → hoàn tất đơn.' : 'Đã chốt: CHƯA NẠP → báo shop thất bại.')
                     : Flash::set('Không chốt được (đơn không còn ở trạng thái chờ đối soát).', 'bad');
                 Res::redirect('/admin/jobs/' . $id);
@@ -86,6 +96,9 @@ final class Admin
                 $code === 200 ? Flash::set('Đã huỷ đơn.') : Flash::set('Đơn đã giao cho máy, không huỷ được.', 'bad');
                 Res::redirect('/admin/jobs/' . $id);
             }
+        }
+        if ($a === 'wallets') {
+            self::wallets($user, $m, $s, $id, $act);
         }
         if ($a === 'account') {
             if ($m === 'POST') {
@@ -176,6 +189,7 @@ final class Admin
             'hasShopKey'  => (int) Db::val("SELECT COUNT(*) FROM api_keys WHERE kind='shop'") > 0,
             'hasToolKey'  => (int) Db::val("SELECT COUNT(*) FROM api_keys WHERE kind='tool'") > 0,
             'hasPool'     => (int) Db::val('SELECT COUNT(*) FROM pools') > 0,
+            'lowWallets'  => Wallets::low(),
         ]);
     }
 
@@ -189,12 +203,17 @@ final class Admin
             if (!$pool) {
                 Res::notFound();
             }
+            $prices = Pools::prices($id);
             $pool['pk'] = Pools::packages($id);
+            foreach ($pool['pk'] as &$p) {
+                $p['prices'] = $prices[(int) $p['id']] ?? [];
+            }
+            unset($p);
         } else {
             $pool = ['id' => 0, 'code' => '', 'name' => '', 'game' => '', 'active' => 1, 'cfg' => Pools::defaults(), 'pk' => []];
         }
         view('pool-edit', ['user' => $user, 'nav' => 'pools', 'title' => $pool['id'] ? 'Sửa pool' : 'Tạo pool', 'pool' => $pool, 'error' => $error,
-                           'missing' => $pool['id'] ? Pools::missing($pool) : []]);
+                           'missing' => $pool['id'] ? Pools::missing($pool) : [], 'wallets' => Wallets::enabled()]);
     }
 
     /** Ghép các cột lf_key[], lf_label[]… của form lặp thành danh sách dòng. */
@@ -241,10 +260,25 @@ final class Admin
         foreach (array_keys(Pools::STEP_LISTS) as $list) {
             $config[$list] = self::rows(['type' => $list . '_type', 'value' => $list . '_value', 'note' => $list . '_note', 'optional' => $list . '_optional']);
         }
-        $pk = self::rows(['id' => 'pk_id', 'code' => 'pk_code', 'name' => 'pk_name', 'ocr_text' => 'pk_ocr', 'price_text' => 'pk_price',
-                          'limit_type' => 'pk_limit', 'max_qty' => 'pk_max', 'active' => 'pk_active']);
+        // loại tiền của pool (ô chữ «JPY, CHF…»)
+        $curRaw = (string) Req::post('currencies', '');
+        [$config['currencies'], $curErr] = Pools::parseCurrencies($curRaw);
+        // các loại tiền ĐANG CÓ CỘT giá trong form (danh sách lúc trang được dựng — loại tiền vừa thêm chưa có cột, lưu xong mới hiện)
+        [$cols] = Pools::parseCurrencies((string) Req::post('pk_currencies', ''));
+        $map = ['id' => 'pk_id', 'code' => 'pk_code', 'name' => 'pk_name', 'ocr_text' => 'pk_ocr', 'price_text' => 'pk_price',
+                'limit_type' => 'pk_limit', 'max_qty' => 'pk_max', 'active' => 'pk_active'];
+        foreach ($cols as $c) {
+            $map['pa_' . $c] = 'pp_' . $c . '_amount';
+            $map['pd_' . $c] = 'pp_' . $c . '_display';
+        }
+        $pk = self::rows($map);
         foreach ($pk as &$r) {
             $r['active'] = $r['active'] === '1';
+            $r['prices'] = [];
+            foreach ($cols as $c) {
+                $r['prices'][$c] = ['amount' => $r['pa_' . $c], 'display' => $r['pd_' . $c]];
+                unset($r['pa_' . $c], $r['pd_' . $c]);
+            }
         }
         unset($r);
 
@@ -252,11 +286,13 @@ final class Admin
         $name = (string) Req::post('name', '');
         $game = (string) Req::post('game', '');
         $active = Req::post('active') === '1';
-        $res = Pools::save($id ?: null, $code, $name, $game, $active, $config);
+        $res = $curErr ?? Pools::save($id ?: null, $code, $name, $game, $active, $config);
         $err = is_string($res) ? $res : Pools::savePackages($res, $pk);
         if ($err !== null) {
             $posted = ['id' => is_int($res) ? $res : $id, 'code' => $code, 'name' => $name, 'game' => $game, 'active' => $active ? 1 : 0,
-                       'cfg' => Pools::sanitize($config), 'pk' => $pk];
+                       'cfg' => Pools::sanitize($config), 'pk' => $pk, 'currencies_raw' => $curRaw,
+                       // danh sách loại tiền gõ sai → giữ nguyên các cột giá đang có để không mất giá vừa nhập
+                       'pk_cols' => $curErr !== null ? $cols : $config['currencies']];
             self::poolForm($user, $posted['id'] ?: null, $posted, $err);
         }
         Flash::set('Đã lưu pool «' . clean($name, 160) . '».');
@@ -346,10 +382,13 @@ final class Admin
         $per = 30;
         $total = (int) Db::val('SELECT COUNT(*) FROM jobs j' . $w, $args);
         $page = max(1, min((int) (Req::q('page') ?? 1), max(1, (int) ceil($total / $per))));
-        $rows = Db::all('SELECT j.*, p.name AS pool_name, (SELECT COUNT(*) FROM job_images i WHERE i.job_id=j.id) AS images
-                         FROM jobs j LEFT JOIN pools p ON p.id=j.pool_id' . $w . ' ORDER BY j.id DESC LIMIT ' . $per . ' OFFSET ' . (($page - 1) * $per), $args);
+        $wallets = Wallets::enabled();
+        $rows = Db::all('SELECT j.*, p.name AS pool_name, (SELECT COUNT(*) FROM job_images i WHERE i.job_id=j.id) AS images'
+                         . ($wallets ? ', w.apple_account' : '') . '
+                         FROM jobs j LEFT JOIN pools p ON p.id=j.pool_id' . ($wallets ? ' LEFT JOIN wallets w ON w.id=j.wallet_id' : '')
+                         . $w . ' ORDER BY j.id DESC LIMIT ' . $per . ' OFFSET ' . (($page - 1) * $per), $args);
         view('jobs', ['user' => $user, 'nav' => 'jobs', 'title' => 'Đơn nạp', 'rows' => $rows, 'total' => $total, 'page' => $page, 'per' => $per,
-                      'status' => $status, 'pool' => $pool, 'q' => $q, 'pools' => Db::all('SELECT id, name FROM pools ORDER BY name')]);
+                      'status' => $status, 'pool' => $pool, 'q' => $q, 'pools' => Db::all('SELECT id, name FROM pools ORDER BY name'), 'wallets' => $wallets]);
     }
 
     private static function job(array $user, int $id): never
@@ -368,7 +407,93 @@ final class Admin
             'images' => Jobs::images($id),
             'events' => Db::all('SELECT * FROM job_events WHERE job_id=? ORDER BY id', [$id]),
             'hooks' => Db::all('SELECT * FROM webhooks WHERE job_id=? ORDER BY id', [$id]),
+            'wallet' => !empty($job['wallet_id']) ? Wallets::find((int) $job['wallet_id']) : null,
+            'ledger' => Wallets::forJob($id),
         ]);
+    }
+
+    /* ---------- ví tài khoản Apple ---------- */
+    private static function wallets(array $user, string $m, array $s, int $id, string $act): never
+    {
+        if (!Wallets::enabled()) {
+            Flash::set('Gateway cần cập nhật CSDL để dùng ví: chạy php bin/setup.php', 'bad');
+            Res::redirect('/admin');
+        }
+        $actor = 'admin:' . $user['username'];
+        if ($m === 'POST' && ($s[1] ?? '') === 'create') {
+            $cur = Money::currency(Req::post('currency', ''));
+            $rawInit = trim((string) Req::post('balance', ''));
+            // loại tiền sai thì chưa đọc được số dư — Wallets::create báo lỗi loại tiền
+            $init = ($cur === null || $rawInit === '') ? 0 : Money::parse($rawInit, $cur);
+            $res = $init === null ? 'Số dư ban đầu không hợp lệ' . (Money::decimals((string) $cur) === 0 ? ' (' . $cur . ' không có phần lẻ).' : '.')
+                : Wallets::create((int) Req::post('tool_key_id', '0'), (string) Req::post('device', ''), (string) Req::post('apple_account', ''),
+                                  (string) Req::post('currency', ''), $init, (string) Req::post('note', ''), $actor);
+            if (is_string($res)) {
+                Flash::set($res, 'bad');
+                Res::redirect('/admin/wallets');
+            }
+            Flash::set('Đã thêm ví — máy này từ giờ chỉ nhận đơn mà ví đủ tiền.');
+            Res::redirect('/admin/wallets/' . $res);
+        }
+        if ($m === 'POST' && $id) {
+            $w = Wallets::find($id);
+            if (!$w) {
+                Res::notFound();
+            }
+            $back = (string) Req::post('back', '') === 'list' ? '/admin/wallets' : '/admin/wallets/' . $id;
+            $err = null;
+            if ($act === 'topup' || $act === 'adjust') {
+                $amount = Money::parse((string) Req::post('amount', ''), (string) $w['currency'], $act === 'adjust');
+                if ($amount === null) {
+                    $err = 'Số tiền không hợp lệ' . (Money::decimals((string) $w['currency']) === 0 ? ' (' . $w['currency'] . ' không có phần lẻ).' : '.');
+                } else {
+                    $err = $act === 'topup' ? Wallets::topup($id, $amount, (string) Req::post('note', ''), $actor)
+                                            : Wallets::adjust($id, $amount, (string) Req::post('note', ''), $actor);
+                }
+                if ($err === null) {
+                    Flash::set(($act === 'topup' ? 'Đã nạp thêm ' : 'Đã chỉnh số dư ') . Money::fmt($amount, (string) $w['currency']) . '.');
+                }
+            } elseif ($act === 'toggle') {
+                $on = !(int) $w['active'];
+                $err = Wallets::setActive($id, $on);
+                if ($err === null) {
+                    Flash::set($on ? 'Đã dùng lại ví — các ví khác của máy ' . $w['device'] . ' thôi dùng.' : 'Đã ngừng dùng ví — máy ' . $w['device'] . ' nhận đơn như máy không có ví.');
+                }
+            } else {
+                Res::notFound();
+            }
+            if ($err !== null) {
+                Flash::set($err, 'bad');
+            }
+            Res::redirect($back);
+        }
+        if ($m === 'GET' && $id) {
+            $w = Wallets::find($id);
+            if (!$w) {
+                Res::notFound();
+            }
+            $w['held'] = Wallets::held($id);
+            $w['available'] = (int) $w['balance'] - $w['held'];
+            $per = 100;
+            $total = (int) Db::val('SELECT COUNT(*) FROM wallet_entries WHERE wallet_id=?', [$id]);
+            $page = max(1, min((int) (Req::q('page') ?? 1), max(1, (int) ceil($total / $per))));
+            view('wallet', ['user' => $user, 'nav' => 'wallets', 'title' => 'Ví ' . $w['device'], 'w' => $w,
+                            'entries' => Wallets::entries($id, $per, ($page - 1) * $per), 'total' => $total, 'page' => $page, 'per' => $per]);
+        }
+        if ($m === 'GET' && !isset($s[1])) {
+            $devices = [];
+            foreach (Db::all('SELECT tool_key_id, name FROM devices ORDER BY name') as $d) {
+                $devices[(int) $d['tool_key_id']][] = $d['name'];
+            }
+            $currencies = [];
+            foreach (Pools::all() as $p) {
+                $currencies = array_merge($currencies, $p['cfg']['currencies']);
+            }
+            view('wallets', ['user' => $user, 'nav' => 'wallets', 'title' => 'Ví & tài khoản Apple', 'wallets' => Wallets::all(),
+                             'toolKeys' => Db::all("SELECT id, name FROM api_keys WHERE kind='tool' ORDER BY name"), 'devices' => $devices,
+                             'currencies' => array_values(array_unique($currencies))]);
+        }
+        Res::notFound();
     }
 
     /* ---------- tài liệu API (mặc định công khai; DOCS_PUBLIC=false thì phải đăng nhập) ---------- */
@@ -394,6 +519,24 @@ function device_badge(array $d): string
 {
     [, $label, $color, $note] = Tools::state($d);
     return '<span class="badge bg-label-' . $color . '"' . ($note !== '' ? ' title="' . e($note) . '"' : '') . '>' . e($label) . '</span>';
+}
+
+/** Nhãn «tiền của đơn» (jobs.wallet_state). */
+function wallet_state_badge(?string $state): string
+{
+    if ($state === null || $state === '') {
+        return '<span class="badge bg-label-info">chưa tính tiền (đơn đang chạy)</span>';
+    }
+    [$label, $color] = Wallets::STATE[$state] ?? [$state, 'secondary'];
+    return '<span class="badge bg-label-' . $color . '">' . e($label) . '</span>';
+}
+
+/** Ai ghi dòng sổ cái: «admin:tên» → Admin · tên. */
+function ledger_actor(string $actor): string
+{
+    [$who, $name] = array_pad(explode(':', $actor, 2), 2, '');
+    [$label, $color] = ['admin' => ['Admin', 'primary'], 'tool' => ['Tool', 'success'], 'system' => ['Hệ thống', 'secondary']][$who] ?? [$who, 'secondary'];
+    return '<span class="badge bg-label-' . $color . '">' . e($label) . '</span>' . ($name !== '' ? ' <span class="small text-body-secondary">' . e($name) . '</span>' : '');
 }
 
 function nav_counts(): array

@@ -79,6 +79,11 @@ def main():
     cfg.pop("telegram_events")
     w.wait(2)
 
+    old = notify.Telegram(lambda: {"telegram_token": TOKEN, "telegram_chat": "1", "telegram_events": ["paused", "review"]}).config()["events"]
+    new = notify.Telegram(lambda: {"telegram_token": TOKEN, "telegram_chat": "1", "telegram_events": ["paused"], "telegram_events_known": list(notify.EVENTS)}).config()["events"]
+    ok("wallet" in old and "failed" not in old and new == ["paused"],
+       "đã lưu danh sách cũ (trước khi có «Ví không đủ tiền») → loại mới tự BẬT; loại người dùng đã tắt vẫn tắt", (old, new))
+
     print("== 2. Gộp thông báo trùng ==")
     n0 = len(w.reqs)
     ok(t.notify("paused", "M2", ["Lý do: màn hình lạ"]) is True and t.notify("paused", "M2", ["Lý do: màn hình lạ"]) is False
@@ -288,6 +293,32 @@ def main():
             th = threading.Thread(target=Ri._run_api, args=("W1", {"mode": "api", "api": {"pool": "p", "check_keyboard": False}}, wi), daemon=True)
             th.start(); time.sleep(4.0); wi["stop"].set(); th.join(8)      # mỗi lần kiểm Bluetooth hỏi board 3 lần, nghỉ 0,4 s
             ok(len(got) == 1 and got[0][0] == expect and "chưa sẵn sàng" in got[0][2][-1], label + " → báo «mất kết nối» đúng một lần (dù vẫn chưa sẵn sàng)", got)
+        # Ví của máy không đủ tiền (gateway trả wallet_short thay vì đơn) → báo «Ví không đủ tiền» MỘT lần cho mỗi tình trạng
+        short = {"reason": "insufficient", "account": "a***@example.com", "currency": "JPY", "available": 1000000, "need": 4800000,
+                 "package_codes": ["efb-coin-1050"]}
+        seq = [dict(ok=True, job=None, wallet_short=short)] * 3 + [dict(ok=True, job=None)] + [dict(ok=True, job=None, wallet_short=short)] * 2
+
+        class GWw(GWp):
+            def claim(self, device, pool):
+                return seq.pop(0) if seq else {"ok": True, "job": None}
+        got.clear()
+        Rw = runmod.Runner(lambda n: Nn(["ok"]), gateway_factory=lambda: GWw())
+        Rw.NOT_READY_WAIT = Rw.POLL_IDLE = 0.02
+        Rw._ensure_logged_out = lambda *a, **k: "out"
+        Rw.alert = R.alert
+        ww = {"stop": threading.Event(), "abort": threading.Event(), "pause": threading.Event(), "paused": False,
+              "counts": {}, "iter": 0, "group_name": "Nạp", "script_name": "đơn"}
+        th = threading.Thread(target=Rw._run_api, args=("W2", {"mode": "api", "api": {"pool": "p", "check_keyboard": False}}, ww), daemon=True)
+        th.start(); time.sleep(1.5); st_mid = ww.get("status"); ww["stop"].set(); th.join(8)
+        wal = [g for g in got if g[0] == "wallet"]
+        ok(len(wal) == 2 and "400.000 JPY" not in wal[0][2][-1] and "10.000 JPY" in wal[0][2][-1] and "48.000 JPY" in wal[0][2][-1]
+           and "a***@example.com" in wal[0][2][-1] and "efb-coin-1050" in wal[0][2][-1],
+           "ví không đủ tiền → báo «Ví không đủ tiền» một lần (không báo lại mỗi lần xin đơn); hết rồi lại thiếu → báo lại", [g[2][-1] for g in wal])
+        ok("Chờ đơn" in (st_mid or ""), "trạng thái máy lúc đó: chờ đơn", st_mid)
+        short2 = dict(short, reason="no_price", package_codes=["efb-coin-100"])
+        ok("chưa có giá" in runmod.Runner._wallet_why(short2) and "JPY" in runmod.Runner._wallet_why(short2), "gói chưa có giá theo loại tiền của ví → nói rõ")
+        ok(notify.money(40000000, "JPY") == "400.000 JPY" and notify.money(80, "CHF") == "0,80 CHF" and notify.money("x", "JPY") == "?",
+           "hiển thị tiền (đơn vị ×100): yên không có phần lẻ, CHF có 2 số lẻ")
     finally:
         apimode.effective_steps, apimode.validate, boardhealth.recover, runmod.Runner._ensure_logged_out = saved
     got.clear()
@@ -402,7 +433,8 @@ def main():
         r = api.telegram_save("không-phải-mã", "-100123", [])
         ok(r.get("ok") is False and "telegram_token" not in mem, "mã bot sai dạng → không lưu", r)
         r = api.telegram_save(TOKEN, "-100123456", ["paused", "la"])
-        ok(r.get("ok") and mem.get("telegram_token") == TOKEN and mem.get("telegram_events") == ["paused"] and TOKEN not in json.dumps(r),
+        ok(r.get("ok") and mem.get("telegram_token") == TOKEN and mem.get("telegram_events") == ["paused"] and TOKEN not in json.dumps(r)
+           and mem.get("telegram_events_known") == list(notify.EVENTS),
            "lưu mã bot + chat id + loại sự kiện; lệnh trả về KHÔNG chứa mã bot", r)
         r = api.telegram_save("", "@kenh_admin", None)
         ok(r.get("ok") and mem.get("telegram_token") == TOKEN and mem.get("telegram_chat") == "@kenh_admin", "để trống mã bot = giữ mã cũ", r)

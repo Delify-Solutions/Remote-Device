@@ -37,12 +37,13 @@ $filtered = $status || $pool || $q !== '';
   </div>
 <?php if (!$rows): ?><div class="empty">Không có đơn nào.</div><?php else: ?>
   <div class="table-responsive">
-  <table class="table table-hover mb-0"><thead><tr><th>Mã đơn (shop)</th><th>Pool</th><th>Tài khoản</th><th>Trạng thái</th><th>Máy</th><th>Ảnh</th><th>Tạo lúc</th><th>Cập nhật</th></tr></thead><tbody>
+  <table class="table table-hover mb-0"><thead><tr><th>Mã đơn (shop)</th><th>Pool</th><th>Tài khoản</th><?php if ($wallets): ?><th>Tài khoản Apple</th><?php endif; ?><th>Trạng thái</th><th>Máy</th><th>Ảnh</th><th>Tạo lúc</th><th>Cập nhật</th></tr></thead><tbody>
   <?php foreach ($rows as $j): ?>
     <tr>
       <td><a class="fw-medium" href="/admin/jobs/<?= (int) $j['id'] ?>"><?= e($j['ref']) ?></a><div class="mono small text-body-secondary"><?= e($j['pid']) ?></div></td>
       <td class="small"><?= e($j['pool_name']) ?></td>
       <td class="mono small"><?= e($j['account_hint'] ?: '—') ?></td>
+      <?php if ($wallets): ?><td class="small"><?= !empty($j['apple_account']) ? e(Wallets::mask((string) $j['apple_account'])) . ' <span class="text-body-secondary mono">' . e($j['currency']) . '</span>' : '<span class="text-body-secondary">—</span>' ?></td><?php endif; ?>
       <td><?= status_badge($j['status']) ?>
         <?php if ($j['status'] === 'review' && $j['review_reason']): ?><div class="small text-body-secondary"><?= e(Jobs::REVIEW_REASON[$j['review_reason']] ?? $j['review_reason']) ?></div>
         <?php elseif (in_array($j['status'], ['running', 'claimed'], true) && $j['stage']): ?><div class="small text-body-secondary mono"><?= e($j['stage']) ?></div><?php endif; ?></td>

@@ -19,8 +19,26 @@ EVENTS = {
     "review": "Đơn cần đối soát",
     "failed": "Bước lỗi / kịch bản dừng",
     "link": "Board / Bluetooth mất kết nối",
+    "wallet": "Ví tài khoản Apple không đủ tiền",
 }
-ICON = {"paused": "⏸", "review": "🧾", "failed": "⛔", "link": "🔌"}
+OLD_EVENTS = ("paused", "review", "failed", "link")      # các loại đã có trước khi lưu kèm danh sách «đã biết» (telegram_events_known)
+ICON = {"paused": "⏸", "review": "🧾", "failed": "⛔", "link": "🔌", "wallet": "💰"}
+ZERO_DECIMAL = ("JPY", "KRW", "VND", "IDR", "CLP", "TWD", "HUF", "ISK")      # tiền không có phần lẻ khi hiển thị
+
+
+def money(x100, currency) -> str:
+    """Số tiền gateway gửi (đơn vị ×100, số nguyên) → chữ đọc được: 40000000 JPY → «400.000 JPY», 80 CHF → «0,80 CHF»."""
+    try:
+        v = int(x100)
+    except (TypeError, ValueError):
+        return "?"
+    cur = str(currency or "").upper()
+    neg, v = v < 0, abs(v)
+    whole, frac = divmod(v, 100)
+    s = "{:,}".format(whole).replace(",", ".")
+    if cur not in ZERO_DECIMAL:
+        s += ",%02d" % frac
+    return ("-" if neg else "") + s + (" " + cur if cur else "")
 DEDUPE = 600.0          # giây: cùng (loại, máy, nội dung) trong chừng này chỉ gửi một lần
 QUEUE_MAX = 200         # hàng chờ đầy (mạng chết lâu) thì bỏ thông báo mới, không giữ bộ nhớ vô hạn
 TIMEOUT = 15.0
@@ -55,6 +73,11 @@ class Telegram:
         events = s.get("telegram_events")
         if not isinstance(events, list):
             events = list(EVENTS)
+        else:
+            # Loại sự kiện MỚI thêm sau lần lưu cuối (vd «Ví không đủ tiền») tự BẬT: người đã lưu danh sách cũ không bị lặng lẽ mất cảnh báo.
+            known = s.get("telegram_events_known")
+            known = known if isinstance(known, list) else list(OLD_EVENTS)
+            events = list(events) + [e for e in EVENTS if e not in known and e not in events]
         return {"token": str(s.get("telegram_token") or "").strip(), "chat": str(s.get("telegram_chat") or "").strip(),
                 "events": [e for e in events if e in EVENTS]}
 

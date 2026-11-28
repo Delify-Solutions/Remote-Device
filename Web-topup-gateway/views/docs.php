@@ -158,6 +158,7 @@ $H = $top + count($flow) * $rowH + 14;
           <div class="two">
             <?php if (!empty($ep['req'])): ?><?= $code(($ep['reqLang'] ?? '') === 'bash' ? 'Lệnh gọi' : 'Thân gửi lên', $ep['req']) ?><?php endif; ?>
             <?php if (!empty($ep['res'])): ?><?= $code('Phản hồi ' . ($ep['resCode'] ?? 200), $ep['res']) ?><?php endif; ?>
+            <?php if (!empty($ep['res2'])): ?><?= $code($ep['res2'][0], $ep['res2'][1]) ?><?php endif; ?>
           </div>
           <?php if (!empty($ep['errors'])): ?>
           <p class="small text-body-secondary mt-4 mb-0"><b>Lỗi riêng:</b>

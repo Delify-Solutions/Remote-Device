@@ -35,6 +35,11 @@ a.stat-card:hover { transform: translateY(-2px); }
 .cols-st { grid-template-columns: 1.1fr 1.8fr 1.2fr 10.5rem 68px; }
 .cols-pk { grid-template-columns: 1fr 1.5fr 1.4fr .9fr 1.15fr .6fr .75fr 68px; }
 .row-tools { display: inline-flex; gap: 2px; justify-content: flex-end; }
+/* giá gói theo từng loại tiền: một dòng phụ trải hết bề ngang của dòng gói, ô tự xuống hàng khi khung hẹp */
+.pk-prices { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: .5rem; }
+.pp { display: flex; flex-direction: column; gap: .2rem; margin: 0; min-width: 0; }
+.pp-cap { font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; color: var(--bs-secondary-color); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cols-pk:has(.pk-prices) { padding-bottom: .75rem; border-bottom: 1px dashed var(--bs-border-color); }
 .sec-no, .phase-no { display: inline-grid; place-items: center; flex: 0 0 auto; border-radius: 50%; font-weight: 600; background: var(--bs-primary-bg-subtle); color: var(--bs-primary); }
 .sec-no { width: 1.75rem; height: 1.75rem; font-size: .875rem; margin-right: .6rem; }
 .phase-no { width: 1.45rem; height: 1.45rem; font-size: .78rem; margin-right: .5rem; }

@@ -1476,6 +1476,7 @@ class Api:
             patch["telegram_chat"] = ch
         if events is not None:
             patch["telegram_events"] = [e for e in (events or []) if e in notify.EVENTS]
+            patch["telegram_events_known"] = list(notify.EVENTS)     # các loại người dùng ĐÃ THẤY lúc lưu (loại thêm sau này tự bật)
         store.save_settings(patch)
         return dict(self.telegram_get(), ok=True)
 

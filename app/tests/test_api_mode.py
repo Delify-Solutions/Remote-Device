@@ -2194,6 +2194,60 @@ def run_all(gw, rigs):
     ok(rk.runner.start_machine(rk.name, grp_kb, script) is False and not rk.running(), "tiến trình không được nhận đơn (bản web) → kịch bản nhận đơn không khởi động")
     rk.runner.allow_api = True
 
+    print("\n== 34. VÍ tài khoản Apple của máy (gateway thật): giá theo loại tiền, trừ ví khi nạp được, ví không đủ → không nhận đơn ==")
+    for x in rigs:
+        if x.running():
+            x.stop(force=True, wait=5)
+    gw.sql("UPDATE jobs SET status='cancelled' WHERE status='queued'")             # đơn cũ còn trong hàng đợi của các phần trước
+    import notify
+    now = int(time.time())
+    key_id = gw.sql("SELECT id FROM api_keys WHERE kind='tool' AND name='Farm test'")[0][0]
+    pkg = gw.sql("SELECT p.id FROM packages p JOIN pools o ON o.id=p.pool_id WHERE o.code='game-test' AND p.code='coin_1050'")[0][0]
+    gw.sql("INSERT INTO package_prices (package_id, currency, amount, display) VALUES (?, 'JPY', 160000, '¥1,600')", (pkg,))
+    gw.sql("INSERT INTO wallets (tool_key_id, device, apple_account, currency, balance, active, note, created_at, updated_at) "
+           "VALUES (?, 'wallet-01', 'acb@example.com', 'JPY', 400000, 1, '', ?, ?)", (key_id, now, now))   # 4.000 ¥ (×100)
+    wid = gw.sql("SELECT id FROM wallets WHERE device='wallet-01'")[0][0]
+    claims = []
+
+    class ClaimSpy(Gateway):
+        def claim(self, device, pool):
+            r = super().claim(device, pool)
+            claims.append(r)
+            return r
+    gwal = FakeGame(accounts())
+    rw = rig(gwal, name="wallet-01", gateway_cls=ClaimSpy)
+    alerts = []
+    rw.runner.alert = lambda ev, name, lines, photo=None: alerts.append((ev, name, lines))
+    jw = gw.new_job("T-WAL1", "a@test.vn", "PassA#1", [{"code": "coin_1050", "qty": 2}])
+    rw.start()
+    jobw = gw.wait_job(jw, ("done", "failed", "review"))
+    got_job = next((c["job"] for c in claims if c.get("job")), None) or {}
+    it = (got_job.get("items") or [{}])[0]
+    ok(jobw["status"] == "done" and it.get("price_text") == "¥1,600" and it.get("price") == 160000 and it.get("currency") == "JPY"
+       and (got_job.get("wallet") or {}).get("account", "").endswith("@example.com") and "acb@" not in json.dumps(got_job.get("wallet")),
+       "máy có ví JPY: đơn giao kèm chữ giá ĐÚNG loại tiền của máy (¥1,600) + giá; tài khoản Apple đã che", (jobw["status"], it, got_job.get("wallet")))
+    bal = gw.sql("SELECT balance FROM wallets WHERE id=?", (wid,))[0][0]
+    ent = gw.sql("SELECT kind, amount, balance_after, package_code, qty FROM wallet_entries WHERE wallet_id=? AND job_pid=?", (wid, jw))
+    ok(bal == 400000 - 2 * 160000 and ent == [("purchase", -320000, 80000, "coin_1050", 2)],
+       "nạp được 2 gói → ví trừ đúng 2 × 1.600 ¥, sổ ghi đơn nào / gói nào / tài khoản nào trả", (bal, ent))
+    ok("acb@" not in rw.text(), "nhật ký tool không có tài khoản Apple trần (gateway đã che)", rw.text()[-200:])
+    ok(any("tài khoản Apple" in e["text"] and "JPY" in e["text"] for e in rw.logs), "nhật ký máy ghi tài khoản Apple nào thanh toán đơn", rw.text()[-300:])
+    jw2 = gw.new_job("T-WAL2", "a@test.vn", "PassA#1", [{"code": "coin_1050", "qty": 1}])         # cần 1.600 ¥, ví còn 800 ¥
+    ok(wait_until(lambda: any(a[0] == "wallet" for a in alerts), 15), "ví không đủ → báo Telegram «Ví không đủ tiền»", alerts)
+    time.sleep(1.5)
+    wal = [a for a in alerts if a[0] == "wallet"]
+    ok(gw.job(jw2)["status"] == "queued" and len(wal) == 1 and "800 JPY" in wal[0][2][-1] and "1.600 JPY" in wal[0][2][-1]
+       and len(gwal.purchases) == 2, "…KHÔNG nhận đơn (đơn vẫn chờ máy khác), báo đúng một lần với số dư 800 JPY / cần 1.600 JPY, không mua gì thêm",
+       (gw.job(jw2)["status"], [a[2][-1] for a in wal]))
+    ok("ví" in (rw.status().get("status") or "").lower(), "trạng thái máy nói rõ ví không đủ", rw.status().get("status"))
+    gw.sql("UPDATE wallets SET balance=balance+1000000 WHERE id=?", (wid,))           # admin nạp thêm 10.000 ¥ vào ví
+    jobw2 = gw.wait_job(jw2, ("done", "failed", "review"))
+    ok(jobw2["status"] == "done" and gw.sql("SELECT balance FROM wallets WHERE id=?", (wid,))[0][0] == 80000 + 1000000 - 160000,
+       "nạp thêm tiền vào ví → máy tự nhận lại đơn, trừ đúng", jobw2["status"])
+    rw.stop()
+    gw.sql("UPDATE wallets SET active=0 WHERE id=?", (wid,))
+    gw.sql("DELETE FROM package_prices WHERE package_id=?", (pkg,))
+
     print("\n== 16. Bí mật không lọt vào nhật ký ==")
     everything = " ".join(x.text() for x in rigs)
     leaked = [s for s in ("PassA#1", "PassB#2", "PassC#3", "SaiMatKhau", "654321", "111111") if s in everything]

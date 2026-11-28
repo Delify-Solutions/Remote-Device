@@ -39,6 +39,24 @@ $stats = [
 
 <?php if ($whFailed): ?><div class="alert alert-warning" role="alert"><i class="ti tabler-alert-triangle me-1"></i>Có <b><?= $whFailed ?></b> webhook gửi về shop THẤT BẠI trong 24 giờ qua — kiểm tra Webhook URL ở trang <a class="alert-link" href="/admin/keys">Khoá API</a>. Shop vẫn đọc được trạng thái bằng <code>GET /api/shop/jobs/{id}</code>.</div><?php endif; ?>
 
+<?php if ($lowWallets): ?>
+<div class="card border border-warning mb-6">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <h5 class="card-title mb-0"><i class="ti tabler-wallet text-warning me-1"></i>Ví sắp hết tiền</h5><a href="/admin/wallets" class="small">Ví &amp; tài khoản Apple <i class="ti tabler-chevron-right icon-xs"></i></a>
+  </div>
+  <div class="table-responsive">
+    <table class="table mb-0"><thead><tr><th>Máy</th><th>Tài khoản Apple</th><th class="text-end">Còn dùng được</th><th class="text-end">Gói đắt nhất</th></tr></thead><tbody>
+    <?php foreach ($lowWallets as $w): ?>
+      <tr><td><span class="fw-medium text-heading"><?= e($w['device']) ?></span><div class="small text-body-secondary"><?= e($w['key_name'] ?? '') ?></div></td>
+        <td><a href="/admin/wallets/<?= (int) $w['id'] ?>"><?= e($w['apple_account']) ?></a></td>
+        <td class="text-end text-nowrap fw-medium text-warning"><?= e(Money::fmt($w['available'], (string) $w['currency'])) ?></td>
+        <td class="text-end text-nowrap"><?= e(Money::fmt($w['need'], (string) $w['currency'])) ?></td></tr>
+    <?php endforeach; ?></tbody></table>
+  </div>
+  <div class="card-body pt-3 pb-4"><p class="small text-body-secondary mb-0">Các máy này không nhận được đơn có gói đắt hơn số tiền còn dùng được — nạp thêm tiền cho tài khoản Apple rồi ghi vào ví.</p></div>
+</div>
+<?php endif; ?>
+
 <div class="row g-6">
   <div class="col-xl-6">
     <div class="card h-100">

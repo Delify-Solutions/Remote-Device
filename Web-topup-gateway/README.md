@@ -84,6 +84,18 @@ Gateway đặt ngoài Internet, tool nằm trong mạng nội bộ → **gateway
 - Bản cài cũ: chạy lại `php bin/setup.php` để áp migration 3–4 (thêm bảng `tool_scripts` + vài cột cho `devices`, `api_keys`, `tool_scripts.pool_code`; không đổi dữ liệu cũ). Chưa áp đủ thì `/api/tool/sync` trả `503 needs_migration`, các phần khác vẫn chạy.
 - **Mỗi bản cài tool dùng một khoá Tool riêng**: hai tool chung một khoá sẽ ghi đè danh sách máy / kịch bản của nhau. (Trong MỘT bản cài, app cửa sổ và bản web mở cùng lúc thì chỉ một bên báo — tool tự khoá.)
 
+## Ví tài khoản Apple + giá gói theo loại tiền (`/admin/wallets`)
+
+Mỗi máy nạp trả tiền bằng một tài khoản Apple. Admin khai **ví** cho từng máy (khoá Tool + tên máy đúng như trong tool): tài khoản Apple, loại tiền (ISO-4217, vd `JPY`, `CHF`), số dư. Mọi số tiền lưu là **số nguyên = số tiền × 100** (1.500 JPY → `150000`, 63,00 CHF → `6300`), không bao giờ dùng số thực.
+
+- **Pool → «Loại tiền dùng trong pool»** + mỗi gói có **giá** và **chữ giá hiện trên máy** theo từng loại tiền (bảng `package_prices`). Ô «Chữ giá (mặc định…)» cũ vẫn dùng cho máy không có ví / loại tiền chưa khai chữ.
+- **Máy có ví đang dùng** chỉ nhận đơn mà *chi phí ≤ còn dùng được* (chi phí = Σ số lượng × giá hiện tại ở loại tiền của ví; còn dùng được = số dư − tạm giữ). Đơn quá giá / gói chưa có giá loại tiền đó thì bỏ qua cho máy khác; không đơn nào giao được thì `claim` trả `wallet_short` để tool báo admin. Đơn giao xong mang theo đơn giá lúc giao (`items[].price`, `currency`), chữ giá đúng vùng (`price_text`) và `job.wallet` (tài khoản đã che). **Máy không có ví** nhận đơn y như trước.
+- **Tính tiền theo kết quả**: `done` → dòng «mua gói» = số đã mua × đơn giá lúc giao (sửa giá sau đó không đổi tiền của đơn đã giao) · `failed` → không trừ · `review` (tool không chắc, báo xong thiếu ảnh, tool im lặng quá lâu) → **tạm giữ** cả chi phí, số dư chưa đổi. Admin chốt đơn chờ đối soát: «đã nạp» → nhập số tiền thật đã bị trừ (0 → 10× chi phí) → dòng «trừ khi đối soát»; «chưa nạp» → nhả tạm giữ. Báo muộn / bấm hai lần không bao giờ trừ hai lần.
+- **Sổ cái chỉ ghi thêm** (`wallet_entries`): nạp tiền · chỉnh số dư (bắt buộc lý do) · mua gói · tạm giữ · nhả · trừ khi đối soát — kèm đơn, gói, số lượng, ai ghi. Số dư luôn bằng tổng các dòng đổi số dư.
+- Mỗi máy chỉ **một ví đang dùng**: thêm ví mới / «Dùng lại» một ví thì các ví khác của máy thôi dùng. «Ngừng dùng» hết thì máy nhận đơn như máy không có ví. Trang Tổng quan nêu ví còn ít hơn giá gói đắt nhất đang bán.
+- **Gói «chỉ 1 lần / tài khoản»** giờ được chặn thật: mỗi tài khoản game của khách (ô chữ bắt buộc, không bí mật đầu tiên — vd email, không phân biệt hoa/thường; pool không có ô như vậy thì gộp tất cả ô không bí mật) chỉ mua được một lần trong một pool — đơn sau trả `422 already_bought` (đơn trước thất bại / huỷ / quá hạn thì mua lại được). Gateway chỉ lưu mã băm có khoá `HMAC-SHA256(pool:tài khoản, APP_KEY)`, không lưu email thô. **Đổi `APP_KEY` thì mọi giới hạn «1 lần» cũ coi như xoá** (các tài khoản đã mua lại mua được).
+- Bản cài cũ: chạy lại `php bin/setup.php` để áp migration 5 (3 bảng mới + vài cột cho `jobs`; không đổi dữ liệu cũ).
+
 ## Nguyên tắc tiền (đã cài cứng trong mã, có test)
 
 1. Một `ref` của shop = đúng **một** đơn (gửi lại không tạo đơn mới).
@@ -97,7 +109,7 @@ Gateway đặt ngoài Internet, tool nằm trong mạng nội bộ → **gateway
 ```bash
 php bin/test-flow.php     # dựng gateway + máy nhận webhook giả trên SQLite tạm, đóng vai shop & tool qua HTTP
 ```
-Kiểm: xác thực, cấu hình pool (6 danh sách bước, cờ bỏ qua nếu lỗi), tạo đơn/idempotent, chạy đua nhận việc, OTP (kể cả chờ long-poll, sai mã, hết lượt), ảnh, kết quả + xung đột 409, báo muộn, huỷ, đối soát, quá hạn, webhook có chữ ký, trang quản trị, và `POST /api/tool/sync` (máy rảnh ở kịch bản nào, danh mục chỉ gửi khi đổi, lời báo cũ không còn được tin, không đụng tới đơn, hai khoá Tool không lẫn dữ liệu).
+Kiểm: xác thực, cấu hình pool (6 danh sách bước, cờ bỏ qua nếu lỗi), tạo đơn/idempotent, chạy đua nhận việc, OTP (kể cả chờ long-poll, sai mã, hết lượt), ảnh, kết quả + xung đột 409, báo muộn, huỷ, đối soát, quá hạn, webhook có chữ ký, trang quản trị, ví tài khoản Apple (giao đơn theo số dư + giá theo loại tiền, mua / tạm giữ / chốt đối soát, không trừ hai lần, gói 1 lần / tài khoản kể cả khi gửi cùng lúc), và `POST /api/tool/sync` (máy rảnh ở kịch bản nào, danh mục chỉ gửi khi đổi, lời báo cũ không còn được tin, không đụng tới đơn, hai khoá Tool không lẫn dữ liệu).
 
 Test **cả hai đầu** (tool thật ↔ gateway thật, iPhone giả lập) nằm ở phía tool — chạy từ gốc repo:
 
@@ -114,7 +126,7 @@ Test **cả hai đầu** (tool thật ↔ gateway thật, iPhone giả lập) n�
 |---|---|
 | Lõi: env, DB, mã hoá, request/response, phiên admin, CSRF, giới hạn tần suất, lưu ảnh | `src/core.php` |
 | Bảng & migration (MySQL + SQLite) | `src/schema.php` |
-| Nghiệp vụ: pool/gói, khoá, máy, **máy rảnh + danh mục kịch bản do tool tự báo** (`Tools`), **vòng đời đơn**, OTP, webhook | `src/repo.php` |
+| Nghiệp vụ: pool/gói, khoá, máy, **máy rảnh + danh mục kịch bản do tool tự báo** (`Tools`), **ví tài khoản Apple + sổ cái** (`Money`, `Wallets`), **vòng đời đơn**, OTP, webhook | `src/repo.php` |
 | API shop / tool, file ảnh, cron HTTP | `src/api.php` |
 | **Mô tả API cho /docs** (sửa API thì sửa ở đây cùng lúc) | `src/spec.php` |
 | Trang quản trị | `src/admin.php`, `views/` (khung trang: `views/layout.php`) |

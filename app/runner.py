@@ -69,6 +69,17 @@ class Runner:
         # (loại, tên máy, các dòng nội dung, ảnh JPEG | None) -> None: bắn thông báo cho admin (notify.Telegram.notify). None = không bắn.
         self.alert = None
 
+    @staticmethod
+    def _wallet_why(short):
+        """Câu báo «ví không đủ» từ `wallet_short` của gateway (không chứa dữ liệu khách; tài khoản Apple đã được gateway che)."""
+        import notify
+        acc, cur = short.get("account") or "?", short.get("currency") or ""
+        codes = ", ".join(str(c) for c in (short.get("package_codes") or [])[:5])
+        if short.get("reason") == "no_price":
+            return "gói %s chưa có giá theo loại tiền %s của ví tài khoản Apple %s (khai giá ở trang Pool của gateway)" % (codes or "?", cur or "?", acc)
+        return "ví tài khoản Apple %s còn %s, không đủ cho đơn cần %s%s" % (
+            acc, notify.money(short.get("available"), cur), notify.money(short.get("need"), cur), (" (gói %s)" % codes) if codes else "")
+
     SCREEN_ALERT_JPEG = 70
 
     def _screen_helper(self, name, w):
@@ -762,9 +773,29 @@ class Runner:
                 continue
             job = r.get("job")
             if not job:
-                status("Chờ đơn")
+                short = r.get("wallet_short") if isinstance(r.get("wallet_short"), dict) else None
+                if short:
+                    # Có đơn nhưng gateway không giao cho máy này vì VÍ (tài khoản Apple trên máy) không đủ tiền / gói chưa có giá theo loại
+                    # tiền của ví: đơn để máy khác nhận. Báo admin MỘT lần cho mỗi tình trạng (không báo lại mỗi lần xin đơn).
+                    why = self._wallet_why(short)
+                    status("Chờ đơn — " + why)
+                    sig = (short.get("reason"), short.get("account"), short.get("currency"), tuple(short.get("package_codes") or ()))
+                    if w.get("wallet_short") != sig:
+                        w["wallet_short"] = sig
+                        say("Không nhận đơn: " + why, "warn")
+                        self._alert(name, "wallet", why + " — đơn để máy khác nhận; nạp thêm tiền vào ví (trang «Ví & tài khoản Apple» của gateway)", w)
+                else:
+                    w["wallet_short"] = None
+                    status("Chờ đơn")
                 stop.wait(self.POLL_IDLE)
                 continue
+            w["wallet_short"] = None
+            wl = job.get("wallet") if isinstance(job.get("wallet"), dict) else None
+            if wl:
+                import notify
+                say("Đơn %s — thanh toán bằng tài khoản Apple %s (%s), ví còn %s" % (
+                    job.get("ref") or job.get("id"), wl.get("account") or "?", wl.get("currency") or "?",
+                    notify.money(wl.get("available", wl.get("balance")), wl.get("currency"))))
 
             clean = False         # sắp đụng vào game → phải kiểm lại trước đơn sau
             outcome = self._handle_job(name, w, gw, nav, job, bool(r.get("resumed")), pool, steps, opts, abort, say, status)

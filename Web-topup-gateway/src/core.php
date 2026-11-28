@@ -123,6 +123,29 @@ final class Db
         return self::run('UPDATE ' . $table . ' SET ' . $set . ' WHERE ' . $where, array_merge(array_values($data), $params))->rowCount();
     }
 
+    /**
+     * Chạy $fn trong MỘT giao dịch (lỗi → huỷ hết). Đang ở trong giao dịch rồi thì chỉ chạy $fn (giao dịch ngoài lo chốt / huỷ).
+     * SQLite: lệnh ĐẦU TIÊN trong $fn nên là lệnh ghi (UPDATE có điều kiện…) để giữ quyền ghi ngay từ đầu.
+     */
+    public static function tx(callable $fn): mixed
+    {
+        $pdo = self::pdo();
+        if ($pdo->inTransaction()) {
+            return $fn();
+        }
+        $pdo->beginTransaction();
+        try {
+            $r = $fn();
+            $pdo->commit();
+            return $r;
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
     public static function isDuplicate(Throwable $e): bool
     {
         return $e instanceof PDOException && (string) $e->getCode() === '23000';
