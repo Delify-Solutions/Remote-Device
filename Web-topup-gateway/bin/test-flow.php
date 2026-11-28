@@ -1039,6 +1039,160 @@ foreach (Db::all("SELECT pid FROM jobs WHERE pool_id=? AND status='queued'", [$w
     http('POST', '/api/shop/jobs/' . $q['pid'] . '/cancel', $SK);
 }
 
+echo "\n== Quản lý đơn: tạo đơn thử, xem / sửa / đổi trạng thái / xoá ==\n";
+$ac = $wc;
+$ac['currencies'] = ['JPY'];
+$ac['require_image'] = false;
+$apId = Pools::save(null, 'admin-pool', 'Pool quản trị', 'Game', true, $ac);
+Pools::savePackages($apId, [
+    ['code' => 'g1', 'name' => 'Gói A', 'limit_type' => 'multi', 'max_qty' => 5, 'active' => true, 'prices' => ['JPY' => ['amount' => '1000', 'display' => '¥1,000']]],
+    ['code' => 'one', 'name' => 'Gói 1 lần', 'limit_type' => 'once', 'active' => true, 'prices' => ['JPY' => ['amount' => '500', 'display' => '']]],
+]);
+$jl = http('GET', '/admin/jobs', null, null, $ah);
+ok($jl['code'] === 200 && str_contains($jl['text'], 'Tạo đơn thử') && str_contains($jl['text'], 'admin-pool') && str_contains($jl['text'], 'tabler-pencil') && str_contains($jl['text'], 'tabler-trash'),
+    'danh sách đơn: nút «Tạo đơn thử» (modal mang cấu hình pool) + nút xem / sửa / xoá từng đơn', $jl['code']);
+$form = static fn (string $path, array $f): array => json_decode($post($path, $f)['text'], true) ?? [];
+$tf = ['pool' => 'admin-pool', 'ref' => 'TEST-1', 'login' => ['username' => 'thu@example.com', 'password' => 'MK cu#1'], 'pk_code' => ['g1', 'one'], 'pk_qty' => ['2', '0'], 'note' => 'thử'];
+$noC = http('POST', '/admin/jobs/create', null, http_build_query($tf), array_merge($ah, ['Content-Type: application/x-www-form-urlencoded']));
+ok($noC['code'] === 419 && (int) Db::val("SELECT COUNT(*) FROM jobs WHERE ref='TEST-1'") === 0, 'tạo đơn thử không có mã CSRF → 419, không tạo gì');
+$c0 = $form('/admin/jobs/create', ['pk_qty' => ['0', '0']] + $tf);
+ok(($c0['ok'] ?? null) === false && str_contains((string) ($c0['error'] ?? ''), 'items'), 'không chọn gói nào → báo lỗi ngay trong modal', $c0);
+$c1 = $form('/admin/jobs/create', $tf);
+$T1 = Db::one("SELECT * FROM jobs WHERE ref='TEST-1'");
+$tkey = Keys::find((int) Settings::get('admin_test_key_id', '0'));
+ok(($c1['ok'] ?? false) === true && $T1 && ($c1['url'] ?? '') === '/admin/jobs/' . $T1['id'] && $T1['status'] === 'queued' && $tkey && (int) $T1['shop_key_id'] === (int) $tkey['id']
+    && $tkey['kind'] === 'shop' && empty($tkey['webhook_url']) && array_column(jdec($T1['items']), 'qty', 'code') === ['g1' => 2] && !str_contains((string) $T1['login_enc'], 'thu@'),
+    'tạo đơn thử → đơn THẬT chờ máy, mang khoá «Đơn thử» (không có webhook), đúng gói, thông tin đăng nhập được mã hoá', [$c1, $T1['status'] ?? null]);
+$c2 = $form('/admin/jobs/create', $tf);
+ok(($c2['ok'] ?? null) === false && str_contains((string) ($c2['error'] ?? ''), 'đổi mã') && (int) Db::val("SELECT COUNT(*) FROM jobs WHERE ref='TEST-1'") === 1, 'mã đơn thử trùng → báo đổi mã, không tạo thêm', $c2);
+$jp = http('GET', '/admin/jobs/' . $T1['id'], null, null, $ah)['text'];
+ok(str_contains($jp, 'đơn thử') && str_contains($jp, '••••••') && !str_contains($jp, 'thu@example.com') && !str_contains($jp, 'MK cu#1') && str_contains($jp, 'id="m-edit"') && str_contains($jp, 'data-job-edit'),
+    'trang đơn: thông tin đăng nhập bị che (không nằm trong HTML), có hộp Sửa đầy đủ cho đơn chờ máy');
+$lv = $form('/admin/jobs/' . $T1['id'] . '/login', []);
+$evs = Db::all('SELECT type, message FROM job_events WHERE job_id=?', [$T1['id']]);
+ok(($lv['login']['username'] ?? '') === 'thu@example.com' && ($lv['login']['password'] ?? '') === 'MK cu#1' && in_array('login_viewed', array_column($evs, 'type'), true)
+    && !str_contains(json_encode($evs, JSON_UNESCAPED_UNICODE), 'MK cu') && !str_contains(json_encode($evs, JSON_UNESCAPED_UNICODE), 'thu@'),
+    'bấm «Hiện» → trả thông tin đăng nhập, ghi nhật ký đơn «đã xem» (không ghi giá trị)', $lv);
+
+// ---- sửa đơn chờ máy ----
+$u1 = $form('/admin/jobs/' . $T1['id'] . '/update', ['scope' => 'full', 'ref' => 'TEST-1b', 'login' => ['username' => 'moi@example.com', 'password' => ''],
+    'pk_code' => ['g1', 'one'], 'pk_qty' => ['1', '1'], 'note' => 'đã sửa']);
+$T1b = Jobs::byId((int) $T1['id']);
+$lg = jdec(Crypto::dec($T1b['login_enc']));
+$ev = (string) Db::val("SELECT message FROM job_events WHERE job_id=? AND type='edited' ORDER BY id DESC LIMIT 1", [$T1['id']]);
+ok(($u1['ok'] ?? false) === true && $T1b['ref'] === 'TEST-1b' && $lg === ['username' => 'moi@example.com', 'password' => 'MK cu#1'] && array_column(jdec($T1b['items']), 'qty', 'code') === ['g1' => 1, 'one' => 1]
+    && $T1b['note'] === 'đã sửa' && str_contains($ev, 'mã đơn') && str_contains($ev, 'thông tin đăng nhập') && str_contains($ev, 'gói nạp') && !str_contains($ev, 'moi@'),
+    'sửa đơn chờ máy: mã đơn, tài khoản (ô mật khẩu trống = giữ nguyên), gói + số lượng, ghi chú; nhật ký ghi đã sửa phần nào (không ghi giá trị)', [$u1, $lg, $ev]);
+$u2 = $form('/admin/jobs/' . $T1['id'] . '/update', ['scope' => 'full', 'ref' => 'TEST-1b', 'login' => ['username' => 'moi@example.com'], 'pk_code' => ['g1'], 'pk_qty' => ['9']]);
+ok(($u2['ok'] ?? null) === false && str_contains((string) ($u2['error'] ?? ''), 'tối đa') && Jobs::byId((int) $T1['id'])['items'] === $T1b['items'], 'sửa số lượng vượt giới hạn gói → báo lỗi, đơn giữ nguyên', $u2);
+$c3 = $form('/admin/jobs/create', ['ref' => 'TEST-2', 'login' => ['username' => 'khac@example.com', 'password' => 'x'], 'pk_code' => ['one'], 'pk_qty' => ['1']] + $tf);
+$T2 = (int) Db::val("SELECT id FROM jobs WHERE ref='TEST-2'");
+$u3 = $form("/admin/jobs/$T2/update", ['scope' => 'full', 'ref' => 'TEST-2', 'login' => ['username' => 'MOI@example.com', 'password' => ''], 'pk_code' => ['one'], 'pk_qty' => ['1']]);
+ok(($c3['ok'] ?? false) === true && ($u3['ok'] ?? null) === false && str_contains((string) ($u3['error'] ?? ''), '1 lần') && jdec(Crypto::dec(Jobs::byId($T2)['login_enc']))['username'] === 'khac@example.com',
+    'sửa tài khoản thành một tài khoản đã có đơn gói «1 lần» → từ chối (không lách được giới hạn bằng cách sửa đơn)', $u3);
+$u3b = $form("/admin/jobs/$T2/update", ['scope' => 'full', 'ref' => 'TEST-1b', 'login' => ['username' => 'khac@example.com', 'password' => ''], 'pk_code' => ['one'], 'pk_qty' => ['1']]);
+ok(($u3b['ok'] ?? null) === false && str_contains((string) ($u3b['error'] ?? ''), 'TEST-1b'), 'đổi mã đơn trùng với đơn khác của cùng shop → từ chối', $u3b);
+$d2 = $post("/admin/jobs/$T2/delete", ['back' => 'list']);
+ok($d2['code'] === 302 && str_contains($d2['head'], 'Location: /admin/jobs') && Jobs::byId($T2) === null && (int) Db::val('SELECT COUNT(*) FROM job_events WHERE job_id=?', [$T2]) === 0,
+    'xoá đơn chờ máy → huỷ rồi xoá hẳn (cả nhật ký)', $d2['code']);
+
+// ---- đơn đã giao máy ----
+$cl = http('POST', '/api/tool/claim', $TK, ['device' => 'Adm-1', 'pool' => 'admin-pool'])['json'];
+ok(($cl['job']['ref'] ?? '') === 'TEST-1b' && ($cl['job']['login']['password'] ?? '') === 'MK cu#1', 'máy nhận đơn thử như đơn thường (đúng dữ liệu đã sửa)', $cl['job']['ref'] ?? null);
+$u4 = $form('/admin/jobs/' . $T1['id'] . '/update', ['scope' => 'full', 'ref' => 'X', 'pk_code' => ['g1'], 'pk_qty' => ['1']]);
+$u5 = $form('/admin/jobs/' . $T1['id'] . '/update', ['scope' => 'note', 'note' => 'máy đang làm']);
+ok(($u4['ok'] ?? null) === false && str_contains((string) ($u4['error'] ?? ''), 'chỉ sửa được ghi chú') && ($u5['ok'] ?? false) === true
+    && Jobs::byId((int) $T1['id'])['note'] === 'máy đang làm' && Jobs::byId((int) $T1['id'])['ref'] === 'TEST-1b', 'đơn đã giao máy: chỉ sửa được ghi chú', [$u4, $u5]);
+$post('/admin/jobs/' . $T1['id'] . '/delete', []);
+ok(Jobs::byId((int) $T1['id']) !== null, 'đơn máy đang làm → KHÔNG xoá được');
+$st = static fn (int $id, array $f): array => $post("/admin/jobs/$id/status", $f);
+$st((int) $T1['id'], ['to' => 'done']);
+ok(Jobs::byId((int) $T1['id'])['status'] === 'claimed', 'đơn đang chạy không đổi thẳng sang «hoàn tất» được (phải qua đối soát)');
+$st((int) $T1['id'], ['to' => 'review', 'note' => 'máy treo']);
+$T1r = Jobs::byId((int) $T1['id']);
+$late = http('POST', '/api/tool/jobs/' . $T1['pid'] . '/result', $TK, ['result' => 'failed']);
+ok($T1r['status'] === 'review' && $T1r['review_reason'] === 'admin' && $T1r['login_enc'] === null && $late['code'] === 409,
+    'admin chuyển đơn đang chạy sang CHỜ ĐỐI SOÁT (xoá thông tin đăng nhập); máy báo muộn «failed» bị từ chối', [$T1r['status'], $late['code']]);
+$st((int) $T1['id'], ['to' => 'done']);
+ok(Jobs::byId((int) $T1['id'])['status'] === 'done', 'chờ đối soát → hoàn tất (như nút chốt)');
+
+// ---- tiền ví khi đổi trạng thái ----
+$post('/admin/wallets/create', ['tool_key_id' => $kidT, 'device' => 'Adm-W', 'apple_account' => 'adm@example.com', 'currency' => 'JPY', 'balance' => '100000']);
+$AW = (int) Db::val("SELECT id FROM wallets WHERE device='Adm-W' AND active=1");
+$bal = static fn (): int => (int) Wallets::find($AW)['balance'];
+$mkA = static fn (string $ref, int $qty): string => (string) (http('POST', '/api/shop/jobs', $SK, ['pool' => 'admin-pool', 'ref' => $ref, 'login' => ['username' => strtolower($ref) . '@example.com', 'password' => 'x'],
+    'items' => [['code' => 'g1', 'qty' => $qty]]])['json']['job']['id'] ?? '');
+$S1 = $mkA('ADM-S1', 3);
+http('POST', '/api/tool/claim', $TK, ['device' => 'Adm-W', 'pool' => 'admin-pool']);
+http('POST', "/api/tool/jobs/$S1/result", $TK, ['result' => 'done']);
+$S1id = (int) Db::val('SELECT id FROM jobs WHERE pid=?', [$S1]);
+ok(Jobs::byId($S1id)['status'] === 'done' && Jobs::byId($S1id)['wallet_state'] === 'charged' && $bal() === 9700000, 'đơn trả bằng ví xong → trừ 3.000 JPY', $bal());
+$st($S1id, ['to' => 'failed', 'note' => 'kiểm lại: chưa nạp']);
+$S1f = Jobs::byId($S1id);
+$pl = jdec((string) Db::val("SELECT payload FROM webhooks WHERE job_id=? AND event='job.failed' ORDER BY id DESC LIMIT 1", [$S1id]));
+ok($S1f['status'] === 'failed' && $S1f['wallet_state'] === 'none' && $bal() === 10000000 && ($pl['corrected'] ?? null) === true && ($pl['previous_status'] ?? '') === 'done'
+    && Db::val('SELECT kind FROM wallet_entries WHERE job_id=? ORDER BY id DESC LIMIT 1', [$S1id]) === 'refund',
+    'hoàn tất → thất bại: hoàn đúng 3.000 JPY vào ví (dòng «Hoàn tiền đơn»), shop nhận job.failed kèm corrected + previous_status', [$S1f['status'], $bal(), $pl['corrected'] ?? null]);
+$st($S1id, ['to' => 'done', 'charge' => 'abc']);
+ok(Jobs::byId($S1id)['status'] === 'failed' && $bal() === 10000000, 'số tiền đã trừ nhập sai → không đổi gì');
+$st($S1id, ['to' => 'done', 'charge' => '2500', 'note' => 'đã nạp thật']);
+$pl2 = jdec((string) Db::val("SELECT payload FROM webhooks WHERE job_id=? AND event='job.done' ORDER BY id DESC LIMIT 1", [$S1id]));
+ok(Jobs::byId($S1id)['status'] === 'done' && Jobs::byId($S1id)['wallet_state'] === 'charged' && $bal() === 9750000 && ($pl2['previous_status'] ?? '') === 'failed',
+    'thất bại → hoàn tất: trừ ví đúng số tiền admin nhập (2.500 JPY), shop nhận job.done kèm corrected', $bal());
+$st($S1id, ['to' => 'failed']);
+ok($bal() === 10000000, 'đổi lại sang thất bại → hoàn đúng 2.500 JPY vừa trừ (không hoàn thừa / thiếu)', $bal());
+$nE = (int) Db::val('SELECT COUNT(*) FROM wallet_entries WHERE job_id=?', [$S1id]);
+$post("/admin/jobs/$S1id/delete", []);
+ok(Jobs::byId($S1id) === null && (int) Db::val('SELECT COUNT(*) FROM wallet_entries WHERE job_pid=? AND job_id IS NULL', [$S1]) === $nE && $nE >= 4 && $bal() === 10000000,
+    'xoá đơn đã kết thúc: sổ cái ví giữ nguyên (còn mã đơn), số dư không đổi', [$nE, $bal()]);
+$S2 = $mkA('ADM-S2', 1);
+http('POST', '/api/tool/claim', $TK, ['device' => 'Adm-W', 'pool' => 'admin-pool']);
+http('POST', "/api/tool/jobs/$S2/result", $TK, ['result' => 'review', 'message' => 'không chắc']);
+$S2id = (int) Db::val('SELECT id FROM jobs WHERE pid=?', [$S2]);
+$post("/admin/jobs/$S2id/delete", []);
+ok(Jobs::byId($S2id) !== null && Jobs::byId($S2id)['wallet_state'] === 'held', 'đơn chờ đối soát còn TẠM GIỮ ví → không xoá được');
+$st($S2id, ['to' => 'failed']);
+$post("/admin/jobs/$S2id/delete", []);
+ok(Jobs::byId($S2id) === null && Wallets::held($AW) === 0 && $bal() === 10000000, 'chốt «chưa nạp» (nhả tạm giữ) rồi xoá được');
+$S3 = $mkA('ADM-S3', 1);
+$S3id = (int) Db::val('SELECT id FROM jobs WHERE pid=?', [$S3]);
+$post("/admin/jobs/$S3id/delete", []);
+Webhooks::deliverDue();
+$hooked = false;
+foreach (file("$tmp/hooks.log", FILE_IGNORE_NEW_LINES) ?: [] as $line) {
+    $b = json_decode((string) (json_decode($line, true)['body'] ?? ''), true) ?: [];
+    $hooked = $hooked || (($b['event'] ?? '') === 'job.cancelled' && ($b['job']['ref'] ?? '') === 'ADM-S3' && ($b['by'] ?? '') === 'admin');
+}
+ok(Jobs::byId($S3id) === null && $hooked, 'xoá đơn của shop đang chờ máy → shop vẫn nhận webhook job.cancelled (by: admin)');
+ok(str_contains(http('GET', '/docs')['text'], 'corrected'), 'tài liệu webhook có corrected / previous_status');
+// đơn của SHOP: không đổi được mã đơn (khoá chống tạo trùng của shop), vẫn sửa được phần khác
+$S4 = $mkA('ADM-S4', 1);
+$S4id = (int) Db::val('SELECT id FROM jobs WHERE pid=?', [$S4]);
+$r4a = $form("/admin/jobs/$S4id/update", ['scope' => 'full', 'ref' => 'ADM-S4-moi', 'login' => ['username' => 'adm-s4@example.com', 'password' => ''], 'pk_code' => ['g1'], 'pk_qty' => ['1']]);
+$r4b = $form("/admin/jobs/$S4id/update", ['scope' => 'full', 'ref' => 'ADM-S4', 'login' => ['username' => 'adm-s4@example.com', 'password' => ''], 'pk_code' => ['g1'], 'pk_qty' => ['2']]);
+$retry = http('POST', '/api/shop/jobs', $SK, ['pool' => 'admin-pool', 'ref' => 'ADM-S4', 'login' => ['username' => 'x@example.com', 'password' => 'x'], 'items' => [['code' => 'g1', 'qty' => 1]]]);
+ok(($r4a['ok'] ?? null) === false && str_contains((string) ($r4a['error'] ?? ''), 'đơn thử') && ($r4b['ok'] ?? false) === true && Jobs::byId($S4id)['ref'] === 'ADM-S4'
+    && ($retry['json']['duplicate'] ?? false) === true, 'đơn của shop: không đổi được mã đơn (shop gửi lại vẫn ra đúng đơn cũ, không tạo đơn thật thứ hai); sửa gói vẫn được', [$r4a, $r4b, $retry['code']]);
+// gói của đơn vừa bị TẮT: vẫn sửa được ghi chú (không bị kẹt vì kiểm lại gói)
+Db::run("UPDATE packages SET active=0 WHERE pool_id=? AND code='g1'", [$apId]);
+$r4c = $form("/admin/jobs/$S4id/update", ['scope' => 'full', 'ref' => 'ADM-S4', 'login' => ['username' => 'adm-s4@example.com', 'password' => ''], 'pk_code' => ['g1'], 'pk_qty' => ['2'], 'note' => 'gói tắt']);
+$r4d = $form("/admin/jobs/$S4id/update", ['scope' => 'full', 'ref' => 'ADM-S4', 'login' => ['username' => 'adm-s4@example.com', 'password' => ''], 'pk_code' => ['g1'], 'pk_qty' => ['3']]);
+Db::run("UPDATE packages SET active=1 WHERE pool_id=? AND code='g1'", [$apId]);
+ok(($r4c['ok'] ?? false) === true && Jobs::byId($S4id)['note'] === 'gói tắt' && ($r4d['ok'] ?? null) === false && str_contains((string) ($r4d['error'] ?? ''), 'g1'),
+    'gói của đơn bị tắt: sửa ghi chú vẫn được; đổi số lượng gói đã tắt thì báo rõ', [$r4c, $r4d]);
+// máy có ví nhận đơn vừa được sửa gói → định giá theo gói MỚI; lệnh giao đơn chỉ ghi đè gói khi gói chưa bị sửa giữa chừng
+$cl4 = http('POST', '/api/tool/claim', $TK, ['device' => 'Adm-W', 'pool' => 'admin-pool'])['json'];
+ok(($cl4['job']['ref'] ?? '') === 'ADM-S4' && ($cl4['job']['items'][0]['qty'] ?? 0) === 2 && (int) Jobs::byId($S4id)['cost'] === 200000
+    && preg_match('/status=\'queued\'\$cond",/', (string) file_get_contents(dirname(__DIR__) . '/src/repo.php')) === 1,
+    'máy có ví nhận đơn đã sửa: định giá theo số lượng mới (2 × 1.000 JPY); lệnh giao đơn kèm điều kiện «gói chưa đổi» (không đè bản admin vừa sửa)', $cl4['job']['items'] ?? null);
+// đơn chờ đối soát (kể cả máy không ví) → không xoá được: shop còn chờ kết quả cuối
+http('POST', "/api/tool/jobs/$S4/result", $TK, ['result' => 'review', 'message' => 'không chắc']);
+Db::run("UPDATE jobs SET wallet_state='released' WHERE id=?", [$S4id]);       // giả như không còn tạm giữ tiền
+$post("/admin/jobs/$S4id/delete", []);
+ok(Jobs::byId($S4id) !== null, 'đơn chờ đối soát (dù không tạm giữ tiền) → không xoá được, phải chốt trước');
+$dash = http('GET', '/admin', null, null, $ah)['text'];
+ok($dash !== '', 'trang tổng quan vẫn hiển thị khi có khoá «Đơn thử»');
+
 echo "\n== Trang quản trị + tài liệu ==\n";
 $docs = http('GET', '/docs');
 ok(str_contains($docs['text'], '/api/tool/sync') && str_contains($docs['text'], 'need_scripts'), 'tài liệu có API /api/tool/sync');

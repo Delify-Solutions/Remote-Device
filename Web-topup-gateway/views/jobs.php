@@ -8,6 +8,7 @@ $filtered = $status || $pool || $q !== '';
 ?>
 <div class="page-head" data-live="20">
   <div><h4 class="mb-1">Đơn nạp</h4><p class="mb-0 text-body-secondary"><?= $total ?> đơn<?= $filtered ? ' khớp bộ lọc' : '' ?> · tự làm mới mỗi 20 giây.</p></div>
+  <?php if ($poolForms): ?><button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#m-create"><i class="ti tabler-test-pipe me-1"></i>Tạo đơn thử</button><?php endif; ?>
 </div>
 
 <div class="card">
@@ -37,8 +38,9 @@ $filtered = $status || $pool || $q !== '';
   </div>
 <?php if (!$rows): ?><div class="empty">Không có đơn nào.</div><?php else: ?>
   <div class="table-responsive">
-  <table class="table table-hover mb-0"><thead><tr><th>Mã đơn (shop)</th><th>Pool</th><th>Tài khoản</th><?php if ($wallets): ?><th>Tài khoản Apple</th><?php endif; ?><th>Trạng thái</th><th>Máy</th><th>Ảnh</th><th>Tạo lúc</th><th>Cập nhật</th></tr></thead><tbody>
-  <?php foreach ($rows as $j): ?>
+  <table class="table table-hover mb-0"><thead><tr><th>Mã đơn (shop)</th><th>Pool</th><th>Tài khoản</th><?php if ($wallets): ?><th>Tài khoản Apple</th><?php endif; ?><th>Trạng thái</th><th>Máy</th><th>Ảnh</th><th>Tạo lúc</th><th>Cập nhật</th><th class="text-end">Thao tác</th></tr></thead><tbody>
+  <?php foreach ($rows as $j):
+      $busy = in_array($j['status'], Jobs::ACTIVE, true) || ($j['status'] === 'review' && ($j['wallet_state'] ?? null) === 'held'); ?>
     <tr>
       <td><a class="fw-medium" href="/admin/jobs/<?= (int) $j['id'] ?>"><?= e($j['ref']) ?></a><div class="mono small text-body-secondary"><?= e($j['pid']) ?></div></td>
       <td class="small"><?= e($j['pool_name']) ?></td>
@@ -51,6 +53,12 @@ $filtered = $status || $pool || $q !== '';
       <td><?= (int) $j['images'] ? '<span class="badge bg-label-secondary"><i class="ti tabler-photo me-1"></i>' . (int) $j['images'] . '</span>' : '<span class="text-body-secondary">—</span>' ?></td>
       <td class="small text-body-secondary text-nowrap"><?= e(vntime((int) $j['created_at'])) ?></td>
       <td class="small text-body-secondary text-nowrap"><?= e(ago((int) $j['updated_at'])) ?></td>
+      <td class="text-end text-nowrap">
+        <a class="btn btn-sm btn-icon btn-text-secondary" href="/admin/jobs/<?= (int) $j['id'] ?>" title="Xem đơn" aria-label="Xem đơn <?= e($j['ref']) ?>"><i class="ti tabler-eye"></i></a>
+        <a class="btn btn-sm btn-icon btn-text-secondary" href="/admin/jobs/<?= (int) $j['id'] ?>#edit" title="Sửa đơn" aria-label="Sửa đơn <?= e($j['ref']) ?>"><i class="ti tabler-pencil"></i></a>
+        <form method="post" action="/admin/jobs/<?= (int) $j['id'] ?>/delete" class="d-inline" data-confirm="XOÁ HẲN đơn <?= e($j['ref']) ?>? Xoá cả ảnh và nhật ký, không lấy lại được.<?= $j['status'] === 'queued' ? ' Đơn đang chờ máy sẽ bị huỷ trước (shop nhận job.cancelled).' : '' ?>"><?= Csrf::field() ?><input type="hidden" name="back" value="list">
+          <button class="btn btn-sm btn-icon btn-text-danger" <?= $busy ? 'disabled title="Máy đang làm / đơn đang tạm giữ ví — không xoá được"' : 'title="Xoá đơn"' ?> aria-label="Xoá đơn <?= e($j['ref']) ?>"><i class="ti tabler-trash"></i></button></form>
+      </td>
     </tr>
   <?php endforeach; ?></tbody></table>
   </div>
@@ -65,3 +73,29 @@ $filtered = $status || $pool || $q !== '';
   <?php endif; ?>
 <?php endif; ?>
 </div>
+
+<?php if ($poolForms): ?>
+<div class="modal fade" id="m-create" tabindex="-1" aria-labelledby="m-create-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+    <form method="post" action="/admin/jobs/create" data-ajax="go" data-job-form="<?= e(jenc($poolForms)) ?>" autocomplete="off">
+      <?= Csrf::field() ?>
+      <div class="modal-header"><h5 class="modal-title" id="m-create-title">Tạo đơn thử</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button></div>
+      <div class="modal-body">
+        <div class="alert alert-warning mb-4"><b>Đây là đơn THẬT.</b> Máy đang nhận đơn của pool sẽ đăng nhập tài khoản dưới đây và <b>mua thật</b> bằng tài khoản Apple của máy (trừ ví). Đơn mang khoá «Đơn thử (trang quản trị)» nên không báo về shop nào. Muốn thử mà không mua: tạo đơn khi chưa máy nào nhận đơn rồi xoá.</div>
+        <div class="row g-3">
+          <div class="col-sm-7"><label class="form-label" for="c-pool">Pool</label>
+            <select class="form-select" id="c-pool" name="pool" data-pool-select required>
+              <?php foreach ($poolForms as $pf): ?><option value="<?= e($pf['code']) ?>"><?= e($pf['name']) ?><?= $pf['active'] ? '' : ' (đang tạm dừng)' ?></option><?php endforeach; ?>
+            </select></div>
+          <div class="col-sm-5"><label class="form-label" for="c-ref">Mã đơn</label>
+            <input class="form-control mono" id="c-ref" name="ref" value="TEST-<?= e(vntime(time(), 'ymd-His')) ?>" maxlength="80" pattern="[A-Za-z0-9_.:\-]{1,80}" required></div>
+        </div>
+        <div data-job-fields></div>
+        <div class="mt-4"><label class="form-label" for="c-note">Ghi chú (tuỳ chọn)</label><input class="form-control" id="c-note" name="note" maxlength="500"></div>
+        <div class="alert alert-danger mt-4 mb-0 ajax-error" role="alert" hidden></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Đóng</button><button class="btn btn-primary"><i class="ti tabler-plus me-1"></i>Tạo đơn</button></div>
+    </form>
+  </div></div>
+</div>
+<?php endif; ?>

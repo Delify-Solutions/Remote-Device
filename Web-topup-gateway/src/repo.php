@@ -1106,6 +1106,7 @@ final class Money
  *   hold            — đơn sang chờ đối soát: TẠM GIỮ cả chi phí đơn. amount âm nhưng KHÔNG đổi số dư (balance_after = số dư lúc đó)
  *   charge          — admin chốt «đã nạp»: trừ số tiền admin nhập (đổi số dư); tạm giữ đóng lại
  *   release         — admin chốt «chưa nạp»: nhả tạm giữ (amount 0, không đổi số dư)
+ *   refund          — admin đổi đơn đã trừ tiền sang «thất bại»: cộng lại đúng số đã trừ của đơn (đổi số dư)
  * Tạm giữ ĐANG MỞ = các dòng hold của những đơn còn wallet_state='held' (chốt xong thì jobs.wallet_state đổi → tự đóng).
  *   Còn dùng được = số dư − tổng tạm giữ đang mở.
  * jobs.wallet_state: NULL (đang chạy, chưa tính tiền) → charged | none (failed, không trừ) | held → charged | released.
@@ -1120,9 +1121,10 @@ final class Wallets
         'release'  => ['Nhả tạm giữ', 'secondary'],
         'charge'   => ['Trừ khi đối soát', 'primary'],
         'adjust'   => ['Chỉnh số dư', 'danger'],
+        'refund'   => ['Hoàn tiền đơn', 'success'],
     ];
     /** các loại dòng sổ cái làm ĐỔI số dư (hold / release chỉ ghi lại việc giữ / nhả) */
-    private const MOVES = ['topup', 'purchase', 'charge', 'adjust'];
+    private const MOVES = ['topup', 'purchase', 'charge', 'adjust', 'refund'];
     public const STATE = [
         'held'     => ['đang tạm giữ', 'warning'],
         'charged'  => ['đã trừ tiền', 'success'],
@@ -1451,6 +1453,15 @@ final class Jobs
         'timeout' => 'Tool im lặng quá lâu',
         'tool'    => 'Tool báo không chắc',
         'no_bill' => 'Báo xong nhưng thiếu ảnh',
+        'admin'   => 'Admin chuyển sang đối soát',
+    ];
+    /** Admin đổi trạng thái tay: từ trạng thái nào được sang trạng thái nào (đơn chờ máy → huỷ; chờ đối soát → chốt — xem adminSetStatus). */
+    public const MANUAL = [
+        'queued'    => ['cancelled'],
+        'claimed'   => ['review'], 'running' => ['review'], 'need_otp' => ['review'],
+        'review'    => ['done', 'failed'],
+        'done'      => ['failed'],
+        'failed'    => ['done'], 'expired' => ['done'], 'cancelled' => ['done'],
     ];
     private const IN_ACTIVE = "('claimed','running','need_otp')";
 
@@ -1557,13 +1568,13 @@ final class Jobs
     private const ONCE_LIVE = "('done','review','claimed','running','need_otp','queued')";
 
     /** Gói 1-lần nào trong $once mà tài khoản game ($accountKey, cùng pool) đã có ở một đơn khác còn hiệu lực. Trả dòng gói trùng hoặc null. */
-    private static function boughtOnce(int $poolId, string $accountKey, array $once): ?array
+    private static function boughtOnce(int $poolId, string $accountKey, array $once, int $exceptJob = 0): ?array
     {
         $want = [];
         foreach ($once as $it) {
             $want[(string) $it['code']] = $it;
         }
-        foreach (Db::all('SELECT items FROM jobs WHERE pool_id=? AND account_key=? AND status IN ' . self::ONCE_LIVE, [$poolId, $accountKey]) as $j) {
+        foreach (Db::all('SELECT items FROM jobs WHERE pool_id=? AND account_key=? AND id<>? AND status IN ' . self::ONCE_LIVE, [$poolId, $accountKey, $exceptJob]) as $j) {
             foreach (jdec($j['items']) as $it) {
                 $code = (string) ($it['code'] ?? '');
                 if (isset($want[$code])) {
@@ -1579,25 +1590,13 @@ final class Jobs
         return self::err('already_bought', 'Tài khoản game này đã mua gói «' . $item['name'] . '» ở một đơn khác — gói chỉ mua được 1 lần / tài khoản.', ['code' => (string) $item['code']]);
     }
 
-    /* ---------- SHOP: tạo đơn ---------- */
-    public static function create(array $key, array $in): array
+    /**
+     * Kiểm + chuẩn hoá phần «khách gửi» của một đơn theo cấu hình pool: trường đăng nhập, gói nạp, định danh tài khoản game.
+     * Dùng chung cho shop tạo đơn, admin tạo đơn thử và admin sửa đơn đang chờ.
+     * @return array ['login','hint','items','account_key','once'] hoặc [mã HTTP, lỗi]
+     */
+    private static function prepare(array $pool, array $in): array
     {
-        $pool = Pools::byCode(strtolower(clean($in['pool'] ?? '', 40)));
-        if (!$pool) {
-            return [404, self::err('pool_not_found', 'Không có pool này.')];
-        }
-        $ref = is_scalar($in['ref'] ?? null) ? trim((string) $in['ref']) : '';
-        if (preg_match('/^[A-Za-z0-9_.:\-]{1,80}$/', $ref) !== 1) {
-            return [422, self::err('invalid_ref', 'ref (mã đơn của shop) gồm 1–80 ký tự chữ/số/_ . : -')];
-        }
-        // idempotent: cùng (khoá shop, ref) → trả job cũ, KHÔNG tạo mới, không sửa gì
-        $ex = Db::one('SELECT * FROM jobs WHERE shop_key_id=? AND ref=?', [$key['id'], $ref]);
-        if ($ex) {
-            return [200, ['ok' => true, 'duplicate' => true, 'job' => self::view($ex)]];
-        }
-        if (!(int) $pool['active']) {
-            return [409, self::err('pool_paused', 'Pool đang tạm dừng, không nhận đơn mới.')];
-        }
         $cfg = $pool['cfg'];
 
         // --- trường đăng nhập theo cấu hình pool ---
@@ -1675,6 +1674,34 @@ final class Jobs
             // chỉ lưu mã băm CÓ KHOÁ (HMAC bằng APP_KEY): CSDL lộ ra cũng không đoán ngược được email bằng cách thử từng email
             $accountKey = hash_hmac('sha256', $pool['id'] . ':' . $identity, 'account-key:' . (string) Env::get('APP_KEY', ''));
         }
+
+        return ['login' => $login, 'hint' => $hint, 'items' => $items, 'account_key' => $accountKey, 'once' => $once];
+    }
+
+    /* ---------- SHOP: tạo đơn ---------- */
+    public static function create(array $key, array $in): array
+    {
+        $pool = Pools::byCode(strtolower(clean($in['pool'] ?? '', 40)));
+        if (!$pool) {
+            return [404, self::err('pool_not_found', 'Không có pool này.')];
+        }
+        $ref = is_scalar($in['ref'] ?? null) ? trim((string) $in['ref']) : '';
+        if (preg_match('/^[A-Za-z0-9_.:\-]{1,80}$/', $ref) !== 1) {
+            return [422, self::err('invalid_ref', 'ref (mã đơn của shop) gồm 1–80 ký tự chữ/số/_ . : -')];
+        }
+        // idempotent: cùng (khoá shop, ref) → trả job cũ, KHÔNG tạo mới, không sửa gì
+        $ex = Db::one('SELECT * FROM jobs WHERE shop_key_id=? AND ref=?', [$key['id'], $ref]);
+        if ($ex) {
+            return [200, ['ok' => true, 'duplicate' => true, 'job' => self::view($ex)]];
+        }
+        if (!(int) $pool['active']) {
+            return [409, self::err('pool_paused', 'Pool đang tạm dừng, không nhận đơn mới.')];
+        }
+        $prep = self::prepare($pool, $in);
+        if (isset($prep[0])) {
+            return $prep;
+        }
+        ['login' => $login, 'hint' => $hint, 'items' => $items, 'account_key' => $accountKey, 'once' => $once] = $prep;
 
         $now = time();
         $row = [
@@ -1804,8 +1831,15 @@ final class Jobs
                 array_push($args, $wallet['id'], $wallet['currency'], $q['cost'], jenc($q['items']));
             }
             $args[] = $c['id'];
+            $cond = '';
+            if ($wallet) {
+                // items vừa định giá phải CÒN NGUYÊN: admin sửa đơn (gói / số lượng) giữa lúc đọc và lúc ghi thì không ghi đè bản sửa bằng bản cũ —
+                // bỏ qua đơn này ở lượt xin này, lượt sau định giá lại theo gói mới
+                $cond = ' AND items=?';
+                $args[] = $c['items'];
+            }
             // UPDATE có điều kiện = khoá lạc quan: hai máy xin cùng lúc chỉ MỘT máy thắng
-            $n = Db::run("UPDATE jobs SET status='claimed', stage='claimed', device=?, tool_key_id=?, claimed_at=?, seen_at=?, updated_at=?$set WHERE id=? AND status='queued'",
+            $n = Db::run("UPDATE jobs SET status='claimed', stage='claimed', device=?, tool_key_id=?, claimed_at=?, seen_at=?, updated_at=?$set WHERE id=? AND status='queued'$cond",
                 $args)->rowCount();
             if ($n === 1) {
                 $job = self::byId((int) $c['id']);
@@ -2110,6 +2144,295 @@ final class Jobs
         Devices::free($job['tool_key_id'] ? (int) $job['tool_key_id'] : null, $job['device']);
         Webhooks::enqueue($job, 'job.' . $to);
         return true;
+    }
+
+    /* ---------- ADMIN: đơn thử, xem / sửa / đổi trạng thái / xoá ---------- */
+
+    /** Khoá «shop» nội bộ dùng cho đơn thử tạo từ trang quản trị (không có webhook → không báo cho shop thật nào). */
+    public static function testKey(): array
+    {
+        $find = static function (): ?array {
+            $id = (int) Settings::get('admin_test_key_id', '0');
+            $k = $id ? Keys::find($id) : null;
+            return $k && $k['kind'] === 'shop' ? $k : null;
+        };
+        $k = $find();
+        if ($k) {
+            return $k;
+        }
+        // hai admin tạo đơn thử ĐẦU TIÊN cùng lúc: khoá dòng cài đặt (tạo sẵn nếu chưa có) rồi xem lại trong giao dịch → chỉ MỘT khoá
+        if (Settings::get('admin_test_key_id') === null) {
+            Settings::set('admin_test_key_id', '0');
+        }
+        return Db::tx(static function () use ($find): array {
+            Db::run("UPDATE settings SET v=v WHERE k='admin_test_key_id'");
+            $k = $find();
+            if ($k) {
+                return $k;
+            }
+            $new = Keys::create('shop', 'Đơn thử (trang quản trị)');
+            Settings::set('admin_test_key_id', (string) $new['id']);
+            return Keys::find((int) $new['id']);
+        });
+    }
+
+    /** Admin tạo đơn thử = một đơn THẬT (máy nhận đơn của pool sẽ nạp thật), mang khoá «Đơn thử». */
+    public static function adminCreate(array $in, string $admin): array
+    {
+        $key = self::testKey();
+        [$code, $res] = self::create($key, $in);
+        if ($code === 201) {
+            $job = self::forShop($key, (string) $res['job']['id']);
+            $res['job_row_id'] = (int) $job['id'];
+            self::event((int) $job['id'], 'admin', 'created', $admin . ' tạo đơn thử từ trang quản trị');
+        }
+        return [$code, $res];
+    }
+
+    /** Thông tin đăng nhập đã giải mã (null = đơn đã kết thúc, máy chủ đã xoá). Mỗi lần xem ghi nhật ký đơn (không ghi giá trị). */
+    public static function adminLogin(int $id, string $admin): ?array
+    {
+        $job = self::byId($id);
+        if (!$job || !$job['login_enc']) {
+            return null;
+        }
+        $login = jdec(Crypto::dec($job['login_enc']));
+        self::event($id, 'admin', 'login_viewed', $admin . ' xem thông tin đăng nhập của khách');
+        return is_array($login) ? $login : [];
+    }
+
+    /**
+     * Admin sửa đơn. Đơn CHỜ MÁY: sửa được mã đơn, thông tin đăng nhập (ô bí mật để trống = giữ nguyên), gói + số lượng, ghi chú.
+     * Đơn đã giao máy / đã kết thúc: chỉ sửa ghi chú (máy đang làm theo dữ liệu cũ; tiền đã tính theo đơn cũ). Trả null hoặc câu lỗi.
+     */
+    public static function adminUpdate(int $id, array $in, string $admin): ?string
+    {
+        $job = self::byId($id);
+        if (!$job) {
+            return 'Không có đơn này.';
+        }
+        $note = clean($in['note'] ?? '', 500) ?: null;
+        $full = array_key_exists('items', $in) || array_key_exists('login', $in) || array_key_exists('ref', $in);
+        if (!$full) {
+            if ($note !== $job['note']) {
+                Db::run('UPDATE jobs SET note=?, updated_at=? WHERE id=?', [$note, time(), $id]);
+                self::event($id, 'admin', 'edited', $admin . ' sửa ghi chú');
+            }
+            return null;
+        }
+        if ($job['status'] !== 'queued') {
+            return 'Đơn đã giao cho máy / đã kết thúc — chỉ sửa được ghi chú.';
+        }
+        $pool = Pools::find((int) $job['pool_id']);
+        if (!$pool) {
+            return 'Pool của đơn không còn.';
+        }
+        $ref = is_scalar($in['ref'] ?? null) ? trim((string) $in['ref']) : (string) $job['ref'];
+        if ($ref !== $job['ref'] && (int) $job['shop_key_id'] !== (int) Settings::get('admin_test_key_id', '0')) {
+            // mã đơn là khoá chống tạo trùng của SHOP: đổi đi thì shop gửi lại (timeout → thử lại) sẽ tạo thêm một đơn thật
+            return 'Chỉ đổi được mã của đơn thử — mã đơn của shop là khoá chống tạo trùng.';
+        }
+        if (preg_match('/^[A-Za-z0-9_.:\-]{1,80}$/', $ref) !== 1) {
+            return 'Mã đơn gồm 1–80 ký tự chữ/số/_ . : -';
+        }
+        if ($ref !== $job['ref'] && Db::val('SELECT id FROM jobs WHERE shop_key_id=? AND ref=? AND id<>?', [$job['shop_key_id'], $ref, $id])) {
+            return 'Shop này đã có đơn mã «' . $ref . '».';
+        }
+        // ô bí mật để trống = giữ giá trị cũ (form sửa không gửi lại mật khẩu cũ)
+        $old = jdec(Crypto::dec($job['login_enc'])) ?: [];
+        $loginIn = is_array($in['login'] ?? null) ? $in['login'] : $old;
+        foreach ($pool['cfg']['login_fields'] as $f) {
+            if ($f['secret'] && trim((string) ($loginIn[$f['key']] ?? '')) === '' && isset($old[$f['key']])) {
+                $loginIn[$f['key']] = $old[$f['key']];
+            }
+        }
+        $curItems = array_map(static fn (array $i): array => ['code' => (string) $i['code'], 'qty' => (int) $i['qty']], jdec($job['items']));
+        $itemsIn = is_array($in['items'] ?? null) ? $in['items'] : $curItems;
+        $norm = static function (array $list): array {
+            $m = [];
+            foreach ($list as $i) {
+                if (is_array($i) && (int) ($i['qty'] ?? 0) > 0) {
+                    $m[(string) ($i['code'] ?? '')] = ($m[(string) ($i['code'] ?? '')] ?? 0) + (int) $i['qty'];
+                }
+            }
+            ksort($m);
+            return $m;
+        };
+        if ($ref === $job['ref'] && $loginIn == $old && $norm($itemsIn) === $norm($curItems)) {
+            // chỉ đổi ghi chú (vd gói của đơn vừa bị tắt nên không kiểm lại gói được) → không kiểm lại phần khác
+            if ($note !== $job['note']) {
+                Db::run("UPDATE jobs SET note=?, updated_at=? WHERE id=?", [$note, time(), $id]);
+                self::event($id, 'admin', 'edited', $admin . ' sửa ghi chú');
+            }
+            return null;
+        }
+        $prep = self::prepare($pool, ['login' => $loginIn, 'items' => $itemsIn]);
+        if (isset($prep[0])) {
+            return (string) ($prep[1]['message'] ?? 'Dữ liệu đơn không hợp lệ.');
+        }
+        ['login' => $login, 'hint' => $hint, 'items' => $items, 'account_key' => $key, 'once' => $once] = $prep;
+        $changed = [];
+        if ($ref !== $job['ref']) { $changed[] = 'mã đơn ' . $job['ref'] . ' → ' . $ref; }
+        if ($login != $old) { $changed[] = 'thông tin đăng nhập'; }
+        if (jenc($items) !== (string) $job['items']) { $changed[] = 'gói nạp'; }
+        if ($note !== $job['note']) { $changed[] = 'ghi chú'; }
+        if (!$changed) {
+            return null;
+        }
+        $row = ['ref' => $ref, 'login_enc' => Crypto::enc(jenc($login)), 'account_hint' => $hint ?: null, 'items' => jenc($items), 'note' => $note, 'updated_at' => time()];
+        if (Wallets::enabled()) {
+            $row['account_key'] = $key;
+        }
+        $res = Db::tx(static function () use ($id, $pool, $key, $once, $row): int|array {
+            if ($key !== null && $once) {
+                Db::run('UPDATE pools SET updated_at=updated_at WHERE id=?', [$pool['id']]);          // xếp hàng với shop đang tạo đơn (như create)
+                $hit = self::boughtOnce((int) $pool['id'], $key, $once, $id);
+                if ($hit) {
+                    return $hit;
+                }
+            }
+            $sets = implode(', ', array_map(static fn (string $c): string => $c . '=?', array_keys($row)));
+            return Db::run('UPDATE jobs SET ' . $sets . " WHERE id=? AND status='queued'", array_merge(array_values($row), [$id]))->rowCount();
+        });
+        if (is_array($res)) {
+            return 'Tài khoản game này đã mua gói «' . $res['name'] . '» ở một đơn khác — gói chỉ mua được 1 lần / tài khoản.';
+        }
+        if ($res !== 1) {
+            return 'Đơn vừa được giao cho máy — không sửa được nữa (chỉ sửa ghi chú).';
+        }
+        self::event($id, 'admin', 'edited', $admin . ' sửa đơn: ' . implode(', ', $changed));
+        return null;
+    }
+
+    /**
+     * Admin đổi trạng thái tay (xem MANUAL). Tiền của ví tính theo trạng thái mới:
+     *   đang chạy → chờ đối soát: tạm giữ cả chi phí (như tool im lặng); máy đang làm sẽ bị từ chối khi báo tiếp.
+     *   chờ đối soát → hoàn tất / thất bại: như nút chốt đối soát ($charge = số tiền thật đã trừ).
+     *   hoàn tất → thất bại: hoàn lại đúng số đã trừ của đơn.   thất bại / quá hạn / huỷ → hoàn tất: trừ $charge (đơn có ví).
+     * Báo shop bằng webhook job.<trạng thái mới> (sửa trạng thái đã chốt thì kèm "corrected": true). Trả null hoặc câu lỗi.
+     */
+    public static function adminSetStatus(int $id, string $to, string $admin, ?int $charge = null, string $note = ''): ?string
+    {
+        $job = self::byId($id);
+        if (!$job) {
+            return 'Không có đơn này.';
+        }
+        $from = (string) $job['status'];
+        if (!in_array($to, self::MANUAL[$from] ?? [], true)) {
+            return 'Không đổi được từ «' . (self::LABEL[$from] ?? $from) . '» sang «' . (self::LABEL[$to] ?? $to) . '».';
+        }
+        if ($from === 'queued') {
+            [$code] = self::cancel($job, 'admin');
+            return $code === 200 ? null : 'Đơn vừa được giao cho máy, không huỷ được nữa.';
+        }
+        if ($from === 'review') {
+            return self::adminResolve($id, $to, $admin, $charge, $note) ? null : 'Không chốt được (đơn không còn chờ đối soát, hoặc số tiền không hợp lệ).';
+        }
+        $note = clean($note, 300);
+        $now = time();
+        $wallet = Wallets::enabled() && !empty($job['wallet_id']);
+        $actor = 'admin:' . $admin;
+        if ($to === 'review') {                                       // đang chạy → chờ đối soát
+            $n = Db::tx(static function () use ($id, $now, $wallet): int {
+                $n = Db::run("UPDATE jobs SET status='review', stage='review', review_reason='admin', login_enc=NULL, otp_enc=NULL, updated_at=? WHERE id=? AND status IN " . self::IN_ACTIVE,
+                    [$now, $id])->rowCount();
+                if ($n === 1 && $wallet) {
+                    Wallets::settle(self::byId($id), 'review', [], 'system');
+                }
+                return $n;
+            });
+            if ($n !== 1) {
+                return 'Đơn vừa đổi trạng thái — tải lại trang rồi thử lại.';
+            }
+            self::event($id, 'admin', 'status', $admin . ' chuyển đơn đang chạy sang CHỜ ĐỐI SOÁT' . ($note !== '' ? ' (' . $note . ')' : ''));
+            Devices::free($job['tool_key_id'] ? (int) $job['tool_key_id'] : null, $job['device']);
+            Webhooks::enqueue(self::byId($id), 'job.review');
+            return null;
+        }
+        // sửa trạng thái ĐÃ CHỐT: hoàn tất ↔ thất bại
+        $paid = $wallet && $to === 'done' && in_array($job['wallet_state'] ?? null, ['none', 'released'], true);
+        if ($paid) {
+            $charge ??= (int) $job['cost'];
+            if ($charge < 0 || $charge > 10 * max(1, (int) $job['cost'])) {
+                return 'Số tiền đã trừ không hợp lệ.';
+            }
+        }
+        $refund = 0;
+        $n = Db::tx(static function () use ($id, $from, $to, $now, $paid, $charge, &$refund, $wallet, $job, $note, $actor): int {
+            $n = Db::run('UPDATE jobs SET status=?, stage=?, login_enc=NULL, otp_enc=NULL, finished_at=COALESCE(finished_at, ?), updated_at=? WHERE id=? AND status=?',
+                [$to, $to, $now, $now, $id, $from])->rowCount();
+            if ($n !== 1 || !$wallet) {
+                return $n;
+            }
+            $cur = self::byId($id);
+            if ($paid && Db::run("UPDATE jobs SET wallet_state='charged' WHERE id=? AND wallet_state IN ('none','released')", [$id])->rowCount() === 1) {
+                Wallets::entry((int) $job['wallet_id'], 'charge', -(int) $charge, $actor, $note !== '' ? $note : 'Admin sửa đơn sang «hoàn tất» — trừ tiền đơn', $cur);
+            }
+            if ($to === 'failed' && Db::run("UPDATE jobs SET wallet_state='none' WHERE id=? AND wallet_state='charged'", [$id])->rowCount() === 1) {
+                // tính số đã trừ SAU khi giữ quyền ghi (trong cùng giao dịch) → không hoàn theo một con số đã cũ
+                $refund = -(int) Db::val("SELECT COALESCE(SUM(amount), 0) FROM wallet_entries WHERE job_id=? AND kind IN ('purchase','charge','refund')", [$id]);
+                if ($refund > 0) {
+                    Wallets::entry((int) $job['wallet_id'], 'refund', $refund, $actor, $note !== '' ? $note : 'Admin sửa đơn sang «thất bại» — hoàn lại tiền đã trừ', $cur);
+                }
+            }
+            return $n;
+        });
+        if ($n !== 1) {
+            return 'Đơn vừa đổi trạng thái — tải lại trang rồi thử lại.';
+        }
+        $money = $paid ? ' — trừ ví ' . Money::fmt((int) $charge, (string) $job['currency']) : ($refund > 0 ? ' — hoàn ví ' . Money::fmt($refund, (string) $job['currency']) : '');
+        self::event($id, 'admin', 'status', $admin . ' sửa trạng thái: ' . self::LABEL[$from] . ' → ' . self::LABEL[$to] . $money . ($note !== '' ? ' (' . $note . ')' : ''));
+        Webhooks::enqueue(self::byId($id), 'job.' . $to, ['corrected' => true, 'previous_status' => $from]);
+        return null;
+    }
+
+    /**
+     * Admin XOÁ HẲN đơn: đơn + ảnh (cả tệp) + nhật ký. Không xoá được đơn máy đang làm / chờ OTP, và đơn chờ đối soát còn tạm giữ ví.
+     * Đơn còn chờ máy thì HUỶ trước (shop nhận job.cancelled — webhook đang chờ gửi được giữ lại). Dòng sổ cái của ví giữ nguyên
+     * (còn mã đơn) để số dư không lệch. Trả null hoặc câu lỗi.
+     */
+    public static function adminDelete(int $id, string $admin): ?string
+    {
+        $job = self::byId($id);
+        if (!$job) {
+            return 'Không có đơn này.';
+        }
+        if (in_array($job['status'], self::ACTIVE, true)) {
+            return 'Máy đang làm đơn này — chuyển sang «chờ đối soát» hoặc chờ máy báo kết quả rồi mới xoá.';
+        }
+        $walletOn = Wallets::enabled();
+        if ($job['status'] === 'review') {
+            // shop đang chờ kết quả cuối (được dặn không hoàn tiền trước job.done / job.failed) và ảnh là bằng chứng để đối soát
+            return 'Đơn đang chờ đối soát — chốt «đã nạp» / «chưa nạp» trước (shop nhận kết quả cuối) rồi mới xoá.';
+        }
+        if ($job['status'] === 'queued') {
+            [$code] = self::cancel($job, 'admin');
+            if ($code !== 200) {
+                return 'Đơn vừa được giao cho máy — không xoá được.';
+            }
+        }
+        $images = [];
+        $n = Db::tx(static function () use ($id, $walletOn, &$images): int {
+            $n = Db::run('DELETE FROM jobs WHERE id=? AND status NOT IN ' . self::IN_ACTIVE . " AND status NOT IN ('queued','review')", [$id])->rowCount();
+            if ($n !== 1) {
+                return 0;
+            }
+            $images = Db::all('SELECT path FROM job_images WHERE job_id=?', [$id]);      // đọc SAU khi giữ quyền ghi: không sót ảnh vừa tải lên
+            Db::run('DELETE FROM job_images WHERE job_id=?', [$id]);
+            Db::run('DELETE FROM job_events WHERE job_id=?', [$id]);
+            Db::run("DELETE FROM webhooks WHERE job_id=? AND status<>'pending'", [$id]);     // webhook chưa gửi (vd job.cancelled) vẫn gửi cho shop
+            if ($walletOn) {
+                Db::run('UPDATE wallet_entries SET job_id=NULL WHERE job_id=?', [$id]);       // còn job_pid → sổ cái vẫn biết của đơn nào
+            }
+            return 1;
+        });
+        if ($n !== 1) {
+            return 'Đơn vừa đổi trạng thái — tải lại trang rồi thử lại.';
+        }
+        foreach ($images as $im) {
+            Storage::delete((string) $im['path']);
+        }
+        return null;
     }
 
     /* ---------- dọn: đơn chờ quá lâu → expired; tool im lặng → review ---------- */

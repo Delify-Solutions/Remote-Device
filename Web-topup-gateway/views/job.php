@@ -3,11 +3,28 @@ $isActive = in_array($job['status'], Jobs::ACTIVE, true) || $job['status'] === '
 $actor = ['shop' => ['Shop', 'info'], 'tool' => ['Tool', 'success'], 'admin' => ['Admin', 'primary'], 'system' => ['Hệ thống', 'secondary']];
 $itemStatus = ['done' => ['success', 'đã nạp'], 'unavailable' => ['warning', 'không mua được'], 'failed' => ['danger', 'lỗi'], 'skipped' => ['secondary', 'bỏ qua']];
 $held = !empty($job['wallet_id']) && ($job['wallet_state'] ?? null) === 'held';
+$queued = $job['status'] === 'queued';
+$canDelete = !in_array($job['status'], Jobs::ACTIVE, true) && !($job['status'] === 'review' && $held);
+// đổi trạng thái tay: đơn chờ đối soát đã có thẻ chốt riêng ở dưới, đơn chờ máy đã có nút «Huỷ đơn»
+$manual = in_array($job['status'], ['queued', 'review'], true) ? [] : (Jobs::MANUAL[$job['status']] ?? []);
+$walletJob = Wallets::enabled() && !empty($job['wallet_id']);
+$manualHelp = [
+    'review' => 'Máy đang làm sẽ bị từ chối khi báo tiếp. Tạm giữ cả chi phí đơn trong ví; sau đó chốt «đã nạp» / «chưa nạp» như đơn chờ đối soát.',
+    'failed' => 'Báo shop đơn THẤT BẠI (sửa kết quả đã chốt).' . ($walletJob ? ' Hoàn lại vào ví đúng số tiền đơn này đã trừ.' : ''),
+    'done'   => 'Báo shop đơn HOÀN TẤT (sửa kết quả đã chốt).' . ($walletJob ? ' Trừ ví số tiền nhập dưới đây (nếu đơn chưa bị trừ).' : '') . ' Không kiểm lại giới hạn gói «1 lần / tài khoản».',
+];
+$isTest = (int) $job['shop_key_id'] === (int) ($testKeyId ?? 0);
 ?>
 <div class="page-head" <?= $isActive ? 'data-live="6"' : '' ?>>
-  <div><h4 class="mb-1 d-flex align-items-center flex-wrap gap-2">Đơn <?= e($job['ref']) ?> <?= status_badge($job['status']) ?></h4>
+  <div><h4 class="mb-1 d-flex align-items-center flex-wrap gap-2">Đơn <?= e($job['ref']) ?> <?= status_badge($job['status']) ?><?= $isTest ? ' <span class="badge bg-label-warning">đơn thử</span>' : '' ?></h4>
     <p class="mb-0 text-body-secondary mono"><?= e($job['pid']) ?><?= $isActive ? ' · đang theo dõi, tự làm mới mỗi 6 giây' : '' ?></p></div>
-  <a class="btn btn-label-secondary" href="/admin/jobs"><i class="ti tabler-arrow-left me-1"></i>Danh sách đơn</a>
+  <div class="d-flex flex-wrap gap-2">
+    <button type="button" class="btn btn-label-primary" data-bs-toggle="modal" data-bs-target="#m-edit"><i class="ti tabler-pencil me-1"></i>Sửa</button>
+    <?php if ($manual): ?><button type="button" class="btn btn-label-warning" data-bs-toggle="modal" data-bs-target="#m-status"><i class="ti tabler-arrows-exchange me-1"></i>Đổi trạng thái</button><?php endif; ?>
+    <form method="post" action="/admin/jobs/<?= (int) $job['id'] ?>/delete" data-confirm="XOÁ HẲN đơn <?= e($job['ref']) ?>? Xoá cả ảnh và nhật ký, không lấy lại được.<?= $queued ? ' Đơn đang chờ máy sẽ bị huỷ trước (shop nhận job.cancelled).' : '' ?><?= $job['status'] === 'done' ? ' Gói «1 lần» của tài khoản này sẽ mua lại được.' : '' ?>"><?= Csrf::field() ?>
+      <button class="btn btn-label-danger" <?= $canDelete ? '' : 'disabled title="Máy đang làm / đơn đang tạm giữ ví — không xoá được"' ?>><i class="ti tabler-trash me-1"></i>Xoá</button></form>
+    <a class="btn btn-label-secondary" href="/admin/jobs"><i class="ti tabler-arrow-left me-1"></i>Danh sách đơn</a>
+  </div>
 </div>
 
 <?php if ($job['status'] === 'review'): ?>
@@ -70,6 +87,26 @@ $held = !empty($job['wallet_id']) && ($job['wallet_state'] ?? null) === 'held';
             <td><?= (int) $it['qty'] ?></td>
             <td><?php if ($r): [$c, $t] = $itemStatus[$r['status']] ?? ['secondary', $r['status']]; ?><span class="badge bg-label-<?= $c ?>"><?= e($t) ?> <?= (int) $r['qty_done'] ?>/<?= (int) $it['qty'] ?></span><?php if ($r['message']): ?><div class="small text-body-secondary mt-1"><?= e($r['message']) ?></div><?php endif; ?><?php else: ?><span class="text-body-secondary">—</span><?php endif; ?></td></tr>
         <?php endforeach; ?></tbody></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h5 class="card-title mb-0">Thông tin đăng nhập của khách</h5>
+        <?php if ($job['login_enc'] && $poolForm): ?>
+        <form method="post" action="/admin/jobs/<?= (int) $job['id'] ?>/login" data-ajax="login" id="f-login"><?= Csrf::field() ?>
+          <button class="btn btn-sm btn-label-secondary"><i class="ti tabler-eye me-1"></i>Hiện</button></form>
+        <?php endif; ?>
+      </div>
+      <div class="card-body">
+      <?php if (!$job['login_enc']): ?><p class="mb-0 text-body-secondary">Đơn đã kết thúc — máy chủ đã xoá thông tin đăng nhập.</p>
+      <?php elseif (!$poolForm): ?><p class="mb-0 text-body-secondary">Pool của đơn không còn.</p>
+      <?php else: ?>
+        <dl class="kv mb-0"><?php foreach ($poolForm['fields'] as $f): ?>
+          <dt><?= e($f['label']) ?></dt><dd class="mono" data-login-key="<?= e($f['key']) ?>">••••••</dd>
+        <?php endforeach; ?></dl>
+        <p class="form-text mb-0 mt-3">Đang che. Bấm «Hiện» để xem — mỗi lần xem được ghi vào nhật ký đơn.</p>
+      <?php endif; ?>
       </div>
     </div>
 
@@ -149,3 +186,53 @@ $held = !empty($job['wallet_id']) && ($job['wallet_state'] ?? null) === 'held';
     </div>
   </div>
 </div>
+
+<!-- Sửa đơn: đơn chờ máy sửa được hết; đơn đã giao máy / kết thúc chỉ sửa ghi chú -->
+<div class="modal fade" id="m-edit" tabindex="-1" aria-labelledby="m-edit-title" aria-hidden="true">
+  <div class="modal-dialog <?= $queued ? 'modal-lg modal-dialog-scrollable' : '' ?>"><div class="modal-content">
+    <form method="post" action="/admin/jobs/<?= (int) $job['id'] ?>/update" data-ajax="go" autocomplete="off"
+      <?php if ($queued && $poolForm): ?>data-job-form="<?= e(jenc([$poolForm])) ?>" data-job-values="<?= e(jenc(['items' => array_column(array_map(static fn ($i) => ['c' => (string) $i['code'], 'q' => (int) $i['qty']], $items), 'q', 'c')])) ?>" data-job-edit="1"<?php endif; ?>>
+      <?= Csrf::field() ?><input type="hidden" name="scope" value="<?= $queued && $poolForm ? 'full' : 'note' ?>">
+      <div class="modal-header"><h5 class="modal-title" id="m-edit-title">Sửa đơn <?= e($job['ref']) ?></h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button></div>
+      <div class="modal-body">
+        <?php if ($queued && $poolForm): ?>
+          <p class="text-body-secondary">Đơn còn chờ máy nên sửa được tài khoản, gói, số lượng, ghi chú<?= $isTest ? ', mã đơn' : '' ?>. Ô bí mật (mật khẩu…) để trống = giữ nguyên. Shop không được báo khi đơn bị sửa.</p>
+          <div><label class="form-label" for="e-ref">Mã đơn</label><input class="form-control mono" id="e-ref" name="ref" value="<?= e($job['ref']) ?>" maxlength="80" pattern="[A-Za-z0-9_.:\-]{1,80}" required<?= $isTest ? '' : ' readonly' ?>>
+            <?php if (!$isTest): ?><div class="form-text">Mã đơn của shop không đổi được — shop dùng nó để không tạo trùng đơn khi gửi lại.</div><?php endif; ?></div>
+          <div data-job-fields></div>
+        <?php else: ?>
+          <p class="text-body-secondary">Đơn <?= $isActive ? 'đang được máy làm' : 'đã kết thúc' ?> nên chỉ sửa ghi chú.<?= $manual ? ' Muốn đổi kết quả: dùng «Đổi trạng thái».' : '' ?></p>
+        <?php endif; ?>
+        <div class="mt-4"><label class="form-label" for="e-note">Ghi chú</label><input class="form-control" id="e-note" name="note" maxlength="500" value="<?= e($job['note'] ?? '') ?>"></div>
+        <div class="alert alert-danger mt-4 mb-0 ajax-error" role="alert" hidden></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Đóng</button><button class="btn btn-primary"><i class="ti tabler-check me-1"></i>Lưu</button></div>
+    </form>
+  </div></div>
+</div>
+
+<?php if ($manual): ?>
+<div class="modal fade" id="m-status" tabindex="-1" aria-labelledby="m-status-title" aria-hidden="true">
+  <div class="modal-dialog"><div class="modal-content">
+    <form method="post" action="/admin/jobs/<?= (int) $job['id'] ?>/status" data-confirm="Đổi trạng thái đơn <?= e($job['ref']) ?>? Shop sẽ nhận webhook trạng thái mới.">
+      <?= Csrf::field() ?>
+      <div class="modal-header"><h5 class="modal-title" id="m-status-title">Đổi trạng thái đơn</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Đóng"></button></div>
+      <div class="modal-body">
+        <p>Hiện tại: <?= status_badge($job['status']) ?></p>
+        <?php foreach ($manual as $k => $to): ?>
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="radio" name="to" id="st-<?= e($to) ?>" value="<?= e($to) ?>" <?= $k === 0 ? 'checked' : '' ?> required>
+          <label class="form-check-label" for="st-<?= e($to) ?>"><b><?= e(Jobs::LABEL[$to] ?? $to) ?></b><div class="small text-body-secondary"><?= e($manualHelp[$to] ?? '') ?></div></label>
+        </div>
+        <?php endforeach; ?>
+        <?php if ($walletJob && in_array('done', $manual, true) && in_array($job['wallet_state'] ?? null, ['none', 'released'], true)): $cur = (string) $job['currency']; ?>
+        <div class="mb-3"><label class="form-label" for="st-charge">Số tiền đã trừ ở tài khoản Apple (<?= e($cur) ?>) — chỉ dùng khi chọn «Hoàn tất»</label>
+          <input class="form-control" id="st-charge" name="charge" inputmode="decimal" value="<?= e(Money::plain((int) $job['cost'], $cur)) ?>" style="max-width:12rem"></div>
+        <?php endif; ?>
+        <div><label class="form-label" for="st-note">Lý do (ghi vào nhật ký đơn<?= $walletJob ? ' và sổ cái ví' : '' ?>)</label><input class="form-control" id="st-note" name="note" maxlength="300"></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Đóng</button><button class="btn btn-warning"><i class="ti tabler-arrows-exchange me-1"></i>Đổi trạng thái</button></div>
+    </form>
+  </div></div>
+</div>
+<?php endif; ?>

@@ -70,6 +70,46 @@ final class Admin
             if ($m === 'GET' && !isset($s[1])) {
                 self::jobs($user);
             }
+            if ($m === 'POST' && ($s[1] ?? '') === 'create') {           // modal «Tạo đơn thử» (gửi bằng fetch, trả JSON)
+                [$code, $res] = Jobs::adminCreate(self::jobInput(true), $user['username']);
+                if ($code === 201) {
+                    Flash::set('Đã tạo đơn thử ' . $res['job']['ref'] . ' — máy nhận đơn của pool này sẽ nạp THẬT.');
+                    Res::json(['ok' => true, 'url' => '/admin/jobs/' . (int) $res['job_row_id']]);
+                }
+                Res::json(['ok' => false, 'error' => !empty($res['duplicate']) ? 'Đã có đơn thử mã này — đổi mã đơn.' : (string) ($res['message'] ?? 'Không tạo được đơn.')], 200);
+            }
+            if ($m === 'POST' && $id && $act === 'login') {                // «Hiện» thông tin đăng nhập (ghi nhật ký đơn)
+                $login = Jobs::adminLogin($id, $user['username']);
+                Res::json($login === null ? ['ok' => false, 'error' => 'Đơn đã kết thúc — máy chủ đã xoá thông tin đăng nhập.'] : ['ok' => true, 'login' => (object) $login]);
+            }
+            if ($m === 'POST' && $id && $act === 'update') {               // modal «Sửa đơn» (fetch, JSON)
+                $err = Jobs::adminUpdate($id, self::jobInput((string) Req::post('scope', '') === 'full'), $user['username']);
+                if ($err === null) {
+                    Flash::set('Đã lưu đơn.');
+                }
+                Res::json($err === null ? ['ok' => true] : ['ok' => false, 'error' => $err]);
+            }
+            if ($m === 'POST' && $id && $act === 'status') {
+                $to = (string) Req::post('to', '');
+                $job = Jobs::byId($id);
+                $charge = null;
+                if ($job && $to === 'done' && Wallets::enabled() && !empty($job['wallet_id']) && trim((string) Req::post('charge', '')) !== '') {
+                    [$charge, $cerr] = Jobs::chargeInput($job, (string) Req::post('charge', ''));
+                    if ($cerr !== null) {
+                        Flash::set($cerr, 'bad');
+                        Res::redirect('/admin/jobs/' . $id);
+                    }
+                }
+                $err = Jobs::adminSetStatus($id, $to, $user['username'], $charge, (string) Req::post('note', ''));
+                $err === null ? Flash::set('Đã đổi trạng thái đơn sang «' . (Jobs::LABEL[$to] ?? $to) . '».') : Flash::set($err, 'bad');
+                Res::redirect('/admin/jobs/' . $id);
+            }
+            if ($m === 'POST' && $id && $act === 'delete') {
+                $job = Jobs::byId($id);
+                $err = Jobs::adminDelete($id, $user['username']);
+                $err === null ? Flash::set('Đã xoá đơn ' . ($job['ref'] ?? '') . '.') : Flash::set($err, 'bad');
+                Res::redirect($err === null || (string) Req::post('back', '') === 'list' ? '/admin/jobs' : '/admin/jobs/' . $id);
+            }
             if ($m === 'GET' && $id) {
                 self::job($user, $id);
             }
@@ -186,7 +226,7 @@ final class Admin
             'recent'      => Db::all('SELECT j.*, p.name AS pool_name FROM jobs j LEFT JOIN pools p ON p.id=j.pool_id ORDER BY j.id DESC LIMIT 12'),
             'whFailed'    => (int) Db::val("SELECT COUNT(*) FROM webhooks WHERE status='failed' AND created_at>?", [time() - 86400]),
             'whPending'   => (int) Db::val("SELECT COUNT(*) FROM webhooks WHERE status='pending'"),
-            'hasShopKey'  => (int) Db::val("SELECT COUNT(*) FROM api_keys WHERE kind='shop'") > 0,
+            'hasShopKey'  => (int) Db::val("SELECT COUNT(*) FROM api_keys WHERE kind='shop' AND id<>?", [(int) Settings::get('admin_test_key_id', '0')]) > 0,   // khoá «Đơn thử» không tính
             'hasToolKey'  => (int) Db::val("SELECT COUNT(*) FROM api_keys WHERE kind='tool'") > 0,
             'hasPool'     => (int) Db::val('SELECT COUNT(*) FROM pools') > 0,
             'lowWallets'  => Wallets::low(),
@@ -388,7 +428,49 @@ final class Admin
                          FROM jobs j LEFT JOIN pools p ON p.id=j.pool_id' . ($wallets ? ' LEFT JOIN wallets w ON w.id=j.wallet_id' : '')
                          . $w . ' ORDER BY j.id DESC LIMIT ' . $per . ' OFFSET ' . (($page - 1) * $per), $args);
         view('jobs', ['user' => $user, 'nav' => 'jobs', 'title' => 'Đơn nạp', 'rows' => $rows, 'total' => $total, 'page' => $page, 'per' => $per,
-                      'status' => $status, 'pool' => $pool, 'q' => $q, 'pools' => Db::all('SELECT id, name FROM pools ORDER BY name'), 'wallets' => $wallets]);
+                      'status' => $status, 'pool' => $pool, 'q' => $q, 'pools' => Db::all('SELECT id, name FROM pools ORDER BY name'), 'wallets' => $wallets,
+                      'poolForms' => self::poolForms()]);
+    }
+
+    /** Dữ liệu đơn từ form tạo / sửa: pool, ref, login[khoá], gói (pk_code[] + pk_qty[], bỏ dòng số lượng 0), ghi chú. */
+    private static function jobInput(bool $full): array
+    {
+        $in = ['note' => (string) Req::post('note', '')];
+        if (!$full) {
+            return $in;
+        }
+        $login = [];
+        foreach ((is_array($_POST['login'] ?? null) ? $_POST['login'] : []) as $k => $v) {
+            if (is_string($k) && is_scalar($v)) {
+                $login[$k] = (string) $v;
+            }
+        }
+        $items = [];
+        $qty = Req::postArr('pk_qty');
+        foreach (Req::postArr('pk_code') as $i => $code) {
+            $q = (int) ($qty[$i] ?? 0);
+            if (is_scalar($code) && $q > 0) {
+                $items[] = ['code' => (string) $code, 'qty' => $q];
+            }
+        }
+        return $in + ['pool' => (string) Req::post('pool', ''), 'ref' => (string) Req::post('ref', ''), 'login' => $login, 'items' => $items];
+    }
+
+    /** Cấu hình pool gọn cho form tạo / sửa đơn ở trình duyệt (trường đăng nhập + gói đang bán). */
+    public static function poolForms(?int $only = null): array
+    {
+        $out = [];
+        foreach (Pools::all() as $p) {
+            if ($only !== null && (int) $p['id'] !== $only) {
+                continue;
+            }
+            $out[] = ['code' => $p['code'], 'name' => $p['name'], 'active' => (bool) (int) $p['active'],
+                      'fields' => array_map(static fn (array $f): array => array_intersect_key($f, array_flip(['key', 'label', 'type', 'required', 'secret', 'hint', 'options'])), $p['cfg']['login_fields']),
+                      'packages' => array_map(static fn (array $k): array => ['code' => (string) $k['code'], 'name' => $k['name'], 'limit_type' => $k['limit_type'],
+                                                                             'max' => $k['limit_type'] !== 'multi' ? 1 : ((int) $k['max_qty'] > 0 ? (int) $k['max_qty'] : 99)],
+                                              Pools::packages((int) $p['id'], true))];
+        }
+        return $out;
     }
 
     private static function job(array $user, int $id): never
@@ -409,6 +491,8 @@ final class Admin
             'hooks' => Db::all('SELECT * FROM webhooks WHERE job_id=? ORDER BY id', [$id]),
             'wallet' => !empty($job['wallet_id']) ? Wallets::find((int) $job['wallet_id']) : null,
             'ledger' => Wallets::forJob($id),
+            'poolForm' => self::poolForms((int) $job['pool_id'])[0] ?? null,
+            'testKeyId' => (int) Settings::get('admin_test_key_id', '0'),
         ]);
     }
 
