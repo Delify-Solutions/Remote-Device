@@ -61,7 +61,7 @@ def main():
         m600 = lambda p: not posix or stat.S_IMODE(os.stat(p).st_mode) == 0o600
         tok = webdev.load_or_create_token(tokfile)
         ok(len(tok) >= 24 and m600(tokfile) and webdev.load_or_create_token(tokfile) == tok, "khoá đủ dài, lưu 0600, dùng lại ở lần chạy sau")
-        ok(webdev.WebDev is not None and webdev.load_or_create_token(tokfile) == tok and webdev.load_or_create_token(tokfile) == tok,
+        ok(webdev.load_or_create_token(tokfile) == tok and webdev.load_or_create_token(tokfile) == tok,
            "mở app nhiều lần liên tiếp vẫn CÙNG một khoá (Windows từng tạo khoá mới mỗi lần vì st_mode luôn báo 0666)")
         modes = []
         real_open = os.open

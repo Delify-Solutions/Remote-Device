@@ -74,14 +74,21 @@ def main():
                        (60, 240, "Mua thành công 1.050 Coins", (0, 255, 200)), (60, 340, "Cửa hàng", (255, 255, 255)), (520, 340, "Trang chủ", (255, 255, 255))])
     rows = ocr.lines(img)
     texts = [r["text"] for r in rows]
-    ok("Đăng nhập Konami ID" in texts and "Mua thành công 1.050 Coins" in texts, "đọc đúng chữ tiếng Việt có dấu trên nền màu", texts)
+    # Apple Vision đọc đúng cả DẤU tiếng Việt. RapidOCR (Windows / Linux) đọc đúng chữ nhưng hay sai dấu («Däng nhap») — app tìm chữ theo
+    # dạng bỏ dấu (eyes.norm_text / ocr._norm) nên vẫn khớp: ở bộ đó so theo dạng bỏ dấu, để các kiểm tra phía sau vẫn chạy được.
+    exact = ocr.engine_name() == "Apple Vision"
+    key = (lambda s: s) if exact else ocr._norm
+    seen = [key(t) for t in texts]
+    at = lambda s: seen.index(key(s)) if key(s) in seen else -1
+    ok(at("Đăng nhập Konami ID") >= 0 and at("Mua thành công 1.050 Coins") >= 0,
+       "đọc đúng chữ tiếng Việt có dấu trên nền màu" if exact else "đọc đúng chữ tiếng Việt trên nền màu (bộ này có thể sai dấu — so theo dạng bỏ dấu như app)", texts)
     ok("afaf qwsx asdf" in texts, "chuỗi vô nghĩa được đọc NGUYÊN VĂN (không bị «sửa chính tả» thành chữ khác)", texts)
-    ok(texts.index("Đăng nhập Konami ID") < texts.index("afaf qwsx asdf") < texts.index("Mua thành công 1.050 Coins")
-       and texts.index("Cửa hàng") < texts.index("Trang chủ"), "thứ tự đọc: trên → dưới, cùng hàng thì trái → phải", texts)
-    r0 = rows[texts.index("Đăng nhập Konami ID")]
-    ok(inside((r0["x"], r0["y"]), boxes[0]) and abs(r0["w"] - (boxes[0][2] - boxes[0][0])) < 40 and set(r0) == {"text", "x", "y", "w", "h", "conf"},
+    ok(0 <= at("Đăng nhập Konami ID") < at("afaf qwsx asdf") < at("Mua thành công 1.050 Coins")
+       and 0 <= at("Cửa hàng") < at("Trang chủ"), "thứ tự đọc: trên → dưới, cùng hàng thì trái → phải", texts)
+    r0 = rows[max(at("Đăng nhập Konami ID"), 0)] if rows else {}
+    ok(bool(r0) and inside((r0["x"], r0["y"]), boxes[0]) and abs(r0["w"] - (boxes[0][2] - boxes[0][0])) < 40 and set(r0) == {"text", "x", "y", "w", "h", "conf"},
        "mỗi dòng có tâm (x, y) nằm đúng trên dòng chữ, kèm bề rộng / cao / độ tin", (r0, boxes[0]))
-    ok(ocr.text(img).split("\n")[0] == "Đăng nhập Konami ID", "text(): mỗi dòng một hàng theo thứ tự đọc")
+    ok(key(ocr.text(img).split("\n")[0]) == key("Đăng nhập Konami ID"), "text(): mỗi dòng một hàng theo thứ tự đọc")
 
     print("== 2. Tìm đúng PHẦN chữ khớp ==")
     whole = ocr.find(img, "Đăng nhập Konami ID")

@@ -16,6 +16,7 @@ asgiref==3.13.0
 ASGIWebDAV==2.3.0
 asn1==2.8.0
 asttokens==3.0.2
+av==19.0.2
 backports.zstd==1.8.1
 bitarray==3.12.4
 bitstring==4.4.0
@@ -27,6 +28,8 @@ cffi==2.1.1
 chardet==7.7.0
 charset-normalizer==3.5.3
 click==8.5.1
+clr-loader==0.3.1
+colorama==0.4.6
 coloredlogs==15.0.1
 colorlog==6.12.0
 construct==2.10.70
@@ -53,11 +56,12 @@ ifaddr==0.2.0
 intelhex==2.3.0
 ioregistry==0.0.7
 ipsw-parser==1.9.2
-ipython_pygments_lexers==1.1.1
 ipython==9.19.1
+ipython_pygments_lexers==1.1.1
 jedi==0.20.1
 jiter==0.19.0
 loguru==0.7.3
+lzfse==0.4.2.post1
 markdown-it-py==4.3.0
 matplotlib-inline==0.2.2
 mdurl==0.1.2
@@ -86,8 +90,8 @@ pyclipper==1.4.0
 pycparser==3.12
 pycrashreport==2.8.0
 pycryptodome==4.6.0
-pydantic_core==2.50.5
 pydantic==2.14.4
+pydantic_core==2.50.5
 Pygments==2.21.0
 pygnuutils==0.1.1
 pyimg4==0.8.9
@@ -101,13 +105,16 @@ pyobjc-framework-Quartz==13.1
 pyobjc-framework-Security==13.1
 pyobjc-framework-UniformTypeIdentifiers==13.1
 pyobjc-framework-WebKit==13.1
+pyreadline3==3.5.6
 pyserial==3.5
 pytesseract==0.3.13
 python-dateutil==4.0.0
 python-dotenv==1.2.4
 python-pcapng==2.1.1
+pythonnet==3.2.1
 pytun-pmd3==3.0.3
 pywebview==6.2.1
+pywin32==312
 PyYAML==6.0.4
 qh3==1.9.4
 questionary==2.1.1
@@ -131,8 +138,8 @@ tqdm==4.70.1
 traitlets==5.16.1
 typer-injector==0.3.0
 typer==0.29.3
-typing_extensions==4.16.0
 typing-inspection==0.4.5
+typing_extensions==4.16.0
 tzdata==2026.6
 urllib3==2.8.0
 uvicorn==0.54.0

@@ -2,8 +2,9 @@
 # packaging/smoke.sh <windows|macos> — CÀI THỬ bộ cài vừa dựng (dist/) vào một thư mục tạm rồi chạy kiểm tra từ chính bản đã cài.
 # Chặn mạng của bước cài (proxy chết) để chắc là cài được khi KHÔNG có mạng.
 #
-#   bắt buộc đạt : cài xong, nạp được mọi thư viện, lệnh pymobiledevice3 / farm chạy được, bộ đọc chữ, dữ liệu mặc định, test_portable, test_wallets, test_mcp
-#   chỉ báo cáo  : các bộ test còn lại (chưa từng chạy trên máy dựng này — kết quả in ra để xem, không làm hỏng lần dựng)
+#   bắt buộc đạt : cài xong, nạp được mọi thư viện, lệnh pymobiledevice3 / farm chạy được, bộ đọc chữ, dữ liệu mặc định, test_portable, test_wallets, test_mcp, test_webdev
+#   chỉ báo cáo  : các bộ test còn lại — kết quả in ra để xem, không làm hỏng lần dựng. (test_ocr viết cho Apple Vision: trên Windows bộ
+#                  RapidOCR đọc sai DẤU tiếng Việt nên các mục so nguyên văn có dấu không đạt; app tìm chữ theo dạng bỏ dấu.)
 set -uo pipefail
 
 PLATFORM="${1:-}"
@@ -84,14 +85,14 @@ else
 fi
 
 step "bộ test bắt buộc"
-for t in test_portable test_wallets test_mcp; do
+for t in test_portable test_wallets test_mcp test_webdev; do
   out="$("$PY" "app/tests/$t.py" 2>&1)"; rc=$?
   echo "  $t rc=$rc :: $(printf '%s\n' "$out" | tail -1)"
   [ $rc -eq 0 ] || { printf '%s\n' "$out" | grep -E '✗|Error|Traceback' | head -20; bad=$((bad + 1)); }
 done
 
 step "bộ test còn lại (chỉ báo cáo)"
-for t in test_history test_groups test_screencheck test_board test_webdev test_notify test_ocr test_aiscreen test_nav; do
+for t in test_history test_groups test_screencheck test_board test_notify test_ocr test_aiscreen test_nav; do
   out="$("$PY" "app/tests/$t.py" 2>&1)"; rc=$?
   echo "  $t rc=$rc :: $(printf '%s\n' "$out" | tail -1)"
   [ $rc -eq 0 ] || printf '%s\n' "$out" | grep -E '✗|Error|Traceback' | head -8 | sed 's/^/      /'

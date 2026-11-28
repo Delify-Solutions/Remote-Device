@@ -148,7 +148,7 @@ def mcp_config(show_token: bool = False) -> str:
     farm = os.path.join(ROOT, "farm.bat" if os.name == "nt" else "farm")      # Windows: farm.bat (./farm là script sh)
     lines = ["KẾT NỐI AI VỚI IPHONE FARM (MCP)", "",
              "1) Claude Code — chạy một lần trong terminal:",
-             "     claude mcp add iphone-farm -- %s mcp" % farm, "",
+             "     claude mcp add iphone-farm -- %s mcp" % ('"%s"' % farm if " " in farm else farm), "",
              "2) Claude Desktop / Cursor / client khác — thêm vào tệp cấu hình MCP:",
              json.dumps({"mcpServers": {"iphone-farm": {"command": farm, "args": ["mcp"]}}}, ensure_ascii=False, indent=2), ""]
     ep = control.load_endpoint()

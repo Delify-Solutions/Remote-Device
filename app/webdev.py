@@ -57,8 +57,10 @@ SHIM = r"""(function () {
 
 
 def _owner_only(path: str) -> bool:
-    """Tệp chỉ chủ máy đọc được? Windows KHÔNG có bit quyền kiểu POSIX (st_mode luôn báo 0666 dù tệp nằm trong hồ sơ người dùng, vốn được
-    ACL của hồ sơ bảo vệ) — coi bit đó là «đã lộ» thì khoá bị tạo lại ở MỌI lần mở app. Trên Windows tin vào ACL của hồ sơ người dùng."""
+    """Tệp chỉ chủ máy đọc được? Windows KHÔNG có bit quyền kiểu POSIX: st_mode luôn báo 0666 và quyền 0600 lúc tạo tệp cũng không có tác
+    dụng — coi bit đó là «đã lộ» thì khoá bị tạo lại ở MỌI lần mở app mà tệp mới vẫn y quyền cũ (không an toàn hơn chút nào). Trên Windows
+    quyền đọc tệp do ACL của thư mục cài quyết định: bộ cài đặt app trong %LOCALAPPDATA% (chỉ người dùng đó đọc được); cài tay bằng
+    setup.bat vào thư mục dùng chung thì tài khoản khác trên CÙNG máy đọc được khoá (máy chủ chỉ nghe ở 127.0.0.1)."""
     return os.name == "nt" or not (os.stat(path).st_mode & 0o077)
 
 

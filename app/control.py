@@ -1074,5 +1074,6 @@ class AppServer:
         return {"running": self.httpd is not None, "port": self.port, "token": self.token, "error": self.error,
                 "url": ("http://127.0.0.1:%d/mcp" % self.port) if self.port else None,
                 "farm": farm, "active": self.control.active(),
-                "claude_code": "claude mcp add iphone-farm -- %s mcp" % farm,
+                # đường dẫn có dấu cách (vd C:\\Users\\Nguyen Van A\\AppData\\…) phải nằm trong nháy kép thì lệnh dán vào terminal mới chạy
+                "claude_code": "claude mcp add iphone-farm -- %s mcp" % ('"%s"' % farm if " " in farm else farm),
                 "json": json.dumps({"mcpServers": {"iphone-farm": {"command": farm, "args": ["mcp"]}}}, ensure_ascii=False, indent=2)}
