@@ -152,7 +152,10 @@ class McpServer:
     # ---------- một thông điệp vào → một thông điệp ra (hoặc None nếu không cần trả lời) ----------
     def handle(self, msg):
         if isinstance(msg, list):                  # gộp lô (chỉ đời 2025-03-26 có) → xử lý từng cái
-            out = [r for r in (self.handle(m) for m in msg) if r is not None]
+            # Phần tử của lô phải là một yêu cầu, KHÔNG phải một lô nữa: không đệ quy vào mảng lồng nhau — một dòng «[[[[…]]]]» lồng
+            # hàng nghìn tầng (Python 3.12 trở lên vẫn đọc được JSON đó) từng làm tràn ngăn xếp và giết máy chủ.
+            out = [r for r in (self._error(None, INVALID_REQUEST, "Invalid JSON-RPC 2.0 message") if isinstance(m, list) else self.handle(m)
+                               for m in msg) if r is not None]
             return out or None
         if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
             return self._error(None, INVALID_REQUEST, "Invalid JSON-RPC 2.0 message")

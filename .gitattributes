@@ -1,2 +1,6 @@
 # File .bat phải giữ xuống dòng kiểu Windows (CRLF) để cmd chạy đúng
 *.bat text eol=crlf
+# Script shell phải giữ LF kể cả khi lấy repo về Windows (Git Bash không chạy được dòng kết thúc bằng CRLF)
+*.sh text eol=lf
+*.command text eol=lf
+/farm text eol=lf

@@ -39,11 +39,15 @@ def main():
            "JPY không có phần lẻ; âm / «+» chỉ khi chỉnh số dư; chữ sai → None")
         ok(wallets.fmt(150000, "JPY") == "1.500 JPY" and wallets.fmt(6350, "CHF") == "63,50 CHF" and wallets.fmt(-100000, "JPY") == "-1.000 JPY",
            "hiện số tiền như gateway (1.500 JPY · 63,50 CHF)")
+        ok(wallets.currency("¥") == "JPY" and wallets.currency("jp") == "JPY" and wallets.currency("円") == "JPY" and wallets.currency("kr") == "KR" and wallets.currency("1kr") is None and wallets.currency("kr.") == "KR" and wallets.currency("Rs.") == "RS" and wallets.currency("лв.") == "ЛВ"
+       and wallets.currency("Fr.") == "FR" and wallets.currency("u.s.") == "USD" and wallets.currency(".") is None and wallets.currency("₹") == "₹" and wallets.currency("R$") == "R$"
+       and wallets.currency("toolong") is None
+           and wallets.label("JPY") == "JPY ¥", "loại tiền là nhãn: «¥» / «JP» → JPY (giống gateway); «kr» giữ nhãn riêng; nhãn «JPY ¥»")
         ok(wallets.mask("apple01@example.com") == "a***@example.com" and wallets.mask("0912345678") == "09***78", "che tài khoản Apple khi ghi nhật ký")
 
         print("== 2. Khai ví + mật khẩu Apple ID mã hoá ==")
         for bad, why in ((lambda: wallets.save("", "a@example.com", "JPY"), "thiếu máy"), (lambda: wallets.save("M1", "", "JPY"), "thiếu tài khoản"),
-                         (lambda: wallets.save("M1", "a@example.com", "JP"), "loại tiền sai")):
+                         (lambda: wallets.save("M1", "a@example.com", "1J"), "loại tiền sai")):
             try:
                 bad(); ok(False, "khai ví %s → báo lỗi" % why)
             except wallets.WalletError:

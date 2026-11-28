@@ -1514,6 +1514,7 @@ class Api:
                 devs.append({"name": w["machine"], "label": w["machine"], "gone": True})       # máy đã gỡ khỏi tool nhưng ví còn (để tra / bỏ ví)
         cur, pools = self._wallet_currencies()
         return {"ok": True, "devices": devs, "wallets": {w["machine"]: w for w in ws}, "currencies": cur, "pools": pools,
+                "labels": {c: wallets.label(c) for c in set(cur) | {w["currency"] for w in ws}},
                 "sync": PRESENCE.state()}
 
     def _wallet_do(self, fn):
@@ -1532,7 +1533,8 @@ class Api:
     def wallet_save(self, machine, data=None):
         d = data if isinstance(data, dict) else {}
         old = wallets.get(str(machine or ""))
-        if old and str(d.get("currency") or "").strip().upper() != old["currency"] and (RUNNER.is_running(str(machine)) or RUNNER.hold_reason(str(machine))):
+        # so theo nhãn ĐÃ chuẩn hoá: gõ «¥» cho ví đang là JPY không phải là đổi loại tiền
+        if old and (wallets.currency(d.get("currency")) or str(d.get("currency") or "").strip().upper()) != old["currency"] and (RUNNER.is_running(str(machine)) or RUNNER.hold_reason(str(machine))):
             # đơn đang chạy / chờ đối soát còn tính theo loại tiền cũ → tiền của đơn đó sẽ về sau, rơi vào loại tiền không còn ai thấy
             return {"ok": False, "error": "Máy đang chạy / chờ đối soát — dừng máy (và chốt đơn chờ đối soát) rồi mới đổi loại tiền của ví."}
         return self._wallet_do(lambda: wallets.save(str(machine or ""), d.get("apple_account"), d.get("currency"), d.get("note") or "",

@@ -119,7 +119,7 @@ final class Pools
         foreach (preg_split('/[\s,;]+/', trim($raw), -1, PREG_SPLIT_NO_EMPTY) ?: [] as $c) {
             $cur = Money::currency($c);
             if ($cur === null) {
-                return [[], 'Loại tiền «' . clean($c, 20) . '» không hợp lệ (mã ISO 3 chữ cái, vd JPY, CHF, USD).'];
+                return [[], 'Loại tiền «' . clean($c, 20) . '» không hợp lệ — gõ ký hiệu hoặc tên như máy hiện (vd ¥, kr, CHF): tối đa 6 ký tự chữ / ký hiệu tiền, không số, không khoảng trắng.'];
             }
             if (!in_array($cur, $out, true)) {
                 $out[] = $cur;
@@ -397,9 +397,8 @@ final class Pools
         }
         $existing = array_map('intval', array_column(Db::all('SELECT id FROM packages WHERE pool_id=?', [$poolId]), 'id'));
         $keep = array_values(array_intersect($existing, array_column($clean, 0)));
-        $pdo = Db::pdo();
-        $pdo->beginTransaction();
         try {
+          Db::tx(static function () use ($existing, $keep, $wallets, $clean, $poolId, $currencies): void {      // lồng được trong giao dịch ngoài (nạp seed)
             // xoá dòng bị bỏ TRƯỚC khi thêm: «xoá gói X rồi thêm lại gói X» không được vướng khoá UNIQUE
             foreach (array_diff($existing, $keep) as $gone) {
                 Db::run('DELETE FROM packages WHERE id=?', [$gone]);
@@ -429,9 +428,8 @@ final class Pools
                 $in = $currencies ? ' AND currency NOT IN (' . implode(',', array_fill(0, count($currencies), '?')) . ')' : '';
                 Db::run('DELETE FROM package_prices WHERE package_id IN (SELECT id FROM packages WHERE pool_id=?)' . $in, array_merge([$poolId], $currencies));
             }
-            $pdo->commit();
+          });
         } catch (Throwable $e) {
-            $pdo->rollBack();
             if (Db::isDuplicate($e)) {
                 return 'Mã gói bị trùng với một gói khác của pool (đổi chéo mã giữa hai gói thì lưu từng bước).';
             }
@@ -1032,11 +1030,39 @@ final class Money
     /** trần an toàn của một số tiền (×100) — xa giới hạn BIGINT, đủ cho mọi ví thật */
     public const MAX = 100000000000000;
 
-    /** Mã tiền ISO-4217 viết hoa (vd «jpy » → «JPY»), sai → null. */
+    /** Ký hiệu / tên nước người dùng hay gõ → mã ISO (Nhật: «¥» hoặc «JP» → JPY). Lưu luôn là mã ISO để khớp giá.
+     *  KHÔNG có «KR» (mã nước Hàn): «kr» là ký hiệu tiền Bắc Âu — gõ «kr» thì giữ nhãn «KR» riêng, không quy thành KRW. */
+    public const ALIASES = [
+        '¥' => 'JPY', '￥' => 'JPY', '円' => 'JPY', 'JP' => 'JPY', '$' => 'USD', 'US$' => 'USD', 'US' => 'USD', '€' => 'EUR', 'EU' => 'EUR',
+        '£' => 'GBP', 'GB' => 'GBP', 'UK' => 'GBP', '₩' => 'KRW', '₫' => 'VND', 'Đ' => 'VND', 'VN' => 'VND', 'CH' => 'CHF',
+        'DK' => 'DKK', 'SE' => 'SEK', 'NO' => 'NOK', 'CN' => 'CNY', 'RMB' => 'CNY', 'HK$' => 'HKD', 'HK' => 'HKD', 'S$' => 'SGD',
+        'SG' => 'SGD', 'NT$' => 'TWD', 'TW' => 'TWD', '฿' => 'THB', 'TH' => 'THB', 'RP' => 'IDR', 'ID' => 'IDR', 'A$' => 'AUD', 'AU' => 'AUD',
+        'C$' => 'CAD', 'CA' => 'CAD',
+    ];
+    /** Ký hiệu hiện kèm mã (nhãn giao diện). */
+    public const SYMBOLS = ['JPY' => '¥', 'USD' => '$', 'EUR' => '€', 'GBP' => '£', 'KRW' => '₩', 'VND' => '₫', 'CHF' => 'Fr.', 'CNY' => '¥',
+        'HKD' => 'HK$', 'SGD' => 'S$', 'TWD' => 'NT$', 'THB' => '฿', 'IDR' => 'Rp', 'AUD' => 'A$', 'CAD' => 'C$', 'DKK' => 'kr', 'SEK' => 'kr', 'NOK' => 'kr'];
+
+    /**
+     * Nhãn loại tiền → dạng lưu. Loại tiền chỉ là NHÃN để so khớp ví ⇄ giá gói và đối soát (tuỳ nước máy hiện ký hiệu hay tên): ký hiệu /
+     * tên biết rõ quy về mã ISO (¥ / JP / 円 → JPY) để «¥» và «JPY» là một; mã 3 chữ giữ nguyên; nhãn khác (vd «kr») giữ nguyên dạng viết
+     * hoa — 1–6 ký tự chữ / ký hiệu tiền, không số, không khoảng trắng. Dấu chấm bị BỎ («kr.» → «KR», «Rs.» → «RS»): nhãn nằm trong tên
+     * ô của form giá (pp_<nhãn>_amount[]) mà PHP đổi «.» trong tên ô thành «_» — để dấu chấm thì giá của loại tiền đó mất khi lưu.
+     * Không hợp lệ → null. Phải cho CÙNG kết quả với wallets.currency() của tool và ô loại tiền trong app.js.
+     */
     public static function currency(mixed $v): ?string
     {
-        $c = is_scalar($v) ? strtoupper(trim((string) $v)) : '';
-        return preg_match('/^[A-Z]{3}$/D', $c) === 1 ? $c : null;
+        $c = is_scalar($v) ? mb_strtoupper(trim((string) $v)) : '';
+        $c = str_replace('.', '', $c);
+        $c = self::ALIASES[$c] ?? $c;
+        return preg_match('/^[\p{L}\p{Sc}]{1,6}$/uD', $c) === 1 ? $c : null;
+    }
+
+    /** «JPY ¥» — mã kèm ký hiệu để người dùng nhận ra ngay. */
+    public static function label(string $cur): string
+    {
+        $cur = strtoupper($cur);
+        return isset(self::SYMBOLS[$cur]) ? $cur . ' ' . self::SYMBOLS[$cur] : $cur;
     }
 
     public static function decimals(string $cur): int
@@ -2010,7 +2036,7 @@ final class Jobs
             $cur = Money::currency($tw['currency'] ?? '');
             $av = $tw['available'] ?? null;
             if ($cur === null || !is_int($av) || abs($av) > Money::MAX) {
-                return [422, self::err('invalid_wallet', 'wallet phải là {currency: mã ISO 3 chữ, available: số nguyên ×100}.')];
+                return [422, self::err('invalid_wallet', 'wallet phải là {currency: nhãn loại tiền (vd JPY, ¥, kr), available: số nguyên ×100}.')];
             }
             $applied = is_array($tw['applied'] ?? null) ? array_slice(array_values($tw['applied']), -500) : [];
             $toolWallet = ['currency' => $cur, 'available' => $av + ToolWallets::pendingEffect((int) $key['id'], $device, $cur, $applied)];
@@ -2800,5 +2826,93 @@ final class Webhooks
             return [true, null];
         }
         return [false, mb_substr($err !== '' ? $err : 'HTTP ' . $code, 0, 300)];
+    }
+}
+
+/* ====================== Dữ liệu mặc định (seed) ====================== */
+/**
+ * Xuất / nạp CẤU HÌNH của gateway để cài sang máy khác là có sẵn: pool (trường đăng nhập, OTP, luật, các bước, loại tiền) + gói + giá theo
+ * loại tiền. KHÔNG có: admin (máy mới tự tạo bằng setup.php), khoá API (bí mật webhook mã hoá theo APP_KEY — phải tạo mới), đơn, ảnh, ví,
+ * máy / kịch bản tool báo (tool tự đồng bộ lại). Nạp chỉ khi CSDL chưa có pool nào (không bao giờ ghi đè cấu hình đang dùng).
+ */
+final class Seed
+{
+    public const VERSION = 1;
+
+    /**
+     * @param list<string>|null $skipped nhận danh sách «pool/gói/loại tiền» của các giá KHÔNG xuất: giá cũ thiếu «chữ giá hiện trên máy»
+     *                                   (form lưu bây giờ bắt buộc đủ cả hai) — xuất ra thì máy mới sẽ từ chối cả tệp.
+     */
+    public static function export(?array &$skipped = null): array
+    {
+        $pools = [];
+        $skipped = [];
+        foreach (Db::all('SELECT * FROM pools ORDER BY id') as $row) {
+            $p = Pools::find((int) $row['id']);
+            $prices = Wallets::enabled() ? Pools::prices((int) $p['id']) : [];
+            $pk = [];
+            foreach (Pools::packages((int) $p['id']) as $k) {
+                $pp = [];
+                foreach ($prices[(int) $k['id']] ?? [] as $cur => $pr) {
+                    if (trim((string) $pr['display']) === '' || trim((string) $pr['amount']) === '') {
+                        $skipped[] = $p['code'] . '/' . $k['code'] . '/' . $cur;
+                        continue;
+                    }
+                    $pp[$cur] = $pr;
+                }
+                $pk[] = ['code' => $k['code'], 'name' => $k['name'], 'ocr_text' => $k['ocr_text'], 'price_text' => $k['price_text'], 'limit_type' => $k['limit_type'],
+                         'max_qty' => (int) $k['max_qty'], 'active' => (bool) (int) $k['active'], 'prices' => (object) $pp];
+            }
+            $pools[] = ['code' => $p['code'], 'name' => $p['name'], 'game' => $p['game'], 'active' => (bool) (int) $p['active'], 'config' => $p['cfg'], 'packages' => $pk];
+        }
+        return ['seed' => self::VERSION, 'exported_at' => iso(time()), 'pools' => $pools];
+    }
+
+    /** @return string câu báo kết quả, hoặc ném RuntimeException */
+    public static function import(array $seed): string
+    {
+        if ((int) ($seed['seed'] ?? 0) !== self::VERSION || !is_array($seed['pools'] ?? null)) {
+            throw new RuntimeException('Tệp dữ liệu mặc định sai dạng (không phải seed bản ' . self::VERSION . ').');
+        }
+        if (Settings::get('seed_imported_at') !== null) {
+            return 'Dữ liệu mặc định đã nạp từ trước — bỏ qua (xoá pool rồi chạy lại setup cũng không nạp lại).';
+        }
+        if ((int) Db::val('SELECT COUNT(*) FROM pools') > 0) {
+            return 'CSDL đã có pool — bỏ qua dữ liệu mặc định (không ghi đè cấu hình đang dùng).';
+        }
+        if ($seed['pools'] === []) {
+            return 'Tệp dữ liệu mặc định không có pool nào — bỏ qua (chưa đánh dấu «đã nạp»: đặt tệp đúng rồi chạy lại setup vẫn nạp được).';
+        }
+        // MỘT giao dịch: hỏng ở đâu cũng không để lại pool dở (lần chạy sau vẫn nạp được)
+        return Db::tx(static function () use ($seed): string {
+            $np = $nk = 0;
+            foreach ($seed['pools'] as $p) {
+                if (!is_array($p) || !is_string($p['code'] ?? null)) {
+                    throw new RuntimeException('Có pool sai dạng (thiếu mã pool).');
+                }
+                $cfg = is_array($p['config'] ?? null) ? $p['config'] : [];
+                $id = Pools::save(null, (string) ($p['code'] ?? ''), (string) ($p['name'] ?? ''), (string) ($p['game'] ?? ''), !empty($p['active']), $cfg);
+                if (is_string($id)) {
+                    throw new RuntimeException('Pool «' . ($p['code'] ?? '?') . '»: ' . $id);
+                }
+                $rows = [];
+                foreach ((array) ($p['packages'] ?? []) as $k) {
+                    if (!is_array($k) || !is_string($k['code'] ?? null)) {
+                        throw new RuntimeException('Pool «' . ($p['code'] ?? '?') . '»: có gói sai dạng (thiếu mã gói).');
+                    }
+                    $rows[] = ['code' => (string) ($k['code'] ?? ''), 'name' => (string) ($k['name'] ?? ''), 'ocr_text' => (string) ($k['ocr_text'] ?? ''),
+                               'price_text' => (string) ($k['price_text'] ?? ''), 'limit_type' => (string) ($k['limit_type'] ?? 'multi'),
+                               'max_qty' => (int) ($k['max_qty'] ?? 0), 'active' => !empty($k['active']), 'prices' => (array) ($k['prices'] ?? [])];
+                }
+                $err = Pools::savePackages($id, $rows);
+                if ($err !== null) {
+                    throw new RuntimeException('Gói của pool «' . $p['code'] . '»: ' . $err);
+                }
+                $np++;
+                $nk += (int) Db::val('SELECT COUNT(*) FROM packages WHERE pool_id=?', [$id]);
+            }
+            Settings::set('seed_imported_at', (string) time());
+            return "Đã nạp dữ liệu mặc định: $np pool, $nk gói.";
+        });
     }
 }

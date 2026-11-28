@@ -1,0 +1,103 @@
+# Dựng bộ cài iPhone Farm: Windows (Setup .exe) + macOS Apple Silicon (.dmg), cài thử ngay trên máy dựng rồi gắn vào bản phát hành.
+#   • đẩy tag v*              → dựng + gắn vào bản phát hành của tag đó
+#   • chạy tay (Run workflow) → nhập «tag» để gắn vào bản phát hành; bỏ trống thì chỉ dựng + lưu thành artifact
+# Dữ liệu mặc định (nhóm + kịch bản có sẵn) không nằm trong repo: lấy từ secret IPF_DEFAULT_GROUPS_B64 (thiếu thì bản cài trống).
+#
+# Việc dựng chạy mã của bên thứ ba (thư viện tải từ PyPI) nên KHÔNG được cầm quyền ghi vào repo: job «build» chỉ có quyền đọc và không
+# giữ lại token; chỉ job «publish» (không chạy mã nào của bên thứ ba) có quyền ghi, và chỉ chạy khi CẢ HAI bản dựng + cài thử đều đạt.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag của bản phát hành để gắn bộ cài vào (bỏ trống = chỉ dựng thử)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Inno Setup
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - name: Dựng bộ cài
+        shell: bash
+        env:
+          IPF_DEFAULT_GROUPS_B64: ${{ secrets.IPF_DEFAULT_GROUPS_B64 }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then export IPF_VERSION="$RELEASE_TAG"; else export IPF_VERSION="dev-${GITHUB_SHA::7}"; fi
+          bash packaging/build.sh ${{ matrix.platform }}
+
+      - name: Cài thử + kiểm tra
+        shell: bash
+        run: bash packaging/smoke.sh ${{ matrix.platform }}
+
+      # bộ cài chỉ được lưu lại khi cài thử ĐẠT (job «publish» lấy từ đây)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+      # danh sách bản thư viện thật sự đã cài (để cập nhật packaging/constraints.txt) + nhật ký cài, kể cả khi hỏng
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-info-${{ matrix.platform }}
+          path: |
+            build/freeze-*.txt
+            ${{ runner.temp }}/ipf-setup.log
+            ${{ runner.temp }}/ipf-smoke-install/install.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    needs: build
+    if: ${{ github.event_name == 'push' || inputs.tag != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: dist
+          merge-multiple: true
+
+      - name: Gắn vào bản phát hành
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "iPhone Farm $RELEASE_TAG" --notes "Bộ cài iPhone Farm."
+          gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber

@@ -878,3 +878,18 @@ Làm theo 3 phần, cả 3 đã xong: Telegram, ảnh mẫu + tạm dừng tại
   tầng HTTP trên máy: đủ 2 ảnh JPEG, JSON theo khuôn, fallbacks, địa chỉ máy chủ riêng, hỏi lại khi máy chủ không hỗ trợ). Còn lại là
   cách xử lý với AI giả, và chạy thật trên máy 01 khi chưa có key (tạm dừng như phần 2). Có key thì nên thử với một màn quảng cáo thật trước.
 - Kiểm thử: `./.venv/bin/python app/tests/test_aiscreen.py`.
+
+## Bộ cài tải về (Windows `.exe`, macOS `.dmg`)
+
+Người dùng cuối không phải cài Python hay thư viện: tải bộ cài ở trang **Releases** của repo.
+
+| Hệ máy | Tệp | Cài vào | Ghi chú |
+|---|---|---|---|
+| Windows 10 / 11 (64-bit) | `iPhoneFarm-Setup-<bản>.exe` | `%LOCALAPPDATA%\iPhoneFarm` (không cần quyền admin) | Vẫn cần «Apple Devices» / iTunes (trình điều khiển USB của iPhone) và WebView2 (Windows 11 có sẵn). |
+| macOS, máy Apple Silicon | `iPhoneFarm-<bản>-macos-arm64.dmg` | kéo vào Applications; lần mở đầu tự cài vào `~/Library/iPhoneFarm` | App chưa ký với Apple: xem tệp «DOC TRUOC KHI MO» trong `.dmg`. macOS tối thiểu ghi trong tệp đó (do thư viện kèm theo quyết định). |
+
+Bộ cài mang sẵn Python 3.12 (python-build-standalone, ghim bản + mã kiểm), mọi thư viện dạng wheel và mô hình đọc chữ → **cài không cần mạng**. Lúc cài chỉ tạo `.venv` từ Python kèm theo rồi cài wheel vào — đúng cách bố trí app vẫn chạy (`run.bat` / `run.command`). Cài bản mới đè lên bản cũ **giữ nguyên** `app/data` (nhóm, kịch bản, ví, cài đặt).
+
+- Dựng: `bash packaging/build.sh windows|macos` (chạy trên đúng hệ máy đích) → `dist/`. Cài thử + kiểm tra: `bash packaging/smoke.sh windows|macos`.
+- GitHub tự dựng cả hai khi đẩy tag `v*` (`.github/workflows/release.yml`), cài thử ngay trên máy dựng rồi gắn vào bản phát hành.
+- **Dữ liệu mặc định** (nhóm + kịch bản có sẵn khi cài máy mới) không nằm trong repo: lúc dựng lấy từ `app/defaults/groups.json` (không vào git), biến `IPF_DEFAULT_GROUPS`, hoặc secret `IPF_DEFAULT_GROUPS_B64` trên GitHub. Tên máy trong từng nhóm bị bỏ. App chỉ nạp khi **chưa có** `app/data/groups.json`.

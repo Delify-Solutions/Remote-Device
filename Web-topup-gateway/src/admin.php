@@ -303,11 +303,13 @@ final class Admin
         // loại tiền của pool (ô chữ «JPY, CHF…»)
         $curRaw = (string) Req::post('currencies', '');
         [$config['currencies'], $curErr] = Pools::parseCurrencies($curRaw);
-        // các loại tiền CÓ CỘT GIÁ ĐƯỢC GỬI LÊN = khai trong pk_currencies + mọi cột pp_<MÃ>_amount[] thật sự có trong form. Lấy cả hai để
+        // các loại tiền CÓ CỘT GIÁ ĐƯỢC GỬI LÊN = khai trong pk_currencies + mọi cột pp_<NHÃN>_amount[] thật sự có trong form. Lấy cả hai để
         // ô loại tiền gõ sai (bị từ chối) thì trang báo lỗi vẫn dựng lại ĐỦ các ô giá vừa gửi — không bao giờ mất giá ở lần lưu sau.
         [$cols] = Pools::parseCurrencies((string) Req::post('pk_currencies', ''));
         foreach (array_keys($_POST) as $k) {
-            if (is_string($k) && preg_match('/^pp_([A-Z]{3})_amount$/', $k, $mm) === 1 && is_array($_POST[$k]) && !in_array($mm[1], $cols, true) && count($cols) < 20) {
+            // nhãn loại tiền nào cũng nhận (¥, KR, ₹…), miễn đúng dạng đã chuẩn hoá — không chỉ mã 3 chữ
+            if (is_string($k) && preg_match('/^pp_(.+)_amount$/su', $k, $mm) === 1 && Money::currency($mm[1]) === $mm[1] && is_array($_POST[$k])
+                && !in_array($mm[1], $cols, true) && count($cols) < 20) {
                 $cols[] = $mm[1];
             }
         }

@@ -41,6 +41,29 @@ def main():
         home = {"type": "home"}
         tap = {"type": "tap_text", "text": "Đăng nhập"}
 
+        print("== 0. Dữ liệu mặc định đi kèm bản cài (app/defaults/groups.json) ==")
+        ddir = os.path.join(tmp, "defaults"); os.makedirs(ddir)
+        old_def, store.DEFAULTS_DIR = store.DEFAULTS_DIR, ddir
+        dfile = os.path.join(ddir, "groups.json")
+        good = {"id": "g1", "name": "Mặc định", "devices": ["May-A", "May-B"], "scripts": [{"id": "s1", "name": "KB mặc định", "steps": [home], "mode": "once"}]}
+        with open(dfile, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps([good, {"name": "thiếu id"}, "rác", {"id": "g2", "name": "Hỏng", "devices": None,
+                                 "scripts": [{"id": "s", "name": "x", "steps": [], "mode": "loop", "loops": 1}]}]).replace('"loops": 1', '"loops": 1e999'))
+        got = store.get_groups()
+        ok([g["id"] for g in got] == ["g1"] and got[0]["devices"] == [] and [s["name"] for s in got[0]["scripts"]] == ["KB mặc định"],
+           "máy mới (chưa có groups.json): nạp nhóm + kịch bản mặc định; BỎ tên máy của nơi xuất; mục sai dạng / làm hỏng chuẩn hoá bị bỏ", got)
+        ok(store.groups_of_device("May-A") == [] and json.load(open(store.GROUPS_FILE, encoding="utf-8"))[0]["id"] == "g1",
+           "nhóm mặc định đã thành dữ liệu của người dùng (ghi vào groups.json), không máy nào tự vào nhóm")
+        json.dump([], open(store.GROUPS_FILE, "w"))
+        ok(store.get_groups() == [], "đã có groups.json (kể cả rỗng — người dùng xoá hết nhóm) → KHÔNG nạp lại dữ liệu mặc định")
+        os.remove(store.GROUPS_FILE)
+        with open(dfile, "w", encoding="utf-8") as fh:
+            fh.write("{hỏng")
+        ok(store.get_groups() == [], "tệp mặc định hỏng → bắt đầu trống, app vẫn mở được")
+        os.remove(store.GROUPS_FILE); os.remove(dfile)
+        ok(store.get_groups() == [], "không có tệp mặc định → bắt đầu trống")
+        store.DEFAULTS_DIR = old_def
+
         print("== 1. Nhóm cũ ==")
         json.dump([{"id": "old1", "name": "Cũ", "mode": "loop", "loops": 0, "devices": [], "steps": [home, tap]}], open(store.GROUPS_FILE, "w"))
         g = store.get_group("old1")

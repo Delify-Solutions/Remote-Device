@@ -48,9 +48,9 @@ $curCols = !empty($wallets) ? array_values((array) ($pool['pk_cols'] ?? $cfg['cu
 // ô giá của MỘT loại tiền trong một dòng gói (JS dựng y hệt khi gõ thêm loại tiền — xem khối «POOL: loại tiền» trong app.js)
 $priceCell = static function (string $c, array $pp) use ($in): string {
     return '<span class="pp-cur" data-cur="' . e($c) . '">'
-        . '<label class="pp"><span class="pp-cap">' . e($c) . ' · giá</span>'
+        . '<label class="pp"><span class="pp-cap">' . e(Money::label($c)) . ' · giá</span>'
         . $in('pp_' . $c . '_amount[]', $pp['amount'] ?? '', Money::decimals($c) === 0 ? '1500' : '63.00', 'inputmode="decimal"') . '</label>'
-        . '<label class="pp"><span class="pp-cap">' . e($c) . ' · chữ hiện trên máy</span>'
+        . '<label class="pp"><span class="pp-cap">' . e(Money::label($c)) . ' · chữ hiện trên máy</span>'
         . $in('pp_' . $c . '_display[]', $pp['display'] ?? '', Money::example($c)) . '</label></span>';
 };
 $rowPk = static function (array $p) use ($in, $dd, $tools, $curCols, $priceCell, $wallets): string {
@@ -194,9 +194,9 @@ $addBtn = static fn (string $tpl, string $into, string $label): string
       <div class="row g-4 mb-5">
         <div class="col-md-6 col-xl-4"><label class="form-label" for="pool-cur">Loại tiền dùng trong pool</label>
           <input class="form-control mono" id="pool-cur" type="text" name="currencies" value="<?= e($pool['currencies_raw'] ?? implode(', ', $cfg['currencies'])) ?>" placeholder="JPY, CHF, USD" autocomplete="off"
-            data-cur-sync data-zero="<?= e(jenc(Money::ZERO_DECIMAL)) ?>" data-examples="<?= e(jenc(array_combine(['JPY','CHF','DKK','SEK','NOK','USD','EUR','GBP','VND','KRW','AUD','CAD','SGD','HKD','TWD','THB','IDR','CNY'], array_map([Money::class, 'example'], ['JPY','CHF','DKK','SEK','NOK','USD','EUR','GBP','VND','KRW','AUD','CAD','SGD','HKD','TWD','THB','IDR','CNY'])))) ?>">
+            data-cur-sync data-zero="<?= e(jenc(Money::ZERO_DECIMAL)) ?>" data-alias="<?= e(jenc(Money::ALIASES)) ?>" data-sym="<?= e(jenc(Money::SYMBOLS)) ?>" data-examples="<?= e(jenc(array_combine(['JPY','CHF','DKK','SEK','NOK','USD','EUR','GBP','VND','KRW','AUD','CAD','SGD','HKD','TWD','THB','IDR','CNY'], array_map([Money::class, 'example'], ['JPY','CHF','DKK','SEK','NOK','USD','EUR','GBP','VND','KRW','AUD','CAD','SGD','HKD','TWD','THB','IDR','CNY'])))) ?>">
           <input type="hidden" name="pk_currencies" value="<?= e(implode(',', $curCols)) ?>"></div>
-        <div class="col-md-6 col-xl-8 d-flex align-items-end"><div class="form-text mb-md-2">Mỗi máy trả bằng <b>một</b> loại tiền (loại tiền của ví tài khoản Apple trên máy); pool thì bán được <b>nhiều</b> loại tiền. Gõ mã ISO 3 chữ cái, ngăn bằng dấu phẩy (vd <code>JPY, CHF</code>) — mỗi gói bên dưới hiện ngay ô <b>giá</b> + <b>chữ giá hiện trên máy</b> cho từng loại tiền. Máy có ví chỉ nhận đơn khi mọi gói của đơn có giá ở loại tiền của ví. Bỏ một loại tiền rồi lưu là xoá giá loại đó.</div></div>
+        <div class="col-md-6 col-xl-8 d-flex align-items-end"><div class="form-text mb-md-2">Mỗi máy trả bằng <b>một</b> loại tiền (loại tiền của ví tài khoản Apple trên máy); pool thì bán được <b>nhiều</b> loại tiền. Gõ ký hiệu hoặc tên đúng như máy hiện, ngăn bằng dấu phẩy (vd <code>¥, kr, CHF</code>) — loại tiền chỉ là nhãn để khớp ví với giá và đối soát; «¥» / «JP» tự hiểu là <code>JPY</code> — mỗi gói bên dưới hiện ngay ô <b>giá</b> + <b>chữ giá hiện trên máy</b> cho từng loại tiền. Máy có ví chỉ nhận đơn khi mọi gói của đơn có giá ở loại tiền của ví. Bỏ một loại tiền rồi lưu là xoá giá loại đó.</div></div>
       </div>
       <?php endif; ?>
       <div class="rep-head cols-pk"><span>Mã gói</span><span>Tên gói</span><span>Chữ OCR để dò</span><span>Chữ giá (mặc định, khi không có giá theo loại tiền)</span><span>Giới hạn mua</span><span>SL tối đa</span><span>Bán</span><span></span></div>

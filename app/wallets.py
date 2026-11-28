@@ -14,7 +14,7 @@ Khi xin đơn, tool gửi «loại tiền + còn dùng được» (claim_info) �
 Mật khẩu Apple ID KHÔNG BAO GIỜ ra khỏi máy tính này: không gửi gateway / Telegram / AI, không trả về giao diện (chỉ «có / chưa có»).
 """
 from __future__ import annotations
-import contextlib, json, os, re, threading, time
+import contextlib, json, os, re, threading, time, unicodedata
 
 import store
 
@@ -84,9 +84,28 @@ class WalletError(Exception):
 
 
 # ---------- tiền ----------
+# Ký hiệu / tên nước hay gõ → mã ISO (giống Money::ALIASES của gateway). Không có «KR»: «kr» viết hoa thành «KR» mà «kr» là tiền Bắc Âu.
+ALIASES = {"¥": "JPY", "￥": "JPY", "円": "JPY", "JP": "JPY", "$": "USD", "US$": "USD", "US": "USD", "€": "EUR", "EU": "EUR",
+           "£": "GBP", "GB": "GBP", "UK": "GBP", "₩": "KRW", "₫": "VND", "Đ": "VND", "VN": "VND", "CH": "CHF", "DK": "DKK",
+           "SE": "SEK", "NO": "NOK", "CN": "CNY", "RMB": "CNY", "HK$": "HKD", "HK": "HKD", "S$": "SGD", "SG": "SGD", "NT$": "TWD", "TW": "TWD",
+           "฿": "THB", "TH": "THB", "RP": "IDR", "ID": "IDR", "A$": "AUD", "AU": "AUD", "C$": "CAD", "CA": "CAD"}
+SYMBOLS = {"JPY": "¥", "USD": "$", "EUR": "€", "GBP": "£", "KRW": "₩", "VND": "₫", "CHF": "Fr.", "CNY": "¥", "HKD": "HK$", "SGD": "S$",
+           "TWD": "NT$", "THB": "฿", "IDR": "Rp", "AUD": "A$", "CAD": "C$", "DKK": "kr", "SEK": "kr", "NOK": "kr"}
+
+
 def currency(v) -> str | None:
+    """Nhãn loại tiền (chỉ để so khớp ví ⇄ giá gói và đối soát): «¥» / «JP» / «jpy» → «JPY»; nhãn khác («kr») giữ nguyên, viết hoa."""
     c = str(v or "").strip().upper()
-    return c if re.fullmatch(r"[A-Z]{3}", c) else None
+    c = c.replace(".", "")                 # gateway bỏ dấu chấm trong nhãn («kr.» → «KR») — phải làm y hệt thì ví mới khớp giá
+    c = ALIASES.get(c, c)
+    # mã 3 chữ, hoặc nhãn khác (vd «kr» → «KR»): 1–6 chữ / ký hiệu tiền, không số, không khoảng trắng (giống Money::currency của gateway)
+    return c if 1 <= len(c) <= 6 and all(ch.isalpha() or unicodedata.category(ch) == "Sc" for ch in c) else None
+
+
+def label(cur) -> str:
+    """«JPY ¥» — mã kèm ký hiệu cho giao diện."""
+    c = str(cur or "").upper()
+    return "%s %s" % (c, SYMBOLS[c]) if c in SYMBOLS else c
 
 
 def parse_money(raw, cur: str, signed: bool = False) -> int | None:
@@ -281,7 +300,7 @@ def get(machine: str) -> dict | None:
 def _view(machine, w, bal, held) -> dict:
     return {"machine": machine, "apple_account": w.get("apple_account") or "", "currency": w["currency"], "active": bool(w.get("active", True)),
             "note": w.get("note") or "", "has_password": bool(w.get("pw")), "balance": bal, "held": held, "available": bal - held,
-            "balance_text": fmt(bal, w["currency"]), "held_text": fmt(held, w["currency"]), "available_text": fmt(bal - held, w["currency"])}
+            "currency_label": label(w["currency"]), "balance_text": fmt(bal, w["currency"]), "held_text": fmt(held, w["currency"]), "available_text": fmt(bal - held, w["currency"])}
 
 
 def all_wallets() -> list:
@@ -356,7 +375,7 @@ def save(machine: str, apple_account: str, cur: str, note: str = "", active: boo
         raise WalletError("Chưa nhập tài khoản Apple đăng nhập trên máy.")
     c = currency(cur)
     if not c:
-        raise WalletError("Loại tiền phải là mã ISO 3 chữ cái (vd JPY, CHF, USD).")
+        raise WalletError("Loại tiền: gõ ký hiệu hoặc tên như máy hiện (vd ¥, kr, CHF) — tối đa 6 ký tự, không số, không khoảng trắng.")
     with _flock():
         d = _load()
         old = d["wallets"].get(machine)

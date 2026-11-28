@@ -28,7 +28,7 @@ function renderWallets() {
   const devs = d.devices || [], ws = d.wallets || {}, cur = d.currencies || [];
   const pools = Object.values(d.pools || {});
   const curNote = pools.length
-    ? pools.map(p => `<b>${esc(p.name)}</b>: ${p.currencies.length ? p.currencies.map(c => `<code>${esc(c)}</code>${p.sample && p.sample[c] ? ` <span class="text-muted">(${esc(p.sample[c])})</span>` : ""}`).join(", ") : `<span class="text-warning">chưa khai loại tiền + giá gói</span>`}`).join(" · ")
+    ? pools.map(p => `<b>${esc(p.name)}</b>: ${p.currencies.length ? p.currencies.map(c => `<code>${esc((d.labels || {})[c] || c)}</code>${p.sample && p.sample[c] ? ` <span class="text-muted">(${esc(p.sample[c])})</span>` : ""}`).join(", ") : `<span class="text-warning">chưa khai loại tiền + giá gói</span>`}`).join(" · ")
     : `<span class="text-muted">Chưa đọc được pool nào trên gateway (kịch bản nhận đơn chưa chọn pool, hoặc gateway chưa cấu hình).</span>`;
   if (!devs.length) { box.innerHTML = `<div class="api-note">Chưa có máy nào — thêm máy ở trang Thiết bị.</div>`; return; }
   const rows = devs.map(dev => {
@@ -41,7 +41,7 @@ function renderWallets() {
     const neg = w.available < 0;
     return `<tr class="${w.active ? "" : "text-muted"}">
       <td>${name}</td>
-      <td>${esc(w.apple_account)} <span class="pill mut mono">${esc(w.currency)}</span>${w.active ? "" : ` <span class="pill mut">ngừng dùng</span>`}
+      <td>${esc(w.apple_account)} <span class="pill mut mono">${esc(w.currency_label || w.currency)}</span>${w.active ? "" : ` <span class="pill mut">ngừng dùng</span>`}
         <div class="small ${w.has_password ? "text-success" : "text-warning"}">${w.has_password ? "đã lưu mật khẩu Apple ID" : "chưa lưu mật khẩu Apple ID"}</div>
         ${w.note ? `<div class="small text-muted">${esc(w.note)}</div>` : ""}</td>
       <td class="text-end text-nowrap">${esc(w.balance_text)}</td>
@@ -73,8 +73,9 @@ async function walletEdit(name) {
   const curList = (d.currencies || []).slice();
   if (w && !curList.includes(w.currency)) curList.unshift(w.currency);
   const curField = curList.length
-    ? { key: "currency", type: "select", label: "Loại tiền (vùng App Store của tài khoản Apple)", value: w ? w.currency : curList[0], options: curList.map(c => ({ value: c, label: c })) }
-    : { key: "currency", label: "Loại tiền — mã ISO 3 chữ (vd JPY, CHF)", value: w ? w.currency : "", placeholder: "JPY" };
+    ? { key: "currency", type: "select", label: "Loại tiền (vùng App Store của tài khoản Apple)", value: w ? w.currency : curList[0],
+        options: curList.map(c => ({ value: c, label: (d.labels || {})[c] || c })) }
+    : { key: "currency", label: "Loại tiền — ký hiệu hoặc mã (vd ¥ / JPY, CHF, $)", value: w ? w.currency : "", placeholder: "¥" };
   const fields = [
     { key: "apple_account", label: "Tài khoản Apple đăng nhập trên máy", value: w ? w.apple_account : "", placeholder: "apple@example.com" },
     curField,

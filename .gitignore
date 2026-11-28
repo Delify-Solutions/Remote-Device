@@ -13,3 +13,12 @@ tmp/
 app/data/
 # backup/test artifacts
 app/web/_backup_precustom/
+# dữ liệu mặc định chỉ đi kèm GÓI PHÁT HÀNH (repo public — không commit)
+Web-topup-gateway/seed.json
+app/defaults/
+# bộ cài dựng bằng packaging/build.sh
+/build/
+/dist/
+# gói nén tự tạo ở thư mục gốc (vd nén thư mục gateway kèm .env + CSDL để chép đi) — KHÔNG bao giờ vào repo public
+/*.zip
+.DS_Store

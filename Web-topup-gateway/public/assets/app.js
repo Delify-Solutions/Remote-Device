@@ -192,22 +192,25 @@ if (editModal) {
 const curSync = document.querySelector('[data-cur-sync]');
 if (curSync) {
   const zero = JSON.parse(curSync.dataset.zero || '[]'), examples = JSON.parse(curSync.dataset.examples || '{}');
+  const alias = JSON.parse(curSync.dataset.alias || '{}'), sym = JSON.parse(curSync.dataset.sym || '{}');
+  const label = (c) => sym[c] ? c + ' ' + sym[c] : c;
   const colsInput = curSync.form.querySelector('[name=pk_currencies]');
   const cell = (c) => {
     const span = document.createElement('span');
     span.className = 'pp-cur'; span.dataset.cur = c;
-    const box = (cap, name, ph, extra) => '<label class="pp"><span class="pp-cap">' + c + ' · ' + cap + '</span><input class="form-control form-control-sm" type="text" name="pp_' + c + '_' + name + '[]" value="" placeholder="' + ph + '"' + extra + '></label>';
+    const box = (cap, name, ph, extra) => '<label class="pp"><span class="pp-cap">' + label(c) + ' · ' + cap + '</span><input class="form-control form-control-sm" type="text" name="pp_' + c + '_' + name + '[]" value="" placeholder="' + ph + '"' + extra + '></label>';
     span.innerHTML = box('giá', 'amount', zero.includes(c) ? '1500' : '63.00', ' inputmode="decimal"') + box('chữ hiện trên máy', 'display', examples[c] || ('vd: 9.99 ' + c), '');
     return span;
   };
   const rows = () => [...document.querySelectorAll('#rep-pk .cols-pk')].concat([...((document.getElementById('tpl-pk') || {}).content || document.createDocumentFragment()).querySelectorAll('.cols-pk')]);
-  // đọc ô loại tiền ĐÚNG như gateway (Pools::parseCurrencies): tách theo khoảng trắng / phẩy / chấm phẩy, mỗi mã đúng 3 chữ A–Z, tối đa 10.
+  // đọc ô loại tiền ĐÚNG như gateway (Pools::parseCurrencies): tách theo khoảng trắng / phẩy / chấm phẩy, mỗi nhãn 1–6 chữ / ký hiệu tiền (bỏ dấu chấm), tối đa 10.
   // Gõ sai / gõ dở → null: GIỮ NGUYÊN các ô giá đang có (không ẩn, không đổi danh sách cột gửi đi) để không bao giờ làm mất giá đã nhập.
   const parse = (raw) => {
     const toks = raw.replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, '').split(/[ \t\n\r\f\v,;]+/).filter(Boolean), out = [];     // đúng các dấu cách PHP \s nhận
-    for (const t of toks) {
-      if (!/^[A-Za-z]{3}$/.test(t)) return null;
-      const c = t.replace(/[a-z]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 32));
+    for (const t0 of toks) {
+      let c = t0.toUpperCase().replace(/\./g, '');              // bỏ dấu chấm («kr.» → KR): nhãn nằm trong tên ô giá, PHP đổi «.» thành «_»
+      c = alias[c] || c;                                        // giống Money::currency: «¥», «JP» → JPY; nhãn khác («kr») giữ nguyên, viết hoa
+      if (!/^[\p{L}\p{Sc}]{1,6}$/u.test(c)) return null;
       if (!out.includes(c)) out.push(c);
     }
     return out.length <= 10 ? out : null;
@@ -219,7 +222,7 @@ if (curSync) {
     rows().forEach((row) => {
       const box = row.querySelector('.pk-prices');
       if (!box) return;
-      want.forEach((c) => { if (!box.querySelector('.pp-cur[data-cur="' + c + '"]')) box.appendChild(cell(c)); });
+      want.forEach((c) => { if (![...box.querySelectorAll('.pp-cur')].some((x) => x.dataset.cur === c)) box.appendChild(cell(c)); });
       box.querySelectorAll('.pp-cur').forEach((sp) => {
         const on = want.includes(sp.dataset.cur);
         sp.hidden = !on;

@@ -24,6 +24,9 @@ SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")     # địa chỉ + kho
 API_PHASES = ["login", "otp", "nav", "purchase", "after", "finish"]
 
 
+DEFAULTS_DIR = os.path.join(os.path.dirname(__file__), "defaults")     # dữ liệu mặc định đi kèm bản phát hành (vd nhóm + kịch bản có sẵn)
+
+
 def _ensure():
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(DEVICES_FILE):
@@ -31,7 +34,25 @@ def _ensure():
     if not os.path.exists(FLOWS_FILE):
         _write(FLOWS_FILE, [])
     if not os.path.exists(GROUPS_FILE):
-        _write(GROUPS_FILE, [])
+        # máy mới cài từ bản phát hành có kèm app/defaults/groups.json → bắt đầu với nhóm + kịch bản có sẵn. Chỉ khi CHƯA có tệp nhóm:
+        # giải nén bản mới đè lên máy đang dùng không bao giờ ghi đè nhóm / kịch bản hiện có.
+        seed = []
+        try:
+            with open(os.path.join(DEFAULTS_DIR, "groups.json"), "r", encoding="utf-8-sig") as f:
+                raw = json.load(f)
+            # chỉ nhận nhóm đúng dạng (có id, chuẩn hoá kịch bản được); tệp hỏng / sai dạng → bắt đầu trống, KHÔNG làm app không mở được
+            for g in raw if isinstance(raw, list) else []:
+                if not (isinstance(g, dict) and isinstance(g.get("id"), str) and g["id"]):
+                    continue
+                g = dict(g, devices=[])        # máy là của riêng từng nơi cài: không mang tên máy của nơi xuất sang
+                try:
+                    norm_scripts(dict(g))      # nhóm làm hỏng bước chuẩn hoá (vd số lần lặp vô hạn) sẽ làm app lỗi mỗi lần mở → bỏ
+                except Exception:
+                    continue
+                seed.append(g)
+        except (OSError, ValueError):
+            seed = []
+        _write(GROUPS_FILE, seed)
 
 
 def _read(path):

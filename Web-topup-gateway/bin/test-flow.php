@@ -719,6 +719,12 @@ ok(Money::parse('1.500', 'JPY') === 150000 && Money::parse('1500', 'JPY') === 15
 ok(Money::fmt(150000, 'JPY') === '1.500 JPY' && Money::fmt(6350, 'CHF') === '63,50 CHF' && Money::fmt(-100000, 'JPY') === '-1.000 JPY' && Money::plain(6300, 'CHF') === '63.00' && Money::plain(150000, 'JPY') === '1500',
     'hiện số tiền giống thông báo của tool (1.500 JPY · 63,50 CHF); ô nhập điền sẵn không dấu nghìn');
 ok(Wallets::mask('apple01@example.com') === 'a***@example.com' && Wallets::mask('0912345678') === '09***78', 'tài khoản Apple gửi cho tool được che (a***@example.com)');
+ok(Money::currency('¥') === 'JPY' && Money::currency('jp') === 'JPY' && Money::currency('円') === 'JPY' && Money::currency('₫') === 'VND' && Money::currency('$') === 'USD'
+    && Money::currency('kr') === 'KR' && Money::currency('1kr') === null && Money::currency('a b') === null
+    && Money::currency('kr.') === 'KR' && Money::currency('Rs.') === 'RS' && Money::currency('лв.') === 'ЛВ' && Money::currency('Fr.') === 'FR' && Money::currency('u.s.') === 'USD'
+    && Money::currency('.') === null && Money::currency('₹') === '₹' && Money::currency('R$') === 'R$' && Money::currency('toolong') === null
+    && Pools::parseCurrencies('¥, CHF, jp, kr') === [['JPY', 'CHF', 'KR'], null] && Money::label('JPY') === 'JPY ¥',
+    'loại tiền là NHÃN để so khớp / đối soát: «¥», «JP», «円» → JPY; nhãn khác như «kr» giữ nguyên (không đoán thành tiền nước khác); nhãn hiện «JPY ¥»');
 ok(Pools::parseCurrencies('jpy, CHF  usd;JPY') === [['JPY', 'CHF', 'USD'], null] && Pools::parseCurrencies('JPY, XX1')[1] !== null, 'loại tiền của pool: mã ISO 3 chữ, viết hoa, bỏ trùng; mã sai bị từ chối');
 
 $wc = Pools::defaults();
@@ -783,7 +789,7 @@ ok(($free['job']['id'] ?? '') === $WJ0 && !isset($free['job']['wallet']) && !iss
 http('POST', "/api/tool/jobs/$WJ0/result", $TK, ['result' => 'failed', 'message' => 'thử']);
 ok(Db::one('SELECT wallet_id, wallet_state, cost, currency FROM jobs WHERE pid=?', [$WJ0]) === ['wallet_id' => null, 'wallet_state' => null, 'cost' => null, 'currency' => null] && $evs($WJ0) === [],
     '…và đơn đó không tính tiền, không có sự kiện tiền nào');
-$bad1 = http('POST', '/api/tool/claim', $TK, ['device' => 'Vi-01', 'pool' => 'wallet-pool', 'wallet' => ['currency' => 'JP', 'available' => 1]]);
+$bad1 = http('POST', '/api/tool/claim', $TK, ['device' => 'Vi-01', 'pool' => 'wallet-pool', 'wallet' => ['currency' => '1J', 'available' => 1]]);
 $bad2 = http('POST', '/api/tool/claim', $TK, ['device' => 'Vi-01', 'pool' => 'wallet-pool', 'wallet' => ['currency' => 'JPY', 'available' => '24000']]);
 ok($bad1['code'] === 422 && $bad2['code'] === 422 && ($bad1['json']['error'] ?? '') === 'invalid_wallet', 'ví gửi kèm sai dạng (mã tiền sai / số tiền không phải số nguyên ×100) → 422');
 
@@ -852,7 +858,7 @@ $poolForm = static function (int $id): array {
 };
 Db::run("DELETE FROM package_prices WHERE package_id=? AND currency='JPY'", [$pid['nodisp']]);       // bỏ dữ liệu cũ thiếu chữ giá (form lưu lại sẽ bị từ chối)
 $pf = http('GET', "/admin/pools/$wpId", null, null, $ah)['text'];
-ok(str_contains($pf, 'Loại tiền dùng trong pool') && str_contains($pf, 'JPY · giá') && str_contains($pf, 'JPY · chữ hiện trên máy') && str_contains($pf, 'CHF · giá')
+ok(str_contains($pf, 'Loại tiền dùng trong pool') && str_contains($pf, 'JPY ¥ · giá') && str_contains($pf, 'JPY ¥ · chữ hiện trên máy') && str_contains($pf, 'CHF Fr. · giá')
     && str_contains($pf, 'name="pp_JPY_amount[]" value="1500"') && str_contains($pf, 'value="¥1,500"') && str_contains($pf, 'Chữ giá (mặc định, khi không có giá theo loại tiền)')
     && substr_count($pf, 'name="pp_JPY_amount[]"') === 6,
     'trang sửa pool: ô loại tiền + cột «giá» và «chữ hiện trên máy» cho từng loại tiền ở mỗi gói (cả dòng mẫu để thêm gói)', mb_substr(strip_tags($pf), 0, 120));
@@ -864,7 +870,7 @@ ok($pv['code'] === 200 && str_contains($pv['text'], 'XX1') && str_contains($pv['
 // danh sách cột khai thiếu (vd trình duyệt cũ đã bỏ JPY khỏi pk_currencies khi ô loại tiền gõ dở) nhưng ô giá JPY vẫn gửi lên:
 // trang báo lỗi vẫn dựng lại đủ ô giá JPY → sửa ô loại tiền rồi lưu lần nữa KHÔNG làm mất giá JPY
 $f = $poolForm($wpId);
-$f['currencies'] = 'JPYY, CHF';
+$f['currencies'] = 'JP1Y, CHF';
 $f['pk_currencies'] = 'CHF';
 $pv = $post('/admin/pools/save', $f);
 $f2 = $poolForm($wpId);
@@ -887,6 +893,36 @@ ok($pv['code'] === 302 && (int) Db::val("SELECT amount FROM package_prices WHERE
     && Db::val("SELECT display FROM package_prices WHERE package_id=? AND currency='JPY'", [$pid['gem_s']]) === '¥2,000'
     && (int) Db::val("SELECT amount FROM package_prices WHERE package_id=? AND currency='CHF'", [$pid['gem_s']]) === 900,
     'admin sửa giá JPY của gói qua trang pool → lưu (giá loại tiền khác giữ nguyên)', $pv['code']);
+// nhãn loại tiền KHÔNG phải mã 3 chữ (ký hiệu / tên, gõ kèm dấu chấm): lưu qua FORM thật — giá phải vào CSDL, không được mất lặng lẽ
+$f = $poolForm($wpId);
+$nRow = count($f['pk_id']);
+$f['currencies'] = 'JPY, CHF, kr., ₹';
+$f['pk_currencies'] = 'JPY,CHF,KR,₹';
+foreach (['KR' => ['12.50', '12,50 kr.'], '₹' => ['99', '₹99.00']] as $lc => [$la, $ld]) {
+    $f["pp_{$lc}_amount"] = array_fill(0, $nRow, '');
+    $f["pp_{$lc}_display"] = array_fill(0, $nRow, '');
+    $f["pp_{$lc}_amount"][0] = $la;
+    $f["pp_{$lc}_display"][0] = $ld;
+}
+$pv = $post('/admin/pools/save', $f);
+$labelPrice = static fn (string $c): array => Db::one('SELECT amount, display FROM package_prices WHERE package_id=? AND currency=?', [$pid['gem_s'], $c]) ?: [];
+$pg = http('GET', "/admin/pools/$wpId", null, null, $ah)['text'];
+ok($pv['code'] === 302 && Pools::find($wpId)['cfg']['currencies'] === ['JPY', 'CHF', 'KR', '₹']
+    && (int) ($labelPrice('KR')['amount'] ?? 0) === 1250 && ($labelPrice('KR')['display'] ?? '') === '12,50 kr.' && (int) ($labelPrice('₹')['amount'] ?? 0) === 9900
+    && (int) ($labelPrice('JPY')['amount'] ?? 0) === 200000 && str_contains($pg, 'name="pp_KR_amount[]" value="12.50"') && str_contains($pg, 'name="pp_₹_amount[]" value="99.00"'),
+    'loại tiền là nhãn tự do («kr.» → KR, «₹»): lưu pool qua form → giá từng nhãn vào CSDL và hiện lại đúng; giá JPY giữ nguyên', [$pv['code'], $labelPrice('KR'), $labelPrice('₹')]);
+// ô loại tiền bị từ chối + danh sách cột khai thiếu, với cột giá của NHÃN (không phải mã 3 chữ): trang báo lỗi vẫn dựng lại ô giá đã gửi
+$f = $poolForm($wpId);
+$f['currencies'] = 'JP1Y';
+$f['pk_currencies'] = 'JPY';
+$pv = $post('/admin/pools/save', $f);
+ok($pv['code'] === 200 && str_contains($pv['text'], 'name="pp_KR_amount[]" value="12.50"') && str_contains($pv['text'], 'name="pp_₹_amount[]" value="99.00"')
+    && (int) ($labelPrice('KR')['amount'] ?? 0) === 1250, 'ô loại tiền gõ sai + cột khai thiếu → ô giá của nhãn «KR» / «₹» vẫn còn trên trang báo lỗi, giá trong CSDL không mất', $pv['code']);
+$f = $poolForm($wpId);
+$f['currencies'] = 'JPY, CHF';
+$pv = $post('/admin/pools/save', $f);
+ok($pv['code'] === 302 && Pools::find($wpId)['cfg']['currencies'] === ['JPY', 'CHF'] && $labelPrice('KR') === [] && $labelPrice('₹') === []
+    && (int) ($labelPrice('JPY')['amount'] ?? 0) === 200000, 'bỏ nhãn khỏi ô loại tiền rồi lưu → xoá giá của nhãn đó, giá còn lại giữ nguyên', $pv['code']);
 
 // ---- tiền của đơn = SỰ KIỆN gửi cho tool; tool áp vào sổ rồi báo đã nhận ----
 http('POST', "/api/tool/jobs/$WJ4/images?seq=1", $TK, png(), ['Content-Type: image/png']);
@@ -1228,6 +1264,74 @@ $post('/admin/pools/save', ['id' => $cpId, 'code' => 'pool-cur', 'name' => 'Pool
 $pr2 = Pools::prices($cpId)[$k1] ?? [];
 ok(Pools::find($cpId)['cfg']['currencies'] === ['JPY', 'USD'] && ($pr2['USD'] ?? null) === ['amount' => '9.99', 'display' => '$9.99'] && ($pr2['JPY']['amount'] ?? '') === '1500',
     'thêm loại tiền USD + nhập giá USD rồi lưu MỘT lần → lưu cả loại tiền lẫn giá (không phải lưu hai lần)', $pr2);
+
+echo "\n== Dữ liệu mặc định (seed): xuất cấu hình → cài máy mới bằng setup.php là có sẵn ==\n";
+$seed = Seed::export();
+$sp = array_column($seed['pools'], null, 'code');
+$sjs = json_encode($seed, JSON_UNESCAPED_UNICODE);
+ok(($seed['seed'] ?? 0) === 1 && isset($sp['wallet-pool']) && count($sp['wallet-pool']['packages']) >= 4 && ($sp['wallet-pool']['config']['currencies'] ?? null) === ['JPY', 'CHF']
+    && !str_contains($sjs, 'key_hash') && !str_contains($sjs, 'password_hash') && !str_contains($sjs, 'login_enc') && !str_contains($sjs, 'khach@example.com'),
+    'xuất seed: pool + gói + giá theo loại tiền; KHÔNG có admin, khoá API, đơn / thông tin khách', array_keys($sp));
+$seedKeys = [];
+foreach ($seed['pools'] as $spool) {
+    $seedKeys = array_merge($seedKeys, array_keys($spool));
+    foreach ($spool['packages'] as $spk) {
+        $seedKeys = array_merge($seedKeys, array_map(static fn ($k) => "pk.$k", array_keys($spk)));
+    }
+}
+$seedKeys = array_values(array_unique($seedKeys));
+sort($seedKeys);
+ok($seedKeys === ['active', 'code', 'config', 'game', 'name', 'packages', 'pk.active', 'pk.code', 'pk.limit_type', 'pk.max_qty', 'pk.name', 'pk.ocr_text', 'pk.price_text', 'pk.prices']
+    && array_keys($seed) === ['seed', 'exported_at', 'pools'], 'seed chỉ gồm ĐÚNG các khoá cấu hình pool / gói (không ví, tài khoản Apple, máy, đơn, khoá)', $seedKeys);
+Db::insert('package_prices', ['package_id' => $pid['nodisp'], 'currency' => 'JPY', 'amount' => 100000, 'display' => '']);      // giá cũ thiếu chữ giá
+$seedSk = Seed::export($skipped);
+$nd = array_column(array_column($seedSk['pools'], null, 'code')['wallet-pool']['packages'], null, 'code')['nodisp'];
+ok($skipped === ['wallet-pool/nodisp/JPY'] && (array) $nd['prices'] === [], 'giá cũ thiếu «chữ giá hiện trên máy» KHÔNG xuất vào seed (máy mới sẽ từ chối cả tệp) và được nêu tên', $skipped);
+Db::run("DELETE FROM package_prices WHERE package_id=? AND currency='JPY'", [$pid['nodisp']]);
+$sf = "$tmp/seed.json";
+file_put_contents($sf, json_encode($seed, JSON_UNESCAPED_UNICODE));
+$fresh = "$tmp/fresh.sqlite";
+$envFresh = array_merge(getenv(), $env, ['DB_DSN' => "sqlite:$fresh", 'SEED_FILE' => $sf]);
+unset($envFresh['DB_USER'], $envFresh['DB_PASS']);
+$runSetup = static function (array $over = []) use ($envFresh, $root): array {
+    $pr = proc_open([PHP_BINARY, "$root/bin/setup.php"], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pp, $root, array_merge($envFresh, $over));
+    $o = stream_get_contents($pp[1]) . stream_get_contents($pp[2]);
+    return [proc_close($pr), $o];
+};
+// các tệp seed hỏng trên một CSDL trống KHÁC: báo lỗi rõ, không để lại pool dở, không khoá lần nạp sau
+$fresh2 = "$tmp/fresh2.sqlite";
+$e2 = ['DB_DSN' => "sqlite:$fresh2"];
+$pools2 = static fn (): int => is_file($fresh2) ? (int) (new PDO("sqlite:$fresh2"))->query('SELECT COUNT(*) FROM pools')->fetchColumn() : -1;
+[$rcM, $oM] = $runSetup($e2 + ['SEED_FILE' => "$tmp/khong-co.json"]);
+file_put_contents("$tmp/seed-hong.json", '{oops');
+[$rcJ, $oJ] = $runSetup($e2 + ['SEED_FILE' => "$tmp/seed-hong.json"]);
+ok($rcM === 1 && str_contains($oM, 'không có tệp') && $rcJ === 1 && str_contains($oJ, 'không phải JSON') && $pools2() === 0,
+    'SEED_FILE trỏ tới tệp không có / tệp không phải JSON → setup dừng với lỗi rõ (không coi như cài xong), không tạo pool', [$rcM, $rcJ]);
+file_put_contents("$tmp/seed-rong.json", json_encode(['seed' => 1, 'pools' => []]));
+[$rcE, $oE] = $runSetup($e2 + ['SEED_FILE' => "$tmp/seed-rong.json"]);
+$half = $seed;
+$half['pools'][] = ['code' => 'pool-hong', 'name' => 'Hỏng', 'game' => 'x', 'active' => true, 'config' => $half['pools'][0]['config'],
+                    'packages' => [['code' => 'a', 'name' => 'A', 'limit_type' => 'multi', 'active' => true], ['code' => 'a', 'name' => 'trùng mã', 'limit_type' => 'multi', 'active' => true]]];
+file_put_contents("$tmp/seed-do.json", json_encode($half, JSON_UNESCAPED_UNICODE));
+[$rcH, $oH] = $runSetup($e2 + ['SEED_FILE' => "$tmp/seed-do.json"]);
+$poolsAfterHalf = $pools2();
+[$rcG, $oG] = $runSetup($e2);
+ok($rcE === 0 && str_contains($oE, 'không có pool nào') && $rcH === 1 && str_contains($oH, 'pool-hong') && $poolsAfterHalf === 0
+    && $rcG === 0 && str_contains($oG, 'Đã nạp dữ liệu mặc định') && $pools2() === count($seed['pools']),
+    'seed rỗng → bỏ qua mà KHÔNG khoá lần nạp sau; seed hỏng ở pool thứ N → không để lại pool nào (một giao dịch); sau đó seed đúng vẫn nạp được', [$rcE, $rcH, $poolsAfterHalf, $rcG, mb_substr($oH, -120)]);
+[$rc1, $o1] = $runSetup();
+$fdb = new PDO("sqlite:$fresh");
+$cnt = static fn (string $t): int => (int) $fdb->query("SELECT COUNT(*) FROM $t")->fetchColumn();
+$wp = $fdb->query("SELECT id, config FROM pools WHERE code='wallet-pool'")->fetch(PDO::FETCH_ASSOC);
+$gem = $wp ? $fdb->query("SELECT pp.amount, pp.display FROM package_prices pp JOIN packages k ON k.id=pp.package_id WHERE k.pool_id={$wp['id']} AND k.code='gem_s' AND pp.currency='JPY'")->fetch(PDO::FETCH_ASSOC) : null;
+ok($rc1 === 0 && str_contains($o1, 'Đã nạp dữ liệu mặc định') && $cnt('pools') === count($seed['pools']) && $cnt('admins') === 1 && $cnt('api_keys') === 0 && $cnt('jobs') === 0
+    && $gem && (int) $gem['amount'] === 200000 && $gem['display'] === '¥2,000' && json_decode($wp['config'], true)['currencies'] === ['JPY', 'CHF'],
+    'máy mới: php bin/setup.php → tạo bảng + admin, tự nạp seed (pool, gói, giá, loại tiền); không có khoá / đơn cũ', [$rc1, mb_substr($o1, -160)]);
+[$rc2, $o2] = $runSetup();
+ok($rc2 === 0 && str_contains($o2, 'bỏ qua') && $cnt('pools') === count($seed['pools']), 'chạy setup lần nữa → không nạp lại (không ghi đè cấu hình đang dùng)', mb_substr($o2, -120));
+$fdb->exec('DELETE FROM package_prices'); $fdb->exec('DELETE FROM packages'); $fdb->exec('DELETE FROM pools');
+[$rc3, $o3] = $runSetup();
+ok($rc3 === 0 && str_contains($o3, 'đã nạp từ trước') && $cnt('pools') === 0, 'admin xoá hết pool rồi chạy setup (cập nhật) → dữ liệu mặc định KHÔNG tự sinh lại', mb_substr($o3, -120));
 
 echo "\n== Trang quản trị + tài liệu ==\n";
 $docs = http('GET', '/docs');

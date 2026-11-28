@@ -39,3 +39,24 @@ if ($count === 0 || ($name !== null && $pass !== null)) {
         echo "  Mật khẩu (chỉ hiện lần này): {$pass}\n  → đăng nhập ở /admin rồi đổi tại mục Tài khoản.\n";
     }
 }
+
+// Dữ liệu mặc định (cấu hình pool + gói xuất từ máy khác bằng bin/export-seed.php): nạp MỘT lần khi CSDL chưa có pool nào
+$seedEnv = (string) Env::get('SEED_FILE', '');
+$seedFile = $seedEnv !== '' ? $seedEnv : dirname(__DIR__) . '/seed.json';
+if ($seedEnv !== '' && !is_file($seedFile)) {             // chỉ đường tới tệp mà tệp không có = gõ sai đường dẫn, không phải «không có seed»
+    fwrite(STDERR, "✗ SEED_FILE trỏ tới «{$seedFile}» nhưng không có tệp đó.\n");
+    exit(1);
+}
+if (is_file($seedFile)) {
+    $seed = json_decode((string) file_get_contents($seedFile), true);
+    if (!is_array($seed)) {
+        fwrite(STDERR, '✗ Tệp dữ liệu mặc định ' . basename($seedFile) . ' không phải JSON hợp lệ (' . json_last_error_msg() . ").\n");
+        exit(1);
+    }
+    try {
+        echo '✓ ' . Seed::import(is_array($seed) ? $seed : []) . "\n";
+    } catch (Throwable $e) {
+        fwrite(STDERR, '✗ Không nạp được dữ liệu mặc định (' . basename($seedFile) . '): ' . $e->getMessage() . "\n");
+        exit(1);
+    }
+}

@@ -22,6 +22,8 @@ php bin/setup.php            # tạo bảng + tạo admin (mật khẩu hiện M
 php bin/setup.php admin 'MatKhauMoi>=10kytu'   # đặt lại mật khẩu khi cần
 ```
 
+**Dữ liệu mặc định (cài máy mới có sẵn pool + gói):** trên máy đang chạy, `php bin/export-seed.php` ghi `seed.json` (chỉ pool, gói, giá theo loại tiền — không có admin, khoá API, đơn hay thông tin khách). Đặt file đó vào thư mục gateway của máy mới (hoặc chỉ đường bằng `SEED_FILE=` trong `.env`): `php bin/setup.php` tự nạp **một lần** khi CSDL chưa có pool nào; chạy lại không nạp đè. Chuyển **toàn bộ** dữ liệu (cả đơn, khoá API, admin) sang máy khác thì dùng dump CSDL và giữ nguyên `APP_KEY`.
+
 Cần PHP ≥ 8.2 với `pdo_mysql` (hoặc `pdo_sqlite`), `sodium`, `gd`, `curl`, `mbstring`, `fileinfo`.
 
 **Web server**: trỏ document root vào `public/`.
@@ -88,7 +90,7 @@ Gateway đặt ngoài Internet, tool nằm trong mạng nội bộ → **gateway
 
 Mỗi máy nạp trả tiền bằng **một** tài khoản Apple, ở **một** loại tiền (vùng App Store). Ví của từng máy — tài khoản Apple, mật khẩu Apple ID (mã hoá, chỉ để tool gõ vào bảng mua, không bao giờ rời máy tính chạy tool), loại tiền, số dư, sổ nạp / trừ — **khai và nạp tiền ở app tool** (trang «Ví & Apple»). Gateway chỉ giữ **bản sao** để admin xem (`/admin/wallets`, không sửa được) và tính tiền của từng đơn. Mọi số tiền là **số nguyên = số tiền × 100** (1.500 JPY → `150000`, 63,00 CHF → `6300`).
 
-- **Pool → «Loại tiền dùng trong pool»**: một pool bán được nhiều loại tiền; mỗi gói có **giá** + **chữ giá hiện trên máy** cho từng loại (bắt buộc đủ cả hai — tool khớp cả số tiền trên ô gói). Gõ thêm loại tiền là hiện ngay ô giá ở từng gói.
+- **Pool → «Loại tiền dùng trong pool»**: một pool bán được nhiều loại tiền; mỗi gói có **giá** + **chữ giá hiện trên máy** cho từng loại (bắt buộc đủ cả hai — tool khớp cả số tiền trên ô gói). Gõ thêm loại tiền là hiện ngay ô giá ở từng gói. Loại tiền chỉ là **nhãn** để khớp ví của máy với giá gói và để đối soát: gõ ký hiệu hay tên đúng như máy hiện (`¥`, `kr`, `CHF` — tối đa 6 ký tự, không số); `¥` / `JP` / `円` tự quy về `JPY`, `$` về `USD`…, nhãn khác giữ nguyên (viết hoa). Ví ở tool phải khai **cùng nhãn** với pool.
 - **Xin đơn**: tool gửi kèm `wallet` = «loại tiền + còn dùng được» của máy. Gateway trừ thêm các khoản tool chưa kịp nhận rồi chỉ giao đơn mà *chi phí ≤ còn dùng được* (giá hiện tại ở đúng loại tiền đó). Đơn quá giá / gói chưa có giá hoặc chữ giá loại tiền đó thì bỏ qua cho máy khác; không đơn nào giao được thì `claim` trả `wallet_short` để tool báo admin. **Máy không có ví** nhận đơn y như trước.
 - **Tiền của đơn → tool**: `done` → «mua gói» = số đã mua × đơn giá lúc giao · `failed` → không trừ · `review` (tool không chắc, thiếu ảnh, tool im lặng) → **tạm giữ** cả chi phí; admin chốt «đã nạp» (nhập số tiền thật) / «chưa nạp» (nhả); admin sửa kết quả đã chốt → hoàn / trừ. Mỗi khoản là một **sự kiện** (`tool_wallet_events`) gửi về tool khi đồng bộ (`/api/tool/sync` → `wallet_events`); tool áp mỗi sự kiện một lần rồi báo lại (`wallet_acks`). Báo muộn / bấm hai lần không bao giờ trừ hai lần.
 - **Ví cũ khai ở gateway** (bảng `wallets`, trước khi chuyển về tool) không còn áp khi giao đơn mới; chỉ còn để tra sổ cái (và cho các đơn đã giao theo chúng).

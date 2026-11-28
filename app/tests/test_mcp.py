@@ -405,7 +405,14 @@ def run_all(tmp, real_ocr):
     out = io.BytesIO()
     serve_stdio(server, stdin=io.BytesIO((deep + "\n" + json.dumps({"jsonrpc": "2.0", "id": 9, "method": "ping"}) + "\n").encode()), stdout=out)
     got = [json.loads(l) for l in out.getvalue().decode().splitlines()]
-    ok(len(got) == 2 and got[0]["error"]["code"] == -32700 and got[1] == {"jsonrpc": "2.0", "id": 9, "result": {}}, "một dòng JSON lồng 5000 tầng → chỉ là lỗi phân tích; máy chủ stdio KHÔNG chết, vẫn trả lời yêu cầu sau", got[:1])
+    # Python ≤ 3.11: bộ đọc JSON từ chối độ lồng này (lỗi phân tích −32700). Python ≥ 3.12 đọc được → là một lô chứa một lô: yêu cầu sai (−32600).
+    first = got[0] if got else None
+    deep_err = (first.get("error", {}).get("code") == -32700 if isinstance(first, dict)
+                else isinstance(first, list) and len(first) == 1 and first[0].get("error", {}).get("code") == -32600)
+    ok(len(got) == 2 and deep_err and got[1] == {"jsonrpc": "2.0", "id": 9, "result": {}}, "một dòng JSON lồng 5000 tầng → chỉ là một dòng hỏng (lỗi phân tích / yêu cầu sai); máy chủ stdio KHÔNG chết, vẫn trả lời yêu cầu sau", got[:1])
+    nested = server.handle([[{"jsonrpc": "2.0", "id": 1, "method": "ping"}], {"jsonrpc": "2.0", "id": 2, "method": "ping"}])
+    ok(isinstance(nested, list) and len(nested) == 2 and nested[0]["error"]["code"] == -32600 and nested[1] == {"jsonrpc": "2.0", "id": 2, "result": {}},
+       "lô lồng trong lô → phần tử đó là yêu cầu sai (không chạy, không đệ quy); yêu cầu hợp lệ cùng lô vẫn được trả lời", nested)
 
     # --- board ESP32: xem sức khoẻ + phục hồi qua MCP / CLI ---
     import test_board as TB
