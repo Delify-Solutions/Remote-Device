@@ -38,9 +38,9 @@ $filtered = $status || $pool || $q !== '';
   </div>
 <?php if (!$rows): ?><div class="empty">Không có đơn nào.</div><?php else: ?>
   <div class="table-responsive">
-  <table class="table table-hover mb-0"><thead><tr><th>Mã đơn (shop)</th><th>Pool</th><th>Tài khoản</th><?php if ($wallets): ?><th>Tài khoản Apple</th><?php endif; ?><th>Trạng thái</th><th>Máy</th><th>Ảnh</th><th>Tạo lúc</th><th>Cập nhật</th><th class="text-end">Thao tác</th></tr></thead><tbody>
+  <table class="table table-hover mb-0"><thead><tr><th>Mã đơn (shop)</th><th>Pool</th><th>Tài khoản</th><?php if ($wallets): ?><th title="Tài khoản đang khai ở ví của máy nhận đơn (theo bản tool báo gần nhất)">Tài khoản Apple</th><?php endif; ?><th>Trạng thái</th><th>Máy</th><th>Ảnh</th><th>Tạo lúc</th><th>Cập nhật</th><th class="text-end">Thao tác</th></tr></thead><tbody>
   <?php foreach ($rows as $j):
-      $busy = in_array($j['status'], Jobs::ACTIVE, true) || ($j['status'] === 'review' && ($j['wallet_state'] ?? null) === 'held'); ?>
+      $busy = in_array($j['status'], Jobs::ACTIVE, true) || ($j['status'] === 'review' && Wallets::isWalletJob($j) && ($j['wallet_state'] ?? null) === 'held'); ?>
     <tr>
       <td><a class="fw-medium" href="/admin/jobs/<?= (int) $j['id'] ?>"><?= e($j['ref']) ?></a><div class="mono small text-body-secondary"><?= e($j['pid']) ?></div></td>
       <td class="small"><?= e($j['pool_name']) ?></td>

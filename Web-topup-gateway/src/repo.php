@@ -93,6 +93,12 @@ final class Pools
         ];
     }
 
+    /** CSDL đã có giá gói theo loại tiền + mã băm tài khoản game của đơn (migration 5). Mã mới chạy trên CSDL cũ hơn thì coi như chưa có. */
+    public static function priced(): bool
+    {
+        return Schema::version() >= 5;
+    }
+
     /** «JPY, chf  KRW» → [['JPY','CHF','KRW'], null]; có mã sai → [[], 'lỗi']. */
     public static function parseCurrencies(string $raw): array
     {
@@ -317,7 +323,7 @@ final class Pools
         if ((int) Db::val('SELECT COUNT(*) FROM jobs WHERE pool_id=?', [$id]) > 0) {
             return false;   // đã có đơn → chỉ cho tạm dừng, không xoá (giữ lịch sử đối soát)
         }
-        if (Wallets::enabled()) {
+        if (self::priced()) {
             Db::run('DELETE FROM package_prices WHERE package_id IN (SELECT id FROM packages WHERE pool_id=?)', [$id]);
         }
         Db::run('DELETE FROM packages WHERE pool_id=?', [$id]);
@@ -336,7 +342,7 @@ final class Pools
      */
     public static function prices(int $poolId): array
     {
-        if (!Wallets::enabled()) {
+        if (!self::priced()) {
             return [];
         }
         $out = [];
@@ -354,7 +360,7 @@ final class Pools
      */
     public static function savePackages(int $poolId, array $rows): ?string
     {
-        $wallets = Wallets::enabled();
+        $wallets = self::priced();
         $pool = $wallets ? self::find($poolId) : null;
         $currencies = $pool ? $pool['cfg']['currencies'] : [];
         $codes = [];
@@ -498,7 +504,7 @@ final class Pools
             }
             $pk[] = $row;
         }
-        if ($forTool && Wallets::enabled()) {
+        if ($forTool && self::priced()) {
             $byId = [];
             foreach (self::packages((int) $pool['id'], true) as $i => $p) {
                 $byId[(int) $p['id']] = $i;
@@ -727,7 +733,7 @@ final class Tools
         $hasWallets = array_key_exists('wallets', $in);
         $wallets = [];
         if ($hasWallets) {
-            [$wallets, $werr] = ToolWallets::parseReport($in['wallets']);
+            [$wallets, $werr] = Wallets::parseReport($in['wallets']);
             if ($werr !== null) {
                 return [422, self::err('invalid_wallets', $werr)];
             }
@@ -768,11 +774,10 @@ final class Tools
 
         // ---- 2b) VÍ do tool quản lý: tool đã áp các sự kiện tiền nào (ack) + bản sao ví (ảnh chụp toàn bộ) ----
         if ($acks) {
-            ToolWallets::ack($kid, $acks);
+            Wallets::ack($kid, $acks);
         }
         if ($hasWallets) {
-            ToolWallets::saveReport($kid, $wallets, $now);
-            $info['wallets_by_tool'] = true;          // từ giờ ví của khoá này do tool quản lý: ví cũ khai ở gateway không còn áp khi giao đơn
+            Wallets::saveReport($kid, $wallets, $now);
         }
 
         // ---- 3) thông tin về chính tool ----
@@ -795,7 +800,7 @@ final class Tools
             'devices' => (int) Db::val("SELECT COUNT(*) FROM devices WHERE tool_key_id=? AND synced_at IS NOT NULL AND status<>'removed'", [$kid]),
             'scripts' => (int) Db::val('SELECT COUNT(*) FROM tool_scripts WHERE tool_key_id=?', [$kid]),
             // tiền của các đơn (mua / tạm giữ / admin chốt / hoàn) tool chưa áp vào sổ — áp theo `id` (mỗi id một lần) rồi gửi lại trong wallet_acks
-            'wallet_events' => ToolWallets::pending($kid),
+            'wallet_events' => Wallets::pending($kid),
         ]];
     }
 
@@ -1081,7 +1086,7 @@ final class Money
     }
 
     /** Để hiện: 150000 JPY → «1.500 JPY»; 6350 CHF → «63,50 CHF» (cùng cách viết với thông báo của tool). */
-    public static function fmt(?int $x100, string $cur, bool $withCur = true): string
+    public static function fmt(?int $x100, string $cur): string
     {
         if ($x100 === null) {
             return '—';
@@ -1091,7 +1096,7 @@ final class Money
         if (self::decimals($cur) > 0) {
             $s .= ',' . str_pad((string) ($v % 100), 2, '0', STR_PAD_LEFT);
         }
-        return ($x100 < 0 ? '-' : '') . $s . ($withCur && $cur !== '' ? ' ' . $cur : '');
+        return ($x100 < 0 ? '-' : '') . $s . ($cur !== '' ? ' ' . $cur : '');
     }
 
     /** Để điền sẵn vào ô nhập (không dấu nghìn): 150000 JPY → «1500»; 6350 CHF → «63.50». */
@@ -1172,37 +1177,33 @@ final class Money
     }
 }
 
-/* ====================== Wallets: ví của tài khoản Apple trên từng máy ====================== */
+/* ====================== Ví (tool quản lý — gateway giữ bản sao + tiền của từng đơn) ====================== */
 /**
- * Mỗi máy nạp (khoá Tool + tên máy) đăng nhập MỘT tài khoản Apple để trả tiền mua gói; số dư của tài khoản đó do admin khai và
- * gateway tự trừ theo đơn. Máy CÓ ví đang dùng thì chỉ nhận đơn mà ví đủ tiền (theo giá gói ở đúng loại tiền của ví); máy không
- * có ví thì nhận đơn như cũ, không kiểm gì.
- *
- * SỔ CÁI (wallet_entries) chỉ ghi thêm, mỗi dòng là một việc:
- *   topup / adjust  — admin nạp thêm / chỉnh số dư (đổi số dư)
- *   purchase        — đơn xong: trừ đúng số gói đã mua × đơn giá LÚC GIAO ĐƠN (đổi số dư)
- *   hold            — đơn sang chờ đối soát: TẠM GIỮ cả chi phí đơn. amount âm nhưng KHÔNG đổi số dư (balance_after = số dư lúc đó)
- *   charge          — admin chốt «đã nạp»: trừ số tiền admin nhập (đổi số dư); tạm giữ đóng lại
- *   release         — admin chốt «chưa nạp»: nhả tạm giữ (amount 0, không đổi số dư)
- *   refund          — admin đổi đơn đã trừ tiền sang «thất bại»: cộng lại đúng số đã trừ của đơn (đổi số dư)
- * Tạm giữ ĐANG MỞ = các dòng hold của những đơn còn wallet_state='held' (chốt xong thì jobs.wallet_state đổi → tự đóng).
- *   Còn dùng được = số dư − tổng tạm giữ đang mở.
+ * Ví của từng máy (tài khoản Apple + loại tiền + số dư + sổ) do TOOL giữ — nguồn gốc là tool. Gateway:
+ *  - khi máy xin đơn, nhận «loại tiền + còn dùng được» tool gửi kèm, trừ đi các khoản tool CHƯA nhận (sự kiện chưa ack) rồi chỉ giao
+ *    đơn vừa túi, định giá theo đúng loại tiền đó (đơn ghi currency + cost);
+ *  - tiền của đơn (mua / tạm giữ / admin chốt / hoàn) ghi thành SỰ KIỆN cho tool (tool_wallet_events); tool nhận qua /api/tool/sync,
+ *    áp vào sổ của nó (mỗi sự kiện một lần, theo id) rồi báo đã nhận ở lần sync sau;
+ *  - giữ BẢN SAO ví tool báo lên (tool_wallets) để admin xem — không sửa ở gateway.
+ * Sự kiện tiền của một đơn:
+ *   purchase — đơn xong: trừ đúng số gói đã mua × đơn giá LÚC GIAO ĐƠN
+ *   hold     — đơn sang chờ đối soát: TẠM GIỮ cả chi phí đơn (không đổi số dư)
+ *   charge   — admin chốt «đã nạp»: trừ số tiền admin nhập; tạm giữ đóng lại
+ *   release  — admin chốt «chưa nạp»: nhả tạm giữ
+ *   refund   — admin đổi đơn đã trừ tiền sang «thất bại»: cộng lại đúng số đã trừ của đơn
  * jobs.wallet_state: NULL (đang chạy, chưa tính tiền) → charged | none (failed, không trừ) | held → charged | released.
- * Mọi bước đổi wallet_state đều là UPDATE có điều kiện → báo muộn / bấm hai lần không bao giờ trừ tiền hai lần.
+ * Mọi bước đổi wallet_state đều là UPDATE có điều kiện → báo muộn / bấm hai lần không bao giờ tính tiền hai lần.
+ * (Ví khai ở gateway của migration 5 — bảng wallets / wallet_entries, cột jobs.wallet_id — không còn mã nào đọc / ghi; để nguyên trong CSDL.)
  */
 final class Wallets
 {
     public const KINDS = [
-        'topup'    => ['Nạp tiền', 'success'],
         'purchase' => ['Mua gói', 'info'],
         'hold'     => ['Tạm giữ', 'warning'],
         'release'  => ['Nhả tạm giữ', 'secondary'],
         'charge'   => ['Trừ khi đối soát', 'primary'],
-        'adjust'   => ['Chỉnh số dư', 'danger'],
         'refund'   => ['Hoàn tiền đơn', 'success'],
     ];
-    /** các loại dòng sổ cái làm ĐỔI số dư (hold / release chỉ ghi lại việc giữ / nhả) */
-    private const MOVES = ['topup', 'purchase', 'charge', 'adjust', 'refund'];
     public const STATE = [
         'held'     => ['đang tạm giữ', 'warning'],
         'charged'  => ['đã trừ tiền', 'success'],
@@ -1210,13 +1211,13 @@ final class Wallets
         'none'     => ['không trừ tiền', 'secondary'],
     ];
 
-    /** CSDL đã có bảng ví (migration 5). Mã mới chạy trên CSDL cũ thì mọi thứ về ví coi như tắt. */
+    /** CSDL đã có bảng ví của tool (migration 6). Mã mới chạy trên CSDL cũ thì mọi thứ về ví coi như tắt. */
     public static function enabled(): bool
     {
-        return Schema::version() >= 5;
+        return Schema::version() >= 6;
     }
 
-    /** a***@example.com — tài khoản Apple gửi cho tool / ghi vào nhật ký đơn. */
+    /** a***@example.com — tài khoản Apple ghi vào nhật ký đơn / hiện ở danh sách. */
     public static function mask(string $acc): string
     {
         $acc = trim($acc);
@@ -1228,251 +1229,8 @@ final class Wallets
         return $len <= 4 ? str_repeat('*', $len) : mb_substr($acc, 0, 2) . '***' . mb_substr($acc, -2);
     }
 
-    public static function find(int $id): ?array
-    {
-        return self::enabled() ? Db::one('SELECT w.*, k.name AS key_name FROM wallets w LEFT JOIN api_keys k ON k.id=w.tool_key_id WHERE w.id=?', [$id]) : null;
-    }
-
-    /** Ví đang dùng của một máy, hoặc null. */
-    public static function active(int $keyId, string $device): ?array
-    {
-        return Db::one('SELECT * FROM wallets WHERE tool_key_id=? AND device=? AND active=1 ORDER BY id DESC LIMIT 1', [$keyId, $device]);
-    }
-
-    /** Tổng tạm giữ đang mở của ví (số dương, ×100). */
-    public static function held(int $walletId): int
-    {
-        return -(int) Db::val("SELECT COALESCE(SUM(e.amount), 0) FROM wallet_entries e JOIN jobs j ON j.id=e.job_id
-                               WHERE e.wallet_id=? AND e.kind='hold' AND j.wallet_id=e.wallet_id AND j.wallet_state='held'", [$walletId]);
-    }
-
-    public static function available(array $w): int
-    {
-        return (int) $w['balance'] - self::held((int) $w['id']);
-    }
-
-    /** Mọi ví (kèm tên khoá Tool, tạm giữ, còn dùng được, lần ghi sổ cuối), xếp theo máy. */
-    public static function all(): array
-    {
-        if (!self::enabled()) {
-            return [];
-        }
-        $rows = Db::all('SELECT w.*, k.name AS key_name, (SELECT MAX(e.at) FROM wallet_entries e WHERE e.wallet_id=w.id) AS last_at,
-                                (SELECT COUNT(*) FROM devices d WHERE d.tool_key_id=w.tool_key_id AND d.name=w.device) AS device_seen
-                         FROM wallets w LEFT JOIN api_keys k ON k.id=w.tool_key_id ORDER BY k.name, w.tool_key_id, w.device, w.active DESC, w.id DESC');
-        foreach ($rows as &$r) {
-            $r['held'] = self::held((int) $r['id']);
-            $r['available'] = (int) $r['balance'] - $r['held'];
-        }
-        unset($r);
-        return $rows;
-    }
-
-    /** Ví (do tool quản lý) đang dùng mà «còn dùng được» thấp hơn giá gói đắt nhất đang bán ở đúng loại tiền — cho trang Tổng quan. */
-    public static function low(): array
-    {
-        $out = [];
-        foreach (ToolWallets::all() as $w) {
-            if (!(int) $w['active']) {
-                continue;
-            }
-            $avail = (int) $w['balance'] - (int) $w['held'] + (int) $w['pending_effect'];
-            $max = Db::val('SELECT MAX(pp.amount) FROM package_prices pp JOIN packages p ON p.id=pp.package_id JOIN pools o ON o.id=p.pool_id
-                            WHERE pp.currency=? AND p.active=1 AND o.active=1', [$w['currency']]);
-            if ($max !== null && $avail < (int) $max) {
-                $out[] = $w + ['available' => $avail, 'need' => (int) $max];
-            }
-        }
-        return $out;
-    }
-
-    /** Ghi MỘT dòng sổ cái (đổi số dư nếu là loại đổi số dư). Trả số dư sau đó. */
-    public static function entry(int $walletId, string $kind, int $amount, string $actor, string $note = '', ?array $job = null, ?string $code = null, ?int $qty = null): int
-    {
-        if (!isset(self::KINDS[$kind])) {
-            throw new InvalidArgumentException('kind');
-        }
-        return Db::tx(static function () use ($walletId, $kind, $amount, $actor, $note, $job, $code, $qty): int {
-            $now = time();
-            // ghi vào dòng ví TRƯỚC (giữ quyền ghi), rồi mới đọc số dư sau đó
-            Db::run('UPDATE wallets SET balance=balance+?, updated_at=? WHERE id=?', [in_array($kind, self::MOVES, true) ? $amount : 0, $now, $walletId]);
-            $bal = (int) Db::val('SELECT balance FROM wallets WHERE id=?', [$walletId]);
-            Db::insert('wallet_entries', [
-                'wallet_id' => $walletId, 'at' => $now, 'kind' => $kind, 'amount' => $amount, 'balance_after' => $bal,
-                'job_id' => $job ? (int) $job['id'] : null, 'job_pid' => $job['pid'] ?? null, 'package_code' => $code, 'qty' => $qty,
-                'note' => clean($note, 300), 'actor' => mb_substr($actor, 0, 40),
-            ]);
-            return $bal;
-        });
-    }
-
-    public static function entries(int $walletId, int $limit, int $offset): array
-    {
-        return Db::all('SELECT e.*, j.id AS jid FROM wallet_entries e LEFT JOIN jobs j ON j.id=e.job_id WHERE e.wallet_id=? ORDER BY e.id DESC LIMIT '
-            . max(1, min(500, $limit)) . ' OFFSET ' . max(0, $offset), [$walletId]);
-    }
-
-    public static function forJob(int $jobId): array
-    {
-        return self::enabled() ? Db::all('SELECT * FROM wallet_entries WHERE job_id=? ORDER BY id', [$jobId]) : [];
-    }
-
-    /**
-     * Chi phí của một đơn đang chờ nếu giao cho ví này, theo giá HIỆN TẠI của các gói ở loại tiền của ví.
-     * Trả ['cost' => tổng ×100, 'items' => ảnh chụp gói kèm price / currency / price_display, 'missing' => mã gói chưa có giá loại tiền này].
-     */
-    public static function quote(array $job, array $w, bool $needDisplay = false): array
-    {
-        $cur = (string) $w['currency'];
-        $items = jdec($job['items']);
-        $cost = 0;
-        $missing = [];
-        foreach ($items as &$it) {
-            $code = (string) ($it['code'] ?? '');
-            $p = Db::one('SELECT pp.amount, pp.display FROM packages p JOIN package_prices pp ON pp.package_id=p.id AND pp.currency=? WHERE p.pool_id=? AND p.code=?',
-                [$cur, $job['pool_id'], $code]);
-            if (!$p || ($needDisplay && trim((string) $p['display']) === '')) {
-                $missing[] = $code;                       // ví của tool: tool phải KHỚP chữ giá trên ô gói → thiếu chữ giá cũng là chưa có giá
-                continue;
-            }
-            $it['price'] = (int) $p['amount'];
-            $it['currency'] = $cur;
-            $it['price_display'] = (string) $p['display'];
-            $cost += (int) ($it['qty'] ?? 1) * (int) $p['amount'];
-        }
-        unset($it);
-        return ['cost' => $cost, 'items' => $items, 'missing' => $missing];
-    }
-
-    /**
-     * Có đơn nhưng không đơn nào giao được cho ví này → lời báo cho tool (`wallet_short`).
-     * $skipped = ['insufficient' => [quote…], 'no_price' => [quote…]]. Ưu tiên báo thiếu tiền (nạp thêm là xử lý được ngay).
-     */
-    public static function short(array $w, int $available, array $skipped): array
-    {
-        if ((int) ($w['short_notified_at'] ?? 0) < time() - 600) {      // ghi tối đa 10 phút một lần (không ghi CSDL ở mỗi lần máy hỏi đơn)
-            Db::run('UPDATE wallets SET short_notified_at=? WHERE id=?', [time(), $w['id']]);
-        }
-        return self::shortInfo(['account' => self::mask((string) $w['apple_account']), 'currency' => $w['currency'], 'available' => $available], $skipped);
-    }
-
-    /** Lời báo «ví không trả được đơn nào» từ các đơn bị bỏ qua (dùng cho cả ví gateway lẫn ví của tool). */
-    public static function shortInfo(array $base, array $skipped): array
-    {
-        if (!empty($skipped['insufficient'])) {
-            $list = $skipped['insufficient'];
-            usort($list, static fn (array $a, array $b): int => $a['cost'] <=> $b['cost']);
-            $codes = array_values(array_unique(array_map(static fn ($i) => (string) ($i['code'] ?? ''), $list[0]['items'])));
-            return ['reason' => 'insufficient'] + $base + ['need' => $list[0]['cost'], 'package_codes' => $codes];
-        }
-        $codes = [];
-        foreach ($skipped['no_price'] ?? [] as $q) {
-            foreach ($q['missing'] as $c) {
-                if (!in_array($c, $codes, true)) {
-                    $codes[] = $c;
-                }
-            }
-        }
-        return ['reason' => 'no_price'] + $base + ['need' => null, 'package_codes' => $codes];
-    }
-
-    /** Ví của đơn nhìn từ tool (để ghi nhật ký máy): tài khoản đã che, số dư, còn dùng được. */
-    public static function toolView(array $job): ?array
-    {
-        $w = !empty($job['wallet_id']) ? self::find((int) $job['wallet_id']) : null;
-        if (!$w) {
-            return null;
-        }
-        return ['account' => self::mask((string) $w['apple_account']), 'currency' => $w['currency'], 'balance' => (int) $w['balance'], 'available' => self::available($w)];
-    }
-
-    /**
-     * Tool báo kết quả / hệ thống chuyển đơn sang đối soát → tính tiền của đơn (gọi TRONG giao dịch đổi trạng thái đơn).
-     * $new: done | failed | review. $reported: kết quả từng gói tool gửi ({code, qty_done}); rỗng khi done = đã mua đủ.
-     */
-    public static function settle(array $job, string $new, array $reported, string $actor): void
-    {
-        if (ToolWallets::isToolJob($job)) {
-            ToolWallets::settle($job, $new, $reported, $actor);
-            return;
-        }
-        if (empty($job['wallet_id'])) {
-            return;
-        }
-        $state = $new === 'done' ? 'charged' : ($new === 'failed' ? 'none' : 'held');
-        if (Db::run('UPDATE jobs SET wallet_state=? WHERE id=? AND wallet_state IS NULL', [$state, $job['id']])->rowCount() !== 1) {
-            return;                                             // đã tính rồi (báo muộn / gửi lại) → không ghi thêm gì
-        }
-        $wid = (int) $job['wallet_id'];
-        if ($state === 'held') {
-            self::entry($wid, 'hold', -(int) $job['cost'], $actor, 'Tạm giữ cả chi phí đơn trong lúc chờ đối soát', $job);
-            return;
-        }
-        if ($state !== 'charged') {
-            return;
-        }
-        $done = [];
-        foreach ($reported as $r) {
-            $c = (string) ($r['code'] ?? '');
-            $done[$c] = ($done[$c] ?? 0) + max(0, (int) ($r['qty_done'] ?? 0));
-        }
-        foreach (jdec($job['items']) as $it) {
-            $code = (string) ($it['code'] ?? '');
-            $qty = (int) ($it['qty'] ?? 1);
-            // gateway chỉ cho mua đúng số lượng của đơn → số tool báo vượt quá thì tính theo số lượng của đơn
-            $n = $reported ? min($qty, $done[$code] ?? 0) : $qty;
-            if ($n > 0 && isset($it['price'])) {
-                self::entry($wid, 'purchase', -$n * (int) $it['price'], $actor, 'Mua ' . ($it['name'] ?? $code), $job, $code, $n);
-            }
-        }
-    }
-
-    /** Admin chốt đơn đang TẠM GIỮ ví (gọi TRONG giao dịch chốt đơn): done → trừ $charge; failed → nhả. */
-    public static function resolve(array $job, string $to, int $charge, string $note, string $actor): void
-    {
-        if (ToolWallets::isToolJob($job)) {
-            ToolWallets::resolve($job, $to, $charge, $note, $actor);
-            return;
-        }
-        $state = $to === 'done' ? 'charged' : 'released';
-        if (Db::run("UPDATE jobs SET wallet_state=? WHERE id=? AND wallet_state='held'", [$state, $job['id']])->rowCount() !== 1) {
-            return;
-        }
-        if ($state === 'charged') {
-            self::entry((int) $job['wallet_id'], 'charge', -$charge, $actor, $note !== '' ? $note : 'Admin chốt «đã nạp» — trừ tiền đơn', $job);
-        } else {
-            self::entry((int) $job['wallet_id'], 'release', 0, $actor, $note !== '' ? $note : 'Admin chốt «chưa nạp» — nhả tạm giữ', $job);
-        }
-    }
-}
-
-/* ====================== Ví do TOOL quản lý ====================== */
-/**
- * Từ migration 6, ví của từng máy (tài khoản Apple + loại tiền + số dư + sổ) do TOOL giữ — nguồn gốc là tool. Gateway:
- *  - khi máy xin đơn, nhận «loại tiền + còn dùng được» tool gửi kèm, trừ đi các khoản tool CHƯA nhận (sự kiện chưa ack) rồi chỉ giao
- *    đơn vừa túi, định giá theo đúng loại tiền đó (đơn ghi currency + cost, wallet_id để trống = ví của tool);
- *  - tiền của đơn (mua / tạm giữ / admin chốt / hoàn) ghi thành SỰ KIỆN cho tool (tool_wallet_events); tool nhận qua /api/tool/sync,
- *    áp vào sổ của nó (mỗi sự kiện một lần, theo id) rồi báo đã nhận ở lần sync sau;
- *  - giữ BẢN SAO ví tool báo lên (tool_wallets) để admin xem — không sửa ở gateway.
- * Ví cũ khai ở gateway (bảng wallets, trước migration 6) không còn áp khi giao đơn mới — chỉ còn để tra sổ và cho các đơn đã giao theo nó.
- */
-final class ToolWallets
-{
-    public const KINDS = [
-        'purchase' => ['Mua gói', 'info'],
-        'hold'     => ['Tạm giữ', 'warning'],
-        'release'  => ['Nhả tạm giữ', 'secondary'],
-        'charge'   => ['Trừ khi đối soát', 'primary'],
-        'refund'   => ['Hoàn tiền đơn', 'success'],
-    ];
-
-    public static function enabled(): bool
-    {
-        return Schema::version() >= 6;
-    }
-
-    /** Đơn trả bằng ví của TOOL: có loại tiền + chi phí nhưng không gắn ví gateway. */
-    public static function isToolJob(array $job): bool
+    /** Đơn có tính tiền ví: lúc giao đã ghi loại tiền + chi phí theo ví của máy nhận. (wallet_id khác rỗng = đơn đời cũ gắn ví gateway — không tính.) */
+    public static function isWalletJob(array $job): bool
     {
         return self::enabled() && empty($job['wallet_id']) && (string) ($job['currency'] ?? '') !== '' && !empty($job['tool_key_id'])
             && (string) ($job['device'] ?? '') !== '';
@@ -1598,6 +1356,25 @@ final class ToolWallets
         return $rows;
     }
 
+    /** Ví đang dùng mà «còn dùng được» thấp hơn giá gói đắt nhất đang bán ở đúng loại tiền — cho trang Tổng quan. */
+    public static function low(): array
+    {
+        $out = [];
+        foreach (self::all() as $w) {
+            if (!(int) $w['active']) {
+                continue;
+            }
+            $avail = (int) $w['balance'] - (int) $w['held'] + (int) $w['pending_effect'];
+            $max = Db::val('SELECT MAX(pp.amount) FROM package_prices pp JOIN packages p ON p.id=pp.package_id JOIN pools o ON o.id=p.pool_id
+                            WHERE pp.currency=? AND p.active=1 AND o.active=1', [$w['currency']]);
+            if ($max !== null && $avail < (int) $max) {
+                $out[] = $w + ['available' => $avail, 'need' => (int) $max];
+            }
+        }
+        return $out;
+    }
+
+    /** Sự kiện tiền của một đơn. */
     public static function forJob(int $jobId): array
     {
         return self::enabled() ? Db::all('SELECT * FROM tool_wallet_events WHERE job_id=? ORDER BY id', [$jobId]) : [];
@@ -1610,14 +1387,68 @@ final class ToolWallets
     }
 
     /**
-     * Tiền của đơn ví-tool khi đơn đổi trạng thái (gọi TRONG giao dịch đổi trạng thái — như Wallets::settle):
-     * done → mua (trừ đúng số gói đã mua × đơn giá lúc giao); review → tạm giữ cả chi phí; failed → không trừ.
+     * Chi phí của một đơn đang chờ nếu giao cho máy trả bằng loại tiền `$currency`, theo giá HIỆN TẠI của các gói ở loại tiền đó.
+     * Trả ['cost' => tổng ×100, 'items' => ảnh chụp gói kèm price / currency / price_display, 'missing' => mã gói chưa có giá loại tiền này].
+     * Tool phải KHỚP chữ giá trên ô gói → gói thiếu «chữ giá hiện trên máy» cũng coi là chưa có giá.
+     */
+    public static function quote(array $job, string $currency): array
+    {
+        $items = jdec($job['items']);
+        $cost = 0;
+        $missing = [];
+        foreach ($items as &$it) {
+            $code = (string) ($it['code'] ?? '');
+            $p = Db::one('SELECT pp.amount, pp.display FROM packages p JOIN package_prices pp ON pp.package_id=p.id AND pp.currency=? WHERE p.pool_id=? AND p.code=?',
+                [$currency, $job['pool_id'], $code]);
+            if (!$p || trim((string) $p['display']) === '') {
+                $missing[] = $code;
+                continue;
+            }
+            $it['price'] = (int) $p['amount'];
+            $it['currency'] = $currency;
+            $it['price_display'] = (string) $p['display'];
+            $cost += (int) ($it['qty'] ?? 1) * (int) $p['amount'];
+        }
+        unset($it);
+        return ['cost' => $cost, 'items' => $items, 'missing' => $missing];
+    }
+
+    /**
+     * Có đơn nhưng không đơn nào giao được cho ví này → lời báo cho tool (`wallet_short`).
+     * $skipped = ['insufficient' => [quote…], 'no_price' => [quote…]]. Ưu tiên báo thiếu tiền (nạp thêm là xử lý được ngay).
+     */
+    public static function shortInfo(array $base, array $skipped): array
+    {
+        if (!empty($skipped['insufficient'])) {
+            $list = $skipped['insufficient'];
+            usort($list, static fn (array $a, array $b): int => $a['cost'] <=> $b['cost']);
+            $codes = array_values(array_unique(array_map(static fn ($i) => (string) ($i['code'] ?? ''), $list[0]['items'])));
+            return ['reason' => 'insufficient'] + $base + ['need' => $list[0]['cost'], 'package_codes' => $codes];
+        }
+        $codes = [];
+        foreach ($skipped['no_price'] ?? [] as $q) {
+            foreach ($q['missing'] as $c) {
+                if (!in_array($c, $codes, true)) {
+                    $codes[] = $c;
+                }
+            }
+        }
+        return ['reason' => 'no_price'] + $base + ['need' => null, 'package_codes' => $codes];
+    }
+
+    /**
+     * Tool báo kết quả / hệ thống chuyển đơn sang đối soát → tính tiền của đơn (gọi TRONG giao dịch đổi trạng thái đơn).
+     * $new: done → mua (trừ đúng số gói đã mua × đơn giá lúc giao); review → tạm giữ cả chi phí; failed → không trừ.
+     * $reported: kết quả từng gói tool gửi ({code, qty_done}); rỗng khi done = đã mua đủ. Đơn không tính tiền ví thì không làm gì.
      */
     public static function settle(array $job, string $new, array $reported, string $actor): void
     {
+        if (!self::isWalletJob($job)) {
+            return;
+        }
         $state = $new === 'done' ? 'charged' : ($new === 'failed' ? 'none' : 'held');
         if (Db::run('UPDATE jobs SET wallet_state=? WHERE id=? AND wallet_state IS NULL', [$state, $job['id']])->rowCount() !== 1) {
-            return;
+            return;                                             // đã tính rồi (báo muộn / gửi lại) → không ghi thêm gì
         }
         if ($state === 'held') {
             self::event($job, 'hold', 0, (int) $job['cost'], $actor, 'Tạm giữ cả chi phí đơn trong lúc chờ đối soát');
@@ -1634,6 +1465,7 @@ final class ToolWallets
         foreach (jdec($job['items']) as $it) {
             $code = (string) ($it['code'] ?? '');
             $qty = (int) ($it['qty'] ?? 1);
+            // gateway chỉ cho mua đúng số lượng của đơn → số tool báo vượt quá thì tính theo số lượng của đơn
             $n = $reported ? min($qty, $done[$code] ?? 0) : $qty;
             if ($n > 0 && isset($it['price'])) {
                 self::event($job, 'purchase', -$n * (int) $it['price'], 0, $actor, 'Mua ' . ($it['name'] ?? $code), $code, $n);
@@ -1641,9 +1473,12 @@ final class ToolWallets
         }
     }
 
-    /** Admin chốt đơn đang tạm giữ (trong giao dịch chốt): done → trừ $charge + đóng tạm giữ; failed → nhả. */
+    /** Admin chốt đơn đang TẠM GIỮ (gọi TRONG giao dịch chốt đơn): done → trừ $charge + đóng tạm giữ; failed → nhả. */
     public static function resolve(array $job, string $to, int $charge, string $note, string $actor): void
     {
+        if (!self::isWalletJob($job)) {
+            return;
+        }
         $state = $to === 'done' ? 'charged' : 'released';
         if (Db::run("UPDATE jobs SET wallet_state=? WHERE id=? AND wallet_state='held'", [$state, $job['id']])->rowCount() !== 1) {
             return;
@@ -1774,10 +1609,8 @@ final class Jobs
             'finished_at' => iso($job['finished_at'] ? (int) $job['finished_at'] : null),
             'updated_at' => iso((int) $job['updated_at']),
         ];
-        if ($forTool && !empty($job['wallet_id']) && ($w = Wallets::toolView($job))) {
-            $out['wallet'] = $w;
-        } elseif ($forTool && ToolWallets::isToolJob($job)) {
-            $out['wallet'] = ['source' => 'tool', 'currency' => (string) $job['currency'], 'cost' => (int) $job['cost']];     // tiền của đơn theo ví của tool
+        if ($forTool && Wallets::isWalletJob($job)) {
+            $out['wallet'] = ['source' => 'tool', 'currency' => (string) $job['currency'], 'cost' => (int) $job['cost']];     // tiền của đơn theo ví của máy (tool giữ sổ)
         }
         if ($withLogin) {
             $out['login'] = jdec(Crypto::dec($job['login_enc'])) ?: new stdClass();
@@ -1900,7 +1733,7 @@ final class Jobs
         // --- gói «chỉ 1 lần / tài khoản»: mỗi tài khoản game của khách chỉ mua được MỘT lần (đơn thất bại / huỷ / quá hạn thì mua lại được) ---
         $accountKey = null;
         $once = array_values(array_filter($items, static fn (array $i): bool => $i['limit_type'] === 'once'));
-        if (Wallets::enabled() && $identity !== '') {
+        if (Pools::priced() && $identity !== '') {
             // chỉ lưu mã băm CÓ KHOÁ (HMAC bằng APP_KEY): CSDL lộ ra cũng không đoán ngược được email bằng cách thử từng email
             $accountKey = hash_hmac('sha256', $pool['id'] . ':' . $identity, 'account-key:' . (string) Env::get('APP_KEY', ''));
         }
@@ -2038,10 +1871,9 @@ final class Jobs
         //  (1) tool gửi kèm `wallet` {currency, available}: ví do TOOL quản lý. «Còn dùng được» trừ thêm các khoản tool CHƯA nhận (sự kiện
         //      chưa ack) — tool báo theo sổ của nó, có thể chưa kịp trừ đơn vừa xong. Gói phải có cả GIÁ lẫn CHỮ GIÁ ở loại tiền đó (tool
         //      khớp chữ giá trên ô gói).
-        //  (2) không gửi: máy không có ví → không kiểm tiền. (Ví cũ khai ở gateway trước khi ví chuyển về tool chỉ còn để tra sổ — không áp
-        //      nữa: gateway không còn nạp / chỉnh được chúng, áp tiếp thì máy kẹt «ví không đủ» mà không ai sửa được.)
-        $toolWallet = null;
-        if (ToolWallets::enabled() && array_key_exists('wallet', $in) && $in['wallet'] !== null) {
+        //  (2) không gửi: máy không có ví → không kiểm tiền.
+        $wallet = null;                                   // ví của máy đang xin đơn: {currency, available} — null = máy không khai ví
+        if (Wallets::enabled() && array_key_exists('wallet', $in) && $in['wallet'] !== null) {
             $tw = is_array($in['wallet']) ? $in['wallet'] : [];
             $cur = Money::currency($tw['currency'] ?? '');
             $av = $tw['available'] ?? null;
@@ -2049,21 +1881,19 @@ final class Jobs
                 return [422, self::err('invalid_wallet', 'wallet phải là {currency: nhãn loại tiền (vd JPY, ¥, kr), available: số nguyên ×100}.')];
             }
             $applied = is_array($tw['applied'] ?? null) ? array_slice(array_values($tw['applied']), -500) : [];
-            $toolWallet = ['currency' => $cur, 'available' => $av + ToolWallets::pendingEffect((int) $key['id'], $device, $cur, $applied)];
+            $wallet = ['currency' => $cur, 'available' => $av + Wallets::pendingEffect((int) $key['id'], $device, $cur, $applied)];
         }
-        $wallet = null;                                   // ví cũ của gateway: chỉ còn các đơn ĐÃ giao trước đó dùng (wallet_id), không giao đơn mới theo nó
-        $priced = $toolWallet ?? $wallet;
-        $available = $toolWallet ? $toolWallet['available'] : ($wallet ? Wallets::available($wallet) : 0);
+        $available = $wallet ? $wallet['available'] : 0;
         $since = $now - (int) $pool['cfg']['queue_ttl'];
         // có ví thì xét rộng hơn: đơn đầu hàng quá giá với ví này không được chặn mãi các đơn rẻ phía sau
-        $cands = Db::all("SELECT id, pool_id, items FROM jobs WHERE pool_id=? AND status='queued' AND created_at>=? ORDER BY id LIMIT " . ($priced ? 300 : 5), [$pool['id'], $since]);   // máy có ví: xét cả hàng đợi (đơn đắt đứng đầu không chặn đơn rẻ phía sau)
+        $cands = Db::all("SELECT id, pool_id, items FROM jobs WHERE pool_id=? AND status='queued' AND created_at>=? ORDER BY id LIMIT " . ($wallet ? 300 : 5), [$pool['id'], $since]);   // máy có ví: xét cả hàng đợi (đơn đắt đứng đầu không chặn đơn rẻ phía sau)
         $skipped = [];
         foreach ($cands as $c) {
             $set = '';
             $args = [$device, $key['id'], $now, $now, $now];
             $q = null;
-            if ($priced) {
-                $q = Wallets::quote($c, $priced, $toolWallet !== null);
+            if ($wallet) {
+                $q = Wallets::quote($c, $wallet['currency']);
                 if ($q['missing']) {
                     $skipped['no_price'][] = $q;          // gói chưa có giá ở loại tiền của ví → không biết có đủ tiền không
                     continue;
@@ -2073,12 +1903,12 @@ final class Jobs
                     continue;
                 }
                 // chụp đơn giá lúc giao đơn vào items: admin sửa giá sau đó không làm đổi số tiền bị trừ của đơn này
-                $set = ', wallet_id=?, currency=?, cost=?, items=?, wallet_state=NULL';
-                array_push($args, $wallet ? $wallet['id'] : null, $priced['currency'], $q['cost'], jenc($q['items']));
+                $set = ', wallet_id=NULL, currency=?, cost=?, items=?, wallet_state=NULL';
+                array_push($args, $wallet['currency'], $q['cost'], jenc($q['items']));
             }
             $args[] = $c['id'];
             $cond = '';
-            if ($priced) {
+            if ($wallet) {
                 // items vừa định giá phải CÒN NGUYÊN: admin sửa đơn (gói / số lượng) giữa lúc đọc và lúc ghi thì không ghi đè bản sửa bằng bản cũ —
                 // bỏ qua đơn này ở lượt xin này, lượt sau định giá lại theo gói mới
                 $cond = ' AND items=?';
@@ -2089,19 +1919,19 @@ final class Jobs
                 $args)->rowCount();
             if ($n === 1) {
                 $job = self::byId((int) $c['id']);
-                $acc = $wallet ? (string) $wallet['apple_account'] : (string) (ToolWallets::reported((int) $key['id'], $device)['apple_account'] ?? '');
+                $acc = $wallet ? (string) (Wallets::reported((int) $key['id'], $device)['apple_account'] ?? '') : '';
                 self::event((int) $job['id'], 'tool', 'claimed', 'Giao cho máy ' . $device . ' (' . $key['name'] . ')'
-                    . ($priced ? ' — trả bằng ' . ($acc !== '' ? 'tài khoản Apple ' . Wallets::mask($acc) : 'ví của máy') . ($toolWallet ? ' (ví do tool quản lý)' : '')
-                        . ', chi phí ' . Money::fmt($q['cost'], $priced['currency']) . ' (ví còn dùng được ' . Money::fmt($available, $priced['currency']) . ')' : ''));
+                    . ($wallet ? ' — trả bằng ' . ($acc !== '' ? 'tài khoản Apple ' . Wallets::mask($acc) : 'ví của máy')
+                        . ', chi phí ' . Money::fmt($q['cost'], $wallet['currency']) . ' (ví còn dùng được ' . Money::fmt($available, $wallet['currency']) . ')' : ''));
                 Devices::touch((int) $key['id'], $device, $pool['code'], 'busy', $job['pid']);
                 Webhooks::enqueue($job, 'job.claimed');
                 return [200, ['ok' => true, 'paused' => false, 'job' => self::view($job, true, true)]];
             }
         }
-        if ($priced && $skipped) {
+        if ($wallet && $skipped) {
             // có đơn nhưng ví của máy này không trả được → đơn để máy khác nhận; tool báo admin nạp thêm tiền / khai giá
             return [200, ['ok' => true, 'paused' => false, 'job' => null,
-                          'wallet_short' => $wallet ? Wallets::short($wallet, $available, $skipped) : Wallets::shortInfo(['currency' => $priced['currency'], 'available' => $available], $skipped)]];
+                          'wallet_short' => Wallets::shortInfo(['currency' => $wallet['currency'], 'available' => $available], $skipped)]];
         }
         return [200, ['ok' => true, 'paused' => false, 'job' => null]];
     }
@@ -2363,7 +2193,7 @@ final class Jobs
         if (!$cur) {
             return false;
         }
-        $held = Wallets::enabled() && ($cur['wallet_state'] ?? null) === 'held';
+        $held = Wallets::isWalletJob($cur) && ($cur['wallet_state'] ?? null) === 'held';
         if ($held && $to === 'done') {
             $charge ??= (int) $cur['cost'];
             if ($charge < 0 || $charge > 10 * (int) $cur['cost']) {
@@ -2528,7 +2358,7 @@ final class Jobs
             return null;
         }
         $row = ['ref' => $ref, 'login_enc' => Crypto::enc(jenc($login)), 'account_hint' => $hint ?: null, 'items' => jenc($items), 'note' => $note, 'updated_at' => time()];
-        if (Wallets::enabled()) {
+        if (Pools::priced()) {
             $row['account_key'] = $key;
         }
         $res = Db::tx(static function () use ($id, $pool, $key, $once, $row): int|array {
@@ -2578,8 +2408,7 @@ final class Jobs
         }
         $note = clean($note, 300);
         $now = time();
-        $tool = ToolWallets::isToolJob($job);                               // đơn trả bằng ví của TOOL → tiền đi thành sự kiện cho tool
-        $wallet = (Wallets::enabled() && !empty($job['wallet_id'])) || $tool;
+        $wallet = Wallets::isWalletJob($job);                             // đơn có tính tiền ví → tiền đi thành sự kiện cho tool
         $actor = 'admin:' . $admin;
         if ($to === 'review') {                                       // đang chạy → chờ đối soát
             $n = Db::tx(static function () use ($id, $now, $wallet): int {
@@ -2607,7 +2436,7 @@ final class Jobs
             }
         }
         $refund = 0;
-        $n = Db::tx(static function () use ($id, $from, $to, $now, $paid, $charge, &$refund, $wallet, $tool, $job, $note, $actor): int {
+        $n = Db::tx(static function () use ($id, $from, $to, $now, $paid, $charge, &$refund, $wallet, $note, $actor): int {
             $n = Db::run('UPDATE jobs SET status=?, stage=?, login_enc=NULL, otp_enc=NULL, finished_at=COALESCE(finished_at, ?), updated_at=? WHERE id=? AND status=?',
                 [$to, $to, $now, $now, $id, $from])->rowCount();
             if ($n !== 1 || !$wallet) {
@@ -2616,15 +2445,14 @@ final class Jobs
             $cur = self::byId($id);
             if ($paid && Db::run("UPDATE jobs SET wallet_state='charged' WHERE id=? AND wallet_state IN ('none','released')", [$id])->rowCount() === 1) {
                 $why = $note !== '' ? $note : 'Admin sửa đơn sang «hoàn tất» — trừ tiền đơn';
-                $tool ? ToolWallets::event($cur, 'charge', -(int) $charge, 0, $actor, $why) : Wallets::entry((int) $job['wallet_id'], 'charge', -(int) $charge, $actor, $why, $cur);
+                Wallets::event($cur, 'charge', -(int) $charge, 0, $actor, $why);
             }
             if ($to === 'failed' && Db::run("UPDATE jobs SET wallet_state='none' WHERE id=? AND wallet_state='charged'", [$id])->rowCount() === 1) {
                 // tính số đã trừ SAU khi giữ quyền ghi (trong cùng giao dịch) → không hoàn theo một con số đã cũ
-                $refund = $tool ? ToolWallets::charged($id)
-                    : -(int) Db::val("SELECT COALESCE(SUM(amount), 0) FROM wallet_entries WHERE job_id=? AND kind IN ('purchase','charge','refund')", [$id]);
+                $refund = Wallets::charged($id);
                 if ($refund > 0) {
                     $why = $note !== '' ? $note : 'Admin sửa đơn sang «thất bại» — hoàn lại tiền đã trừ';
-                    $tool ? ToolWallets::event($cur, 'refund', $refund, 0, $actor, $why) : Wallets::entry((int) $job['wallet_id'], 'refund', $refund, $actor, $why, $cur);
+                    Wallets::event($cur, 'refund', $refund, 0, $actor, $why);
                 }
             }
             return $n;
@@ -2652,7 +2480,6 @@ final class Jobs
         if (in_array($job['status'], self::ACTIVE, true)) {
             return 'Máy đang làm đơn này — chuyển sang «chờ đối soát» hoặc chờ máy báo kết quả rồi mới xoá.';
         }
-        $walletOn = Wallets::enabled();
         if ($job['status'] === 'review') {
             // shop đang chờ kết quả cuối (được dặn không hoàn tiền trước job.done / job.failed) và ảnh là bằng chứng để đối soát
             return 'Đơn đang chờ đối soát — chốt «đã nạp» / «chưa nạp» trước (shop nhận kết quả cuối) rồi mới xoá.';
@@ -2664,7 +2491,7 @@ final class Jobs
             }
         }
         $images = [];
-        $n = Db::tx(static function () use ($id, $walletOn, &$images): int {
+        $n = Db::tx(static function () use ($id, &$images): int {
             $n = Db::run('DELETE FROM jobs WHERE id=? AND status NOT IN ' . self::IN_ACTIVE . " AND status NOT IN ('queued','review')", [$id])->rowCount();
             if ($n !== 1) {
                 return 0;
@@ -2673,10 +2500,7 @@ final class Jobs
             Db::run('DELETE FROM job_images WHERE job_id=?', [$id]);
             Db::run('DELETE FROM job_events WHERE job_id=?', [$id]);
             Db::run("DELETE FROM webhooks WHERE job_id=? AND status<>'pending'", [$id]);     // webhook chưa gửi (vd job.cancelled) vẫn gửi cho shop
-            if ($walletOn) {
-                Db::run('UPDATE wallet_entries SET job_id=NULL WHERE job_id=?', [$id]);       // còn job_pid → sổ cái vẫn biết của đơn nào
-            }
-            if (ToolWallets::enabled()) {
+            if (Wallets::enabled()) {
                 Db::run('UPDATE tool_wallet_events SET job_id=NULL WHERE job_id=?', [$id]);   // sự kiện chưa gửi cho tool vẫn gửi (còn máy + mã đơn)
             }
             return 1;
@@ -2859,7 +2683,7 @@ final class Seed
         $skipped = [];
         foreach (Db::all('SELECT * FROM pools ORDER BY id') as $row) {
             $p = Pools::find((int) $row['id']);
-            $prices = Wallets::enabled() ? Pools::prices((int) $p['id']) : [];
+            $prices = Pools::prices((int) $p['id']);
             $pk = [];
             foreach (Pools::packages((int) $p['id']) as $k) {
                 $pp = [];

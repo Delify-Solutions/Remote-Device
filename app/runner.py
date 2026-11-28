@@ -84,15 +84,10 @@ class Runner:
 
     @staticmethod
     def _wallet_why(short, machine=None):
-        """Câu báo «ví không đủ» từ `wallet_short` của gateway (không chứa dữ liệu khách). Tài khoản Apple: gateway che sẵn (ví cũ) hoặc
-        lấy từ ví của máy ở tool (đã che)."""
-        import notify
-        acc = short.get("account")
-        if not acc and machine:
-            import wallets
-            mine = wallets.get(machine)
-            acc = wallets.mask(mine["apple_account"]) if mine else None
-        acc, cur = acc or "?", short.get("currency") or ""
+        """Câu báo «ví không đủ» từ `wallet_short` của gateway (không chứa dữ liệu khách). Tài khoản Apple lấy từ ví của máy ở tool (đã che)."""
+        import notify, wallets
+        mine = wallets.get(machine) if machine else None
+        acc, cur = (wallets.mask(mine["apple_account"]) if mine else "?"), short.get("currency") or ""
         codes = ", ".join(str(c) for c in (short.get("package_codes") or [])[:5])
         if short.get("reason") == "no_price":
             return "gói %s chưa có giá / chữ giá theo loại tiền %s của ví tài khoản Apple %s (khai giá ở trang Pool của gateway)" % (codes or "?", cur or "?", acc)
@@ -917,11 +912,11 @@ class Runner:
             wl = job.get("wallet") if isinstance(job.get("wallet"), dict) else None
             if wl:
                 import notify, wallets
-                mine = wallets.get(name) if wl.get("source") == "tool" else None
-                acc = wallets.mask(mine["apple_account"]) if mine else (wl.get("account") or "?")
+                mine = wallets.get(name)
+                acc = wallets.mask(mine["apple_account"]) if mine else "?"
                 say("Đơn %s — thanh toán bằng tài khoản Apple %s (%s), chi phí %s, ví còn %s" % (
                     job.get("ref") or job.get("id"), acc, wl.get("currency") or "?", notify.money(wl.get("cost"), wl.get("currency")) if "cost" in wl else "?",
-                    notify.money(mine["available"] if mine else wl.get("available", wl.get("balance")), wl.get("currency"))))
+                    notify.money(mine["available"], wl.get("currency")) if mine else "?"))
 
             clean = False         # sắp đụng vào game → phải kiểm lại trước đơn sau
             outcome = self._handle_job(name, w, gw, nav, job, bool(r.get("resumed")), pool, steps, opts, abort, say, status)

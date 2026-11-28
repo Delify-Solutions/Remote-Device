@@ -93,7 +93,7 @@ Mỗi máy nạp trả tiền bằng **một** tài khoản Apple, ở **một**
 - **Pool → «Loại tiền dùng trong pool»**: một pool bán được nhiều loại tiền; mỗi gói có **giá** + **chữ giá hiện trên máy** cho từng loại (bắt buộc đủ cả hai — tool khớp cả số tiền trên ô gói). Gõ thêm loại tiền là hiện ngay ô giá ở từng gói. Loại tiền chỉ là **nhãn** để khớp ví của máy với giá gói và để đối soát: gõ ký hiệu hay tên đúng như máy hiện (`¥`, `kr`, `CHF` — tối đa 6 ký tự, không số); `¥` / `JP` / `円` tự quy về `JPY`, `$` về `USD`…, nhãn khác giữ nguyên (viết hoa). Ví ở tool phải khai **cùng nhãn** với pool.
 - **Xin đơn**: tool gửi kèm `wallet` = «loại tiền + còn dùng được» của máy. Gateway trừ thêm các khoản tool chưa kịp nhận rồi chỉ giao đơn mà *chi phí ≤ còn dùng được* (giá hiện tại ở đúng loại tiền đó). Đơn quá giá / gói chưa có giá hoặc chữ giá loại tiền đó thì bỏ qua cho máy khác; không đơn nào giao được thì `claim` trả `wallet_short` để tool báo admin. **Máy không có ví** nhận đơn y như trước.
 - **Tiền của đơn → tool**: `done` → «mua gói» = số đã mua × đơn giá lúc giao · `failed` → không trừ · `review` (tool không chắc, thiếu ảnh, tool im lặng) → **tạm giữ** cả chi phí; admin chốt «đã nạp» (nhập số tiền thật) / «chưa nạp» (nhả); admin sửa kết quả đã chốt → hoàn / trừ. Mỗi khoản là một **sự kiện** (`tool_wallet_events`) gửi về tool khi đồng bộ (`/api/tool/sync` → `wallet_events`); tool áp mỗi sự kiện một lần rồi báo lại (`wallet_acks`). Báo muộn / bấm hai lần không bao giờ trừ hai lần.
-- **Ví cũ khai ở gateway** (bảng `wallets`, trước khi chuyển về tool) không còn áp khi giao đơn mới; chỉ còn để tra sổ cái (và cho các đơn đã giao theo chúng).
+- Bảng `wallets` / `wallet_entries` và cột `jobs.wallet_id` (ví khai ở gateway của migration 5) không còn mã nào dùng; để nguyên trong CSDL.
 - Trang Tổng quan nêu ví (bản sao) còn ít hơn giá gói đắt nhất đang bán.
 - **Quản lý đơn** (trang Đơn nạp): mỗi đơn có nút Xem / Sửa / Xoá.
   - **Sửa**: đơn còn chờ máy sửa được hết (mã đơn, tài khoản + mật khẩu — ô mật khẩu để trống = giữ nguyên, gói, số lượng, ghi chú); đơn đã giao máy / đã kết thúc chỉ sửa ghi chú.
@@ -118,7 +118,7 @@ Mỗi máy nạp trả tiền bằng **một** tài khoản Apple, ở **một**
 ```bash
 php bin/test-flow.php     # dựng gateway + máy nhận webhook giả trên SQLite tạm, đóng vai shop & tool qua HTTP
 ```
-Kiểm: xác thực, cấu hình pool (6 danh sách bước, cờ bỏ qua nếu lỗi), tạo đơn/idempotent, chạy đua nhận việc, OTP (kể cả chờ long-poll, sai mã, hết lượt), ảnh, kết quả + xung đột 409, báo muộn, huỷ, đối soát, quá hạn, webhook có chữ ký, trang quản trị, ví do tool quản lý (giao đơn theo «loại tiền + còn dùng được» tool gửi, trừ khoản tool chưa nhận, sự kiện tiền của đơn + báo đã nhận qua sync, mua / tạm giữ / chốt đối soát / hoàn, không trừ hai lần, gói 1 lần / tài khoản kể cả khi gửi cùng lúc), và `POST /api/tool/sync` (máy rảnh ở kịch bản nào, danh mục chỉ gửi khi đổi, lời báo cũ không còn được tin, không đụng tới đơn, hai khoá Tool không lẫn dữ liệu).
+Kiểm: xác thực, cấu hình pool (luật, gói, giá; bước đời cũ được giữ nguyên + nút xoá), tạo đơn/idempotent, chạy đua nhận việc, OTP (kể cả chờ long-poll, sai mã, hết lượt), ảnh, kết quả + xung đột 409, báo muộn, huỷ, đối soát, quá hạn, webhook có chữ ký, trang quản trị, ví do tool quản lý (giao đơn theo «loại tiền + còn dùng được» tool gửi, trừ khoản tool chưa nhận, sự kiện tiền của đơn + báo đã nhận qua sync, mua / tạm giữ / chốt đối soát / hoàn, không trừ hai lần, gói 1 lần / tài khoản kể cả khi gửi cùng lúc), và `POST /api/tool/sync` (máy rảnh ở kịch bản nào, danh mục chỉ gửi khi đổi, lời báo cũ không còn được tin, không đụng tới đơn, hai khoá Tool không lẫn dữ liệu).
 
 Test **cả hai đầu** (tool thật ↔ gateway thật, iPhone giả lập) nằm ở phía tool — chạy từ gốc repo:
 
@@ -135,7 +135,7 @@ Test **cả hai đầu** (tool thật ↔ gateway thật, iPhone giả lập) n�
 |---|---|
 | Lõi: env, DB, mã hoá, request/response, phiên admin, CSRF, giới hạn tần suất, lưu ảnh | `src/core.php` |
 | Bảng & migration (MySQL + SQLite) | `src/schema.php` |
-| Nghiệp vụ: pool/gói, khoá, máy, **máy rảnh + danh mục kịch bản do tool tự báo** (`Tools`), **ví tài khoản Apple** (`Money`, `ToolWallets` — ví do tool quản lý; `Wallets` — ví cũ), **vòng đời đơn**, OTP, webhook | `src/repo.php` |
+| Nghiệp vụ: pool/gói, khoá, máy, **máy rảnh + danh mục kịch bản do tool tự báo** (`Tools`), **ví tài khoản Apple** (`Money`, `Wallets` — ví do tool quản lý: gateway giữ bản sao + tiền của từng đơn), **vòng đời đơn**, OTP, webhook | `src/repo.php` |
 | API shop / tool, file ảnh, cron HTTP | `src/api.php` |
 | **Mô tả API cho /docs** (sửa API thì sửa ở đây cùng lúc) | `src/spec.php` |
 | Trang quản trị | `src/admin.php`, `views/` (khung trang: `views/layout.php`) |

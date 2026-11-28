@@ -1,5 +1,5 @@
 <?php
-$multiKey = count(array_unique(array_column($toolWallets, 'tool_key_id'))) > 1;
+$multiKey = count(array_unique(array_column($wallets, 'tool_key_id'))) > 1;
 ?>
 <div class="page-head">
   <div><h4 class="mb-1">Ví &amp; tài khoản Apple</h4>
@@ -10,12 +10,12 @@ $multiKey = count(array_unique(array_column($toolWallets, 'tool_key_id'))) > 1;
   <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
     <h5 class="card-title mb-0">Ví của các máy</h5><small class="text-body-secondary">«Còn dùng được» = số dư − tiền tạm giữ − tiền của đơn tool chưa kịp nhận</small>
   </div>
-<?php if (!$toolWallets): ?>
+<?php if (!$wallets): ?>
   <div class="empty">Chưa có máy nào có ví — khai ở app tool (trang «Ví &amp; tài khoản Apple»). Máy không có ví nhận đơn mà không kiểm tiền.</div>
 <?php else: ?>
   <div class="table-responsive">
   <table class="table table-hover mb-0 align-middle"><thead><tr><th>Máy</th><th>Tài khoản Apple</th><th class="text-end">Số dư</th><th class="text-end">Đang giữ</th><th class="text-end">Còn dùng được</th><th>Trạng thái</th><th>Tool báo lúc</th></tr></thead><tbody>
-  <?php foreach ($toolWallets as $w): $cur = (string) $w['currency']; $avail = (int) $w['balance'] - (int) $w['held'] + (int) $w['pending_effect']; ?>
+  <?php foreach ($wallets as $w): $cur = (string) $w['currency']; $avail = (int) $w['balance'] - (int) $w['held'] + (int) $w['pending_effect']; ?>
     <tr class="<?= (int) $w['active'] ? '' : 'text-body-secondary' ?>">
       <td><span class="fw-medium text-heading"><?= e($w['device']) ?></span><?= $multiKey ? '<div class="small text-body-secondary">' . e($w['key_name'] ?? '—') . '</div>' : '' ?></td>
       <td><?= e($w['apple_account'] ?: '—') ?> <span class="badge bg-label-secondary mono"><?= e($cur) ?></span>
@@ -39,7 +39,7 @@ $multiKey = count(array_unique(array_column($toolWallets, 'tool_key_id'))) > 1;
 <?php if (!$events): ?><div class="empty">Chưa có đơn nào trả bằng ví của tool.</div><?php else: ?>
   <div class="table-responsive">
   <table class="table mb-0 align-middle"><thead><tr><th>Lúc</th><th>Máy</th><th>Đơn</th><th>Loại</th><th class="text-end">Số dư</th><th class="text-end">Tạm giữ</th><th>Ghi chú</th><th>Tool</th></tr></thead><tbody>
-  <?php foreach ($events as $ev): [$kl, $kc] = ToolWallets::KINDS[$ev['kind']] ?? [$ev['kind'], 'secondary']; $cur = (string) $ev['currency'];
+  <?php foreach ($events as $ev): [$kl, $kc] = Wallets::KINDS[$ev['kind']] ?? [$ev['kind'], 'secondary']; $cur = (string) $ev['currency'];
       $sign = static fn (int $v): string => $v === 0 ? '—' : (($v > 0 ? '+' : '') . Money::fmt($v, $cur)); ?>
     <tr>
       <td class="small text-body-secondary text-nowrap"><?= e(vntime((int) $ev['created_at'])) ?></td>
@@ -55,23 +55,3 @@ $multiKey = count(array_unique(array_column($toolWallets, 'tool_key_id'))) > 1;
   </div>
 <?php endif; ?>
 </div>
-
-<?php if ($legacy): ?>
-<div class="card">
-  <div class="card-header"><h5 class="card-title mb-0">Ví cũ khai trên gateway</h5>
-    <small class="text-body-secondary">Từ trước khi ví chuyển về tool — chỉ để tra cứu. Khoá Tool đã báo ví qua đồng bộ thì các ví này không còn áp khi giao đơn.</small></div>
-  <div class="table-responsive">
-  <table class="table table-hover mb-0 align-middle"><thead><tr><th>Máy</th><th>Tài khoản Apple</th><th class="text-end">Số dư</th><th class="text-end">Đang giữ</th><th>Trạng thái</th><th></th></tr></thead><tbody>
-  <?php foreach ($legacy as $w): $cur = (string) $w['currency']; ?>
-    <tr class="text-body-secondary">
-      <td><?= e($w['device']) ?><div class="small"><?= e($w['key_name'] ?? '—') ?></div></td>
-      <td><?= e($w['apple_account']) ?> <span class="badge bg-label-secondary mono"><?= e($cur) ?></span></td>
-      <td class="text-end text-nowrap"><?= e(Money::fmt((int) $w['balance'], $cur)) ?></td>
-      <td class="text-end text-nowrap"><?= $w['held'] ? e(Money::fmt($w['held'], $cur)) : '—' ?></td>
-      <td><?= (int) $w['active'] ? '<span class="badge bg-label-secondary">đang dùng (cũ)</span>' : '<span class="badge bg-label-secondary">ngừng dùng</span>' ?></td>
-      <td class="text-end"><a class="btn btn-sm btn-label-secondary" href="/admin/wallets/<?= (int) $w['id'] ?>">Sổ cái</a></td>
-    </tr>
-  <?php endforeach; ?></tbody></table>
-  </div>
-</div>
-<?php endif; ?>

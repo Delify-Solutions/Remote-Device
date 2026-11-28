@@ -98,7 +98,7 @@ final class Admin
                 $to = (string) Req::post('to', '');
                 $job = Jobs::byId($id);
                 $charge = null;
-                if ($job && $to === 'done' && ((Wallets::enabled() && !empty($job['wallet_id'])) || ToolWallets::isToolJob($job)) && trim((string) Req::post('charge', '')) !== '') {
+                if ($job && $to === 'done' && Wallets::isWalletJob($job) && trim((string) Req::post('charge', '')) !== '') {
                     [$charge, $cerr] = Jobs::chargeInput($job, (string) Req::post('charge', ''));
                     if ($cerr !== null) {
                         Flash::set($cerr, 'bad');
@@ -122,7 +122,7 @@ final class Admin
                 $to = (string) Req::post('to', '');
                 $job = Jobs::byId($id);
                 $charge = null;
-                if ($job && $to === 'done' && Wallets::enabled() && ($job['wallet_state'] ?? null) === 'held') {
+                if ($job && $to === 'done' && Wallets::isWalletJob($job) && ($job['wallet_state'] ?? null) === 'held') {
                     // đơn đang tạm giữ ví: admin nhập số tiền THẬT đã bị trừ ở tài khoản Apple
                     [$charge, $err] = Jobs::chargeInput($job, (string) Req::post('charge', ''));
                     if ($err !== null) {
@@ -143,7 +143,7 @@ final class Admin
             }
         }
         if ($a === 'wallets') {
-            self::wallets($user, $m, $s, $id, $act);
+            self::wallets($user, $m, $s);
         }
         if ($a === 'account') {
             if ($m === 'POST') {
@@ -260,7 +260,7 @@ final class Admin
         // bước đời cũ còn lưu ở pool (đọc từ CSDL, không lấy từ form đang gửi dở)
         $saved = $pool['id'] ? Pools::find((int) $pool['id']) : null;
         view('pool-edit', ['user' => $user, 'nav' => 'pools', 'title' => $pool['id'] ? 'Sửa pool' : 'Tạo pool', 'pool' => $pool, 'error' => $error,
-                           'missing' => $pool['id'] ? Pools::missing($pool) : [], 'wallets' => Wallets::enabled(),
+                           'missing' => $pool['id'] ? Pools::missing($pool) : [], 'wallets' => Pools::priced(),
                            'legacy' => $saved ? Pools::legacySteps($saved['cfg']) : []]);
     }
 
@@ -435,10 +435,13 @@ final class Admin
         $per = 30;
         $total = (int) Db::val('SELECT COUNT(*) FROM jobs j' . $w, $args);
         $page = max(1, min((int) (Req::q('page') ?? 1), max(1, (int) ceil($total / $per))));
+        // cột «Tài khoản Apple»: tài khoản ĐANG khai ở ví của máy nhận đơn (bản sao tool báo lên) — chỉ với đơn có tính tiền ví và chỉ khi
+        // ví đó còn cùng loại tiền với đơn (máy đã đổi sang ví loại tiền khác thì không gán tài khoản mới cho đơn cũ)
         $wallets = Wallets::enabled();
         $rows = Db::all('SELECT j.*, p.name AS pool_name, (SELECT COUNT(*) FROM job_images i WHERE i.job_id=j.id) AS images'
                          . ($wallets ? ', w.apple_account' : '') . '
-                         FROM jobs j LEFT JOIN pools p ON p.id=j.pool_id' . ($wallets ? ' LEFT JOIN wallets w ON w.id=j.wallet_id' : '')
+                         FROM jobs j LEFT JOIN pools p ON p.id=j.pool_id'
+                         . ($wallets ? ' LEFT JOIN tool_wallets w ON w.tool_key_id=j.tool_key_id AND w.device=j.device AND w.currency=j.currency AND j.wallet_id IS NULL' : '')
                          . $w . ' ORDER BY j.id DESC LIMIT ' . $per . ' OFFSET ' . (($page - 1) * $per), $args);
         view('jobs', ['user' => $user, 'nav' => 'jobs', 'title' => 'Đơn nạp', 'rows' => $rows, 'total' => $total, 'page' => $page, 'per' => $per,
                       'status' => $status, 'pool' => $pool, 'q' => $q, 'pools' => Db::all('SELECT id, name FROM pools ORDER BY name'), 'wallets' => $wallets,
@@ -502,42 +505,21 @@ final class Admin
             'images' => Jobs::images($id),
             'events' => Db::all('SELECT * FROM job_events WHERE job_id=? ORDER BY id', [$id]),
             'hooks' => Db::all('SELECT * FROM webhooks WHERE job_id=? ORDER BY id', [$id]),
-            'wallet' => !empty($job['wallet_id']) ? Wallets::find((int) $job['wallet_id']) : null,
-            'ledger' => Wallets::forJob($id),
-            'toolEvents' => ToolWallets::forJob($id),
+            'walletEvents' => Wallets::forJob($id),
             'poolForm' => self::poolForms((int) $job['pool_id'])[0] ?? null,
             'testKeyId' => (int) Settings::get('admin_test_key_id', '0'),
         ]);
     }
 
     /* ---------- ví tài khoản Apple: do TOOL quản lý — gateway chỉ hiện bản sao + tiền của từng đơn ---------- */
-    private static function wallets(array $user, string $m, array $s, int $id, string $act): never
+    private static function wallets(array $user, string $m, array $s): never
     {
         if (!Wallets::enabled()) {
             Flash::set('Gateway cần cập nhật CSDL để dùng ví: chạy php bin/setup.php', 'bad');
             Res::redirect('/admin');
         }
-        if ($m === 'POST') {
-            // ví (tài khoản Apple, loại tiền, số dư, nạp / chỉnh) khai và quản lý ở TOOL; gateway không sửa ví nữa
-            Flash::set('Ví giờ do TOOL quản lý — khai tài khoản Apple, loại tiền, nạp / chỉnh số dư ở trang «Ví & tài khoản Apple» của app tool.', 'bad');
-            Res::redirect('/admin/wallets');
-        }
-        if ($m === 'GET' && $id) {                       // ví cũ khai trên gateway: chỉ xem sổ cái
-            $w = Wallets::find($id);
-            if (!$w) {
-                Res::notFound();
-            }
-            $w['held'] = Wallets::held($id);
-            $w['available'] = (int) $w['balance'] - $w['held'];
-            $per = 100;
-            $total = (int) Db::val('SELECT COUNT(*) FROM wallet_entries WHERE wallet_id=?', [$id]);
-            $page = max(1, min((int) (Req::q('page') ?? 1), max(1, (int) ceil($total / $per))));
-            view('wallet', ['user' => $user, 'nav' => 'wallets', 'title' => 'Ví cũ ' . $w['device'], 'w' => $w,
-                            'entries' => Wallets::entries($id, $per, ($page - 1) * $per), 'total' => $total, 'page' => $page, 'per' => $per]);
-        }
         if ($m === 'GET' && !isset($s[1])) {
-            view('wallets', ['user' => $user, 'nav' => 'wallets', 'title' => 'Ví & tài khoản Apple', 'toolWallets' => ToolWallets::all(),
-                             'events' => ToolWallets::recent(60), 'legacy' => Wallets::all()]);
+            view('wallets', ['user' => $user, 'nav' => 'wallets', 'title' => 'Ví & tài khoản Apple', 'wallets' => Wallets::all(), 'events' => Wallets::recent(60)]);
         }
         Res::notFound();
     }

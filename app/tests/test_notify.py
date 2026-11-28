@@ -293,9 +293,12 @@ def main():
             th = threading.Thread(target=Ri._run_api, args=("W1", {"mode": "api", "api": {"pool": "p", "check_keyboard": False, "gw_steps_copied": True}}, wi), daemon=True)
             th.start(); time.sleep(4.0); wi["stop"].set(); th.join(8)      # mỗi lần kiểm Bluetooth hỏi board 3 lần, nghỉ 0,4 s
             ok(len(got) == 1 and got[0][0] == expect and "chưa sẵn sàng" in got[0][2][-1], label + " → báo «mất kết nối» đúng một lần (dù vẫn chưa sẵn sàng)", got)
-        # Ví của máy không đủ tiền (gateway trả wallet_short thay vì đơn) → báo «Ví không đủ tiền» MỘT lần cho mỗi tình trạng
-        short = {"reason": "insufficient", "account": "a***@example.com", "currency": "JPY", "available": 1000000, "need": 4800000,
-                 "package_codes": ["efb-coin-1050"]}
+        # Ví của máy không đủ tiền (gateway trả wallet_short thay vì đơn) → báo «Ví không đủ tiền» MỘT lần cho mỗi tình trạng.
+        # Tài khoản Apple trong lời báo lấy từ ví của máy Ở TOOL (đã che) — gateway không gửi tài khoản.
+        import wallets as wallets_mod
+        real_wallet_get = wallets_mod.get
+        wallets_mod.get = lambda n: {"apple_account": "apple-w2@example.com", "currency": "JPY", "available": 1000000} if n == "W2" else None
+        short = {"reason": "insufficient", "currency": "JPY", "available": 1000000, "need": 4800000, "package_codes": ["efb-coin-1050"]}
         seq = [dict(ok=True, job=None, wallet_short=short)] * 3 + [dict(ok=True, job=None)] + [dict(ok=True, job=None, wallet_short=short)] * 2
 
         class GWw(GWp):
@@ -310,9 +313,10 @@ def main():
               "counts": {}, "iter": 0, "group_name": "Nạp", "script_name": "đơn"}
         th = threading.Thread(target=Rw._run_api, args=("W2", {"mode": "api", "api": {"pool": "p", "check_keyboard": False, "gw_steps_copied": True}}, ww), daemon=True)
         th.start(); time.sleep(1.5); st_mid = ww.get("status"); ww["stop"].set(); th.join(8)
+        wallets_mod.get = real_wallet_get
         wal = [g for g in got if g[0] == "wallet"]
         ok(len(wal) == 2 and "400.000 JPY" not in wal[0][2][-1] and "10.000 JPY" in wal[0][2][-1] and "48.000 JPY" in wal[0][2][-1]
-           and "a***@example.com" in wal[0][2][-1] and "efb-coin-1050" in wal[0][2][-1],
+           and "a***@example.com" in wal[0][2][-1] and "apple-w2" not in wal[0][2][-1] and "efb-coin-1050" in wal[0][2][-1],
            "ví không đủ tiền → báo «Ví không đủ tiền» một lần (không báo lại mỗi lần xin đơn); hết rồi lại thiếu → báo lại", [g[2][-1] for g in wal])
         ok("Chờ đơn" in (st_mid or ""), "trạng thái máy lúc đó: chờ đơn", st_mid)
         short2 = dict(short, reason="no_price", package_codes=["efb-coin-100"])

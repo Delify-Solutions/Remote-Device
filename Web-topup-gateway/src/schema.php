@@ -194,7 +194,9 @@ final class Schema
                 'ALTER TABLE tool_scripts ADD COLUMN pool_code VARCHAR(40) NULL',
             ],
 
-            // VÍ của tài khoản Apple trên từng máy + sổ cái + giá gói theo loại tiền (xem Wallets trong repo.php).
+            // Giá gói theo loại tiền + tiền của đơn (jobs.currency / cost / wallet_state — xem Wallets, Pools::priced trong repo.php).
+            // Hai bảng wallets / wallet_entries và cột jobs.wallet_id là VÍ KHAI Ở GATEWAY đời đầu: từ migration 6 ví do tool quản lý, không còn
+            // mã nào đọc / ghi chúng (để nguyên trong CSDL — không bắt mọi nơi đã cài phải chạy thêm một migration chỉ để bỏ bảng trống).
             // Số tiền luôn là SỐ NGUYÊN = số tiền × 100 (1.500 JPY → 150000, 63,00 CHF → 6300) — không bao giờ dùng số thực.
             5 => [
                 // một máy (khoá Tool + tên máy) có thể có nhiều ví theo thời gian, nhưng chỉ MỘT ví đang dùng (mã bảo đảm, không phải CSDL)
