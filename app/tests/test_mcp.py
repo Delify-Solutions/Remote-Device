@@ -518,7 +518,8 @@ def run_all(tmp, real_ocr):
         try:
             control.save_endpoint(port, tk)
             mode = os.stat(control.ENDPOINT_FILE).st_mode & 0o777
-            ok(mode == 0o600 and control.token() == tk and control.token(renew=True) != tk, "tệp khoá chỉ chủ máy đọc được (600); khoá giữ nguyên giữa các lần mở app", oct(mode))
+            # Windows không có bit quyền kiểu POSIX (st_mode luôn 0666; tệp do ACL của hồ sơ người dùng bảo vệ) → chỉ kiểm 600 trên macOS / Linux
+            ok((os.name == "nt" or mode == 0o600) and control.token() == tk and control.token(renew=True) != tk, "tệp khoá chỉ chủ máy đọc được (600); khoá giữ nguyên giữa các lần mở app", oct(mode))
             ptools, phost = control.proxied_tools()
             local_calls = []
             phost.devices = lambda: local_calls.append(1) or []
@@ -679,7 +680,7 @@ def run_all(tmp, real_ocr):
             okstart = srv.start(47960)
             info = srv.info()
             ok(okstart and info["running"] and info["url"] == "http://127.0.0.1:%d/mcp" % srv.port and info["claude_code"].startswith("claude mcp add iphone-farm -- ")
-               and info["claude_code"].endswith("/farm mcp") and '"mcpServers"' in info["json"], "app mở máy chủ điều khiển + có sẵn câu lệnh / JSON để dán cho AI", {k: info[k] for k in ("running", "url", "error")})
+               and info["claude_code"].endswith("\\farm.bat mcp" if os.name == "nt" else "/farm mcp") and '"mcpServers"' in info["json"], "app mở máy chủ điều khiển + có sẵn câu lệnh / JSON để dán cho AI", {k: info[k] for k in ("running", "url", "error")})
             rm = control.remote()
             ok(rm is not None and rm.health()["host"] == "app", "CLI / `farm mcp` tìm thấy app qua tệp cổng+khoá")
             t = rm.call("tap", {"device": "iPhoneFarm-01", "x": 5, "y": 5})

@@ -56,13 +56,19 @@ SHIM = r"""(function () {
 """
 
 
+def _owner_only(path: str) -> bool:
+    """Tệp chỉ chủ máy đọc được? Windows KHÔNG có bit quyền kiểu POSIX (st_mode luôn báo 0666 dù tệp nằm trong hồ sơ người dùng, vốn được
+    ACL của hồ sơ bảo vệ) — coi bit đó là «đã lộ» thì khoá bị tạo lại ở MỌI lần mở app. Trên Windows tin vào ACL của hồ sơ người dùng."""
+    return os.name == "nt" or not (os.stat(path).st_mode & 0o077)
+
+
 def load_or_create_token(path: str) -> str:
     """Khoá đăng nhập của chế độ web, lưu ở `path` với quyền 0600 NGAY TỪ LÚC TẠO (không có khoảnh khắc ai cũng đọc được).
     Tệp cũ mà người khác đọc được (quyền rộng hơn 0600) thì KHÔNG dùng lại khoá trong đó — tạo khoá mới."""
     try:
         with open(path, encoding="utf-8") as f:
             t = (json.load(f) or {}).get("token")
-        if isinstance(t, str) and len(t) >= 24 and not (os.stat(path).st_mode & 0o077):
+        if isinstance(t, str) and len(t) >= 24 and _owner_only(path):
             return t                                  # tệp chỉ mình đọc được → dùng lại; tệp quyền rộng hơn coi như khoá đã lộ → tạo khoá mới ở dưới
     except (OSError, ValueError, AttributeError):
         pass

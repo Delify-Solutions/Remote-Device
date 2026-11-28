@@ -213,10 +213,18 @@ def main():
     ok(bh.recover(b)["health"]["connected"] and b.ble_waits == 0, "sau reset BLE nối ngay → không chờ thừa")
 
     print("\n== 4. Mở cổng serial KHÔNG làm board reset (QuietSerial) ==")
-    import fcntl, inspect, pty
-    import serial, serial.serialposix as sp
+    import inspect
     from quietserial import QuietSerial
     import esp, hands as handsmod
+    ok("QuietSerial()" in inspect.getsource(handsmod.Hands.__init__) and "QuietSerial()" in inspect.getsource(esp.probe),
+       "Hands (điều khiển) và esp.probe (quét board) đều mở cổng bằng QuietSerial")
+    if os.name == "nt":
+        # phép đo thứ tự hạ DTR / RTS dùng cổng giả pty + ioctl — chỉ có trên macOS / Linux
+        print("  (Windows: bỏ phép đo thứ tự DTR / RTS trên cổng giả pty — không có pty / fcntl)")
+        print("\n%s" % ("✅ TẤT CẢ %d kiểm tra đều đạt." % PASS if not FAIL else "❌ %d lỗi / %d kiểm tra." % (FAIL, PASS + FAIL)))
+        return 1 if FAIL else 0
+    import fcntl, pty
+    import serial, serial.serialposix as sp
 
     def open_order(cls):
         """Mở một cổng pty bằng `cls(dtr=False, rts=False)`, trả thứ tự các lệnh bật/tắt DTR/RTS lúc mở."""
@@ -243,8 +251,6 @@ def main():
        "(ghi nhận lỗi gốc) pyserial thường hạ DTR TRƯỚC RTS → có lúc (DTR=0, RTS=1) = mạch tự reset kéo EN xuống → board khởi động lại mỗi lần mở cổng", plain)
     ok(first(quiet, ("hạ", "RTS")) < first(quiet, ("hạ", "DTR")),
        "QuietSerial hạ RTS TRƯỚC DTR → không bao giờ có trạng thái (DTR=0, RTS=1) → mở cổng không reset board", quiet)
-    ok("QuietSerial()" in inspect.getsource(handsmod.Hands.__init__) and "QuietSerial()" in inspect.getsource(esp.probe),
-       "Hands (điều khiển) và esp.probe (quét board) đều mở cổng bằng QuietSerial")
 
     print("\n%s" % ("✅ TẤT CẢ %d kiểm tra đều đạt." % PASS if not FAIL else "❌ %d lỗi / %d kiểm tra." % (FAIL, PASS + FAIL)))
     return 1 if FAIL else 0

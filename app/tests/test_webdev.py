@@ -57,8 +57,12 @@ def main():
         tokfile = os.path.join(tmp, "data", "webdev.json")
 
         print("== 1. Khoá ==")
+        posix = os.name != "nt"             # Windows không có bit quyền kiểu POSIX (st_mode luôn 0666): chỉ kiểm quyền 0600 trên macOS / Linux
+        m600 = lambda p: not posix or stat.S_IMODE(os.stat(p).st_mode) == 0o600
         tok = webdev.load_or_create_token(tokfile)
-        ok(len(tok) >= 24 and stat.S_IMODE(os.stat(tokfile).st_mode) == 0o600 and webdev.load_or_create_token(tokfile) == tok, "khoá đủ dài, lưu 0600, dùng lại ở lần chạy sau")
+        ok(len(tok) >= 24 and m600(tokfile) and webdev.load_or_create_token(tokfile) == tok, "khoá đủ dài, lưu 0600, dùng lại ở lần chạy sau")
+        ok(webdev.WebDev is not None and webdev.load_or_create_token(tokfile) == tok and webdev.load_or_create_token(tokfile) == tok,
+           "mở app nhiều lần liên tiếp vẫn CÙNG một khoá (Windows từng tạo khoá mới mỗi lần vì st_mode luôn báo 0666)")
         modes = []
         real_open = os.open
         os.open = lambda path, flags, mode=0o777, **kw: (modes.append((os.path.basename(path), mode, bool(flags & os.O_EXCL))), real_open(path, flags, mode, **kw))[1]
@@ -73,10 +77,13 @@ def main():
         loose = os.path.join(tmp, "data", "khoa-cu.json")
         open(loose, "w").write(json.dumps({"token": "k" * 30})); os.chmod(loose, 0o644)
         t_new = webdev.load_or_create_token(loose)
-        ok(t_new != "k" * 30 and len(t_new) >= 24 and stat.S_IMODE(os.stat(loose).st_mode) == 0o600 and webdev.load_or_create_token(loose) == t_new,
-           "tệp khoá cũ mà người khác đọc được (0644) → coi như khoá đã lộ: tạo khoá MỚI, lưu 0600, lần sau dùng lại khoá mới")
+        if posix:
+            ok(t_new != "k" * 30 and len(t_new) >= 24 and m600(loose) and webdev.load_or_create_token(loose) == t_new,
+               "tệp khoá cũ mà người khác đọc được (0644) → coi như khoá đã lộ: tạo khoá MỚI, lưu 0600, lần sau dùng lại khoá mới")
+        else:
+            ok(t_new == "k" * 30, "Windows: không có bit quyền POSIX → tệp khoá trong hồ sơ người dùng được dùng lại (không tạo khoá mới mỗi lần mở)")
         open(loose, "w").write("[1, 2]")
-        ok(len(webdev.load_or_create_token(loose)) >= 24 and stat.S_IMODE(os.stat(loose).st_mode) == 0o600, "tệp khoá hỏng (không phải dạng mong đợi) → tạo khoá mới, không sập")
+        ok(len(webdev.load_or_create_token(loose)) >= 24 and m600(loose), "tệp khoá hỏng (không phải dạng mong đợi) → tạo khoá mới, không sập")
         w = webdev.WebDev(FakeApi(), web, tok, port=47860)
         port = w.start()
 

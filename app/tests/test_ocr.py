@@ -39,7 +39,11 @@ def draw(rows, size=(900, 520), bg=(120, 20, 40)):
     im = Image.new("RGB", size, bg[::-1])
     d = ImageDraw.Draw(im)
     font = None
-    for path in ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Helvetica.ttc", "/Library/Fonts/Arial.ttf"):
+    # phông PHẢI có chữ tiếng Việt có dấu (phông mặc định của PIL không có → ảnh mẫu thiếu dấu, bộ đọc chữ bị chê oan)
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    for path in ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Helvetica.ttc", "/Library/Fonts/Arial.ttf",
+                 os.path.join(windir, "Fonts", "arial.ttf"), os.path.join(windir, "Fonts", "segoeui.ttf"),
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
         if os.path.exists(path):
             font = ImageFont.truetype(path, 38)
             break
