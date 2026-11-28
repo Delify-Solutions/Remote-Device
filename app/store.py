@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-store.py — lưu trữ cấu hình & flow dạng JSON (app/data/).
+store.py — lưu trữ cấu hình dạng JSON (app/data/): máy, nhóm + kịch bản, cài đặt.
 
 - devices.json : danh sách máy {name(board BLE), udid, label}
-- flows.json   : danh sách flow {id, name, steps:[...]}
+- groups.json  : nhóm máy, mỗi nhóm có danh sách kịch bản (các bước nằm trong kịch bản)
 """
 from __future__ import annotations
 import json, os, time, uuid
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DEVICES_FILE = os.path.join(DATA_DIR, "devices.json")
-FLOWS_FILE = os.path.join(DATA_DIR, "flows.json")
 GROUPS_FILE = os.path.join(DATA_DIR, "groups.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")     # địa chỉ + khoá gateway (KHÔNG vào git)
 
@@ -31,8 +30,6 @@ def _ensure():
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(DEVICES_FILE):
         _write(DEVICES_FILE, [])
-    if not os.path.exists(FLOWS_FILE):
-        _write(FLOWS_FILE, [])
     if not os.path.exists(GROUPS_FILE):
         # máy mới cài từ bản phát hành có kèm app/defaults/groups.json → bắt đầu với nhóm + kịch bản có sẵn. Chỉ khi CHƯA có tệp nhóm:
         # giải nén bản mới đè lên máy đang dùng không bao giờ ghi đè nhóm / kịch bản hiện có.
@@ -126,41 +123,6 @@ def rename_device(old_name, new_name):
     if old.get("label") in (None, "", old_name):   # nhãn mặc định theo tên -> cập nhật theo tên mới
         old["label"] = new_name
     return save_devices(devs)
-
-
-# ---- flows ----
-def get_flows():
-    _ensure(); return _read(FLOWS_FILE)
-
-
-def get_flow(flow_id):
-    for f in get_flows():
-        if f["id"] == flow_id:
-            return f
-    return None
-
-
-def save_flow(flow):
-    _ensure()
-    flows = get_flows()
-    if not flow.get("id"):
-        flow["id"] = uuid.uuid4().hex[:8]
-        flow["created"] = time.time()
-    flow["updated"] = time.time()
-    for i, f in enumerate(flows):
-        if f["id"] == flow["id"]:
-            flows[i] = flow
-            break
-    else:
-        flows.append(flow)
-    _write(FLOWS_FILE, flows)
-    return flow
-
-
-def delete_flow(flow_id):
-    flows = [f for f in get_flows() if f["id"] != flow_id]
-    _write(FLOWS_FILE, flows)
-    return True
 
 
 # ---- settings (dict) ----
@@ -312,12 +274,6 @@ def delete_group(group_id):
 def groups_of_device(name):
     """Mọi nhóm (list dict) có máy `name` — một máy có thể ở NHIỀU nhóm."""
     return [g for g in get_groups() if name in g.get("devices", [])]
-
-
-def group_of_device(name):
-    """Nhóm đầu tiên chứa máy `name`, hoặc None (giữ cho chỗ cũ chỉ cần biết «có ở nhóm nào không»)."""
-    gs = groups_of_device(name)
-    return gs[0] if gs else None
 
 
 def add_device_to_group(name, group_id):

@@ -46,9 +46,7 @@ Type: filesandordirs; Name: "{app}\wheels"
 Type: filesandordirs; Name: "{app}\models"
 
 [Files]
-Source: "{#IpfStage}\*"; DestDir: "{app}"; Excludes: "\farm.conf"; Flags: recursesubdirs createallsubdirs ignoreversion
-; tep cau hinh nguoi dung co the da sua: chi chep khi chua co, go cai dat khong xoa
-Source: "{#IpfStage}\farm.conf"; DestDir: "{app}"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: "{#IpfStage}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{autoprograms}\iPhone Farm"; Filename: "{app}\run.bat"; WorkingDir: "{app}"; Comment: "iPhone Farm Manager"

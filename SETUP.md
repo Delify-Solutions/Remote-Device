@@ -58,7 +58,7 @@ Xcode nằm ở: `/Applications/Xcode-26.6.0.app`.
 File `.xip` gốc đã bị `xcodes` chuyển vào Thùng rác.
 
 ### Code trong repo
-- `devices.py`: quét tất cả iPhone đang cắm, in tên, iOS, vùng, múi giờ, ngôn ngữ, pin
+- `devices.py` (đã gỡ 2026-11-28 — app có bảng «iPhone cắm USB»): quét tất cả iPhone đang cắm, in tên, iOS, vùng, múi giờ, ngôn ngữ, pin
   và báo **OK/SAI** theo bảng `EXPECTED` ở đầu file.
   Chạy: `.venv/bin/python devices.py`
 - `.gitignore`: bỏ qua `.venv/`, `shots/`, `.env`.
@@ -158,6 +158,9 @@ Kết quả research về hướng A (khả năng cao là chạy được, chưa
 
 ## 4. Script vận hành farm WDA
 
+> **Đã gỡ khỏi repo ngày 2026-11-28.** Hướng WDA không dùng nữa (xem mục 7), nên `farm.conf`, `scan_devices.sh`, `start_wda_farm.sh`,
+> `stop_wda_farm.sh` và `devices.py` đã được xoá. Phần dưới giữ lại làm nhật ký; cần xem lại mã thì lấy từ lịch sử git (commit `7589ae6`).
+
 | File | Việc |
 |---|---|
 | `farm.conf` | Cấu hình: bundle ID WDA, đường dẫn gói WDA, port gốc, thời gian chờ |
@@ -178,9 +181,6 @@ Kết quả research về hướng A (khả năng cao là chạy được, chưa
 ```bash
 # Liệt kê máy đang cắm
 .venv/bin/pymobiledevice3 usbmux list
-
-# Kiểm tra thông số tất cả máy
-.venv/bin/python devices.py
 
 # Chụp màn hình (máy đầu tiên)
 .venv/bin/pymobiledevice3 developer dvt screenshot shots/test.png
@@ -820,7 +820,7 @@ Làm theo 3 phần, cả 3 đã xong: Telegram, ảnh mẫu + tạm dừng tại
     đó, đọc kết quả như mọi lần mua dở — không chắc thì đối soát, không bao giờ báo «chưa mua».
   - Có cấu hình AI thì trước khi tạm dừng, tool hỏi AI (xem mục dưới); AI xử lý được thì không tạm dừng.
 - Bước «bỏ qua nếu lỗi» mà màn hình khác: bỏ qua bước đó (không làm, không tạm dừng máy), chạy tiếp.
-- Chạy thử trong trình sửa, chạy flow cũ, AI / dòng lệnh điều khiển máy (`farm run`, MCP): không kiểm màn hình (không có ai bấm Tiếp tục).
+- Chạy thử trong trình sửa, AI / dòng lệnh điều khiển máy (`farm run`, MCP): không kiểm màn hình (không có ai bấm Tiếp tục).
 - So theo chữ: một dòng trên màn hình nằm trong dòng mẫu (bộ đọc chữ tách dòng) chỉ được tính khi là chữ thật và dài ≥ 60% dòng mẫu — con
   số lẻ trên màn quảng cáo («120») không «khớp» mọi dòng mẫu có số.
 - Ảnh mẫu của các bước ngay sau bước gõ tài khoản (lúc chạy thử) có thể chứa chữ vừa gõ — lúc làm đơn khác, dòng đó vắng nên điểm hơi

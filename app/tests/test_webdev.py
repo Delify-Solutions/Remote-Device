@@ -453,7 +453,7 @@ def main():
             blocked = [n for n in public if gui._web_gate(n)]
             must_block = {"set_udid", "delete_device", "esp_flash", "esp_erase", "esp_chip", "probe_match", "restart_app", "group_delete", "ios_pair", "ios_enable_devmode",
                           "ios_reveal_devmode", "ios_mount", "ios_check", "board_restart", "board_disconnect_bt", "gateway_save", "ai_set_enabled", "ai_renew_token",
-                          "sys_install_pip", "sys_install_tool", "save_flow", "delete_flow", "run_flow", "run_flow_multi"}
+                          "sys_install_pip", "sys_install_tool"}
             ok(must_block <= set(blocked), "có máy của khách: đổi bảng gán / xoá máy / nạp-xoá board / dò máy / khởi động lại / xoá nhóm / đổi gateway-AI… đều bị khoá", sorted(must_block - set(blocked)))
             ok(set(public) - set(blocked) == set(gui.WEB_SAFE_WITH_CUSTOMERS) & set(public) and gui.WEB_SAFE_WITH_CUSTOMERS <= set(public),
                "mặc định là KHOÁ: mọi lệnh công khai ngoài danh sách an toàn đều bị từ chối (lệnh mới thêm sau này cũng vậy); danh sách an toàn không có tên lạ",

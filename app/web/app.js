@@ -10,7 +10,6 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<":
 let DEVICES = [];
 let IOS = [];
 let ESP = [];
-let FLOWS = [];
 let GROUPS = [];                       // danh sách nhóm
 let GROUP = null;                      // nhóm đang chọn (bản sao để sửa)
 let RUN_STATUS = {};                   // trạng thái chạy từng máy (poll)

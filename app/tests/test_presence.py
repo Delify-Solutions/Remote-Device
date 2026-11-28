@@ -409,10 +409,10 @@ def wiring_tests():
 
         # tệp máy / nhóm đọc lỗi → NÉM LỖI, không coi là «không còn máy / kịch bản nào»
         tmpd = tempfile.mkdtemp(prefix="presence-store-")
-        real_files = (store.DATA_DIR, store.DEVICES_FILE, store.GROUPS_FILE, store.FLOWS_FILE)
+        real_files = (store.DATA_DIR, store.DEVICES_FILE, store.GROUPS_FILE)
         try:
             store.DATA_DIR = tmpd
-            store.DEVICES_FILE, store.GROUPS_FILE, store.FLOWS_FILE = (os.path.join(tmpd, n) for n in ("devices.json", "groups.json", "flows.json"))
+            store.DEVICES_FILE, store.GROUPS_FILE = (os.path.join(tmpd, n) for n in ("devices.json", "groups.json"))
             open(store.GROUPS_FILE, "w").write('[{"id": "g1", "name": "N", "scripts": [{"id": "s", "name": "S", "steps": []}], "devices": []}')   # ghi dở
             open(store.DEVICES_FILE, "w").write("[]")
             try:
@@ -427,7 +427,7 @@ def wiring_tests():
                 strict = "nem"
             ok(strict == "nem", "tệp nhóm không phải một danh sách → cũng ném lỗi")
         finally:
-            store.DATA_DIR, store.DEVICES_FILE, store.GROUPS_FILE, store.FLOWS_FILE = real_files
+            store.DATA_DIR, store.DEVICES_FILE, store.GROUPS_FILE = real_files
             shutil.rmtree(tmpd, ignore_errors=True)
         gui.RUNNER.parked.add("M1")
         ok(presence.build(gui._presence_facts()[0], groups)[0]["devices"][0]["status"] == "paused", "bấm «Dừng máy» → máy không còn báo rảnh")

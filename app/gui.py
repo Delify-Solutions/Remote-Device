@@ -8,7 +8,7 @@ Cấu trúc: Manager giữ phiên điều khiển từng board; Api là cầu n�
 (web/index.html) gọi xuống Python; webview hiển thị giao diện trong cửa sổ native.
 """
 from __future__ import annotations
-import os, sys, base64, threading, traceback, json, pathlib, re, time
+import os, sys, base64, threading, json, pathlib, re, time
 sys.path.insert(0, os.path.dirname(__file__))
 
 import cv2
@@ -174,7 +174,7 @@ def _web_hold(name):
 WEB_SAFE_WITH_CUSTOMERS = frozenset((
     "sys_overview", "reload_ui", "list_devices", "ios_list", "rescan", "esp_scan",
     "screenshot", "ble_status", "run_step", "test_flow", "test_api_steps",            # tự kiểm theo máy thật (_web_privacy / _web_hold)
-    "get_flows", "groups_list", "group_save", "group_add_device", "group_remove_device",
+    "groups_list", "group_save", "group_add_device", "group_remove_device",
     "group_run", "group_stop", "machine_run", "machine_pause", "machine_resume", "machine_stop", "machine_ack", "stop_all",
     "run_status", "run_log", "history_live", "history_machine", "history_orders", "history_order", "gateway_get", "gateway_test", "gateway_pools", "gateway_pool", "gateway_sync", "ai_info",
     "telegram_get", "ai_screen_get",                                                   # chỉ đọc, không có mã bot / API key
@@ -237,11 +237,6 @@ CONTROL = None
 # Sổ «ai đang dùng cổng serial của máy nào»: AI / dòng lệnh, thao tác thử trên giao diện, và bộ chạy đều xin qua đây
 # (cùng một khoá) → không bao giờ có hai bên cùng điều khiển một máy.
 CLAIMS = control.Claims(running=RUNNER.is_running)
-
-
-def _ai_active():
-    """Các máy đang được AI / dòng lệnh điều khiển ngay lúc này (cổng serial của chúng đang bận)."""
-    return CLAIMS.names("ai")
 
 
 def _in_use():
@@ -967,52 +962,6 @@ class Api:
                 return {"ok": False, "msg": str(e)}
             finally:
                 tr.run_end()
-
-    # ---- flow ----
-    def get_flows(self):
-        return store.get_flows()
-
-    def save_flow(self, flow):
-        return store.save_flow(flow)
-
-    def delete_flow(self, flow_id):
-        store.delete_flow(flow_id)
-        return {"ok": True}
-
-    def run_flow(self, name, flow_id):
-        with _Using(name) as why:
-            if why:
-                return {"ok": False, "error": why}
-            try:
-                nav = MGR.session(name)
-                flow = store.get_flow(flow_id)
-                if not flow:
-                    return {"ok": False, "error": "flow không tồn tại"}
-                results = engine.run_flow(nav, flow.get("steps", []), check=False)
-                return {"ok": True, "results": results}
-            except Exception as e:
-                return {"ok": False, "error": str(e), "tb": traceback.format_exc()}
-
-    def run_flow_multi(self, names, flow_id):
-        """Chạy 1 flow trên nhiều máy song song (1 lượt, đồng bộ)."""
-        flow = store.get_flow(flow_id)
-        if not flow:
-            return {"ok": False, "error": "flow không tồn tại"}
-        out = {}
-        threads = []
-        def worker(nm):
-            with _Using(nm) as why:
-                try:
-                    if why:
-                        raise RuntimeError(why)
-                    nav = MGR.session(nm)
-                    out[nm] = engine.run_flow(nav, flow.get("steps", []), check=False)
-                except Exception as e:
-                    out[nm] = [{"ok": False, "msg": str(e)}]
-        for nm in names:
-            t = threading.Thread(target=worker, args=(nm,)); t.start(); threads.append(t)
-        for t in threads: t.join()
-        return {"ok": True, "results": out}
 
     # ---- NHÓM (group) + chạy/dừng từng máy ----
     def groups_list(self):

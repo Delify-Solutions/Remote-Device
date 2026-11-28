@@ -24,9 +24,6 @@
     { udid: "1111aaaa2222bbbb3333cccc4444dddd5555eeee", name: "iPhone 8 (demo)", model: "iPhone 8", product_type: "iPhone10,1", ios: "16.7.10", connection: "USB" },
     { udid: "aaaa1111bbbb2222cccc3333dddd4444eeee5555", name: "XS Max", model: "iPhone XS Max", product_type: "iPhone11,6", ios: "18.7", connection: "USB" },
   ];
-  let FLOWS = [{ id: "demo1", name: "Mở eFootball", steps: [
-    { type: "launch", app: "efootball" }, { type: "wait", seconds: 3 }, { type: "tap", x: 300, y: 500 },
-  ], created: 0, updated: 0 }];
   let GROUPS = [
     { id: "g1", name: "iPhone 8 · 16.7", mode: "loop", loops: 0,
       devices: ["iPhoneFarm-01"], steps: [{ type: "home" }, { type: "wait", seconds: 2 }] },
@@ -218,11 +215,6 @@
     gateway_sync: () => P({ configured: !!GWCFG.key, ok: GWCFG.key ? true : null, at: Date.now() / 1000, error: "", devices: 2, idle: 1, scripts: 1, sent: 1 }),
     gateway_pools: () => P(GWCFG.url && GWCFG.key ? { ok: true, pools: GWPOOLS } : { ok: false, error: "Chưa cấu hình", pools: [] }),
     gateway_pool: (code) => P(code === "efootball-ios" ? JSON.parse(JSON.stringify(GWPOOL)) : { ok: false, error: "Không có pool này." }),
-    get_flows: () => P(FLOWS),
-    save_flow: (f) => { if (!f.id) f.id = "f" + Date.now(); const i = FLOWS.findIndex(x => x.id === f.id); if (i >= 0) FLOWS[i] = f; else FLOWS.push(f); return P(JSON.parse(JSON.stringify(f))); },
-    delete_flow: (id) => { FLOWS = FLOWS.filter(x => x.id !== id); return P({ ok: true }); },
-    run_flow: (n, id) => P({ ok: true, results: [{ i: 0, type: "launch", ok: true, msg: "mở app" }, { i: 1, type: "wait", ok: true, msg: "chờ 3s" }] }),
-    run_flow_multi: (ns, id) => P({ ok: true, results: Object.fromEntries(ns.map(n => [n, [{ i: 0, type: "launch", ok: true, msg: "ok" }]])) }),
   }};
   // báo giao diện API đã sẵn sàng
   setTimeout(() => window.dispatchEvent(new Event("pywebviewready")), 60);

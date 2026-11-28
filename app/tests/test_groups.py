@@ -32,11 +32,10 @@ def ok(cond, name, ctx=None):
 
 def main():
     tmp = tempfile.mkdtemp(prefix="groups-")
-    old = (store.DATA_DIR, store.GROUPS_FILE, store.DEVICES_FILE, store.FLOWS_FILE)
+    old = (store.DATA_DIR, store.GROUPS_FILE, store.DEVICES_FILE)
     store.DATA_DIR = tmp
     store.GROUPS_FILE = os.path.join(tmp, "groups.json")
     store.DEVICES_FILE = os.path.join(tmp, "devices.json")
-    store.FLOWS_FILE = os.path.join(tmp, "flows.json")
     try:
         home = {"type": "home"}
         tap = {"type": "tap_text", "text": "Đăng nhập"}
@@ -736,7 +735,7 @@ def main():
             gui.store.get_group = old_get
             gui.RUNNER.workers.clear(); gui.RUNNER.workers.update(saved_workers)
     finally:
-        store.DATA_DIR, store.GROUPS_FILE, store.DEVICES_FILE, store.FLOWS_FILE = old
+        store.DATA_DIR, store.GROUPS_FILE, store.DEVICES_FILE = old
         shutil.rmtree(tmp, ignore_errors=True)
     print("\n%s" % ("✅ TẤT CẢ %d kiểm tra đều đạt." % PASS if not FAIL else "❌ %d lỗi / %d kiểm tra." % (FAIL, PASS + FAIL)))
     return 1 if FAIL else 0

@@ -42,8 +42,7 @@ echo "== iPhone Farm $VER — $PLATFORM"
 
 # ---- 1. mã app: đúng các file đang được git theo dõi (không lẫn app/data, .venv, log…) ----
 # (SETUP.md là nhật ký dựng máy của nhà phát triển — không đưa vào bộ cài)
-PAYLOAD=(app farm farm.bat farm.conf devices.py requirements-windows.txt run.bat run.command setup.bat
-         scan_devices.sh start_wda_farm.sh stop_wda_farm.sh .mcp.json .gitattributes)
+PAYLOAD=(app farm farm.bat requirements-windows.txt run.bat run.command setup.bat .mcp.json .gitattributes)
 git ls-files -z -- "${PAYLOAD[@]}" | tar --null -T - -cf - | tar -xf - -C "$STAGE"
 [ -f "$STAGE/app/gui.py" ] || { echo "✗ không chép được mã app"; exit 1; }
 [ ! -e "$STAGE/app/data" ] || { echo "✗ app/data lọt vào bộ cài"; exit 1; }

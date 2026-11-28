@@ -27,10 +27,7 @@ fail() {
 setup() {
   echo "== iPhone Farm $VER → $DST ($(date))"
   # mã app: chép đè bản mới; GIỮ NGUYÊN app/data (dữ liệu người dùng). runtime / wheels / models xử lý riêng bên dưới.
-  # farm.conf là tệp cấu hình người dùng có thể đã sửa → chỉ chép khi chưa có
-  local keep_conf=""
-  [ -f "$DST/farm.conf" ] && keep_conf="/farm.conf"
-  /usr/bin/rsync -a --exclude '/runtime' --exclude '/wheels' --exclude '/models' --exclude '/app/data' ${keep_conf:+--exclude "$keep_conf"} "$SRC/" "$DST/" || return 1
+  /usr/bin/rsync -a --exclude '/runtime' --exclude '/wheels' --exclude '/models' --exclude '/app/data' "$SRC/" "$DST/" || return 1
   rm -rf "$DST/runtime" "$DST/.venv" "$DST/.ipf-installed" || return 1
   /usr/bin/rsync -a "$SRC/runtime/" "$DST/runtime/" || return 1
   # app tải từ mạng bị gắn nhãn «cách ly»; bản chép ra đây phải gỡ nhãn thì Python kèm theo mới chạy được

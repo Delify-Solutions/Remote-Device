@@ -844,7 +844,7 @@ def run_all(tmp, real_ocr):
         ok(gui.CLAIMS.acquire("A", "ai") is None, "(AI đang điều khiển máy A)")
         r = api2.run_step("A", {"type": "home"})
         ok(r["ok"] is False and "AI / dòng lệnh" in r["msg"], "giao diện «chạy thử bước» trên máy AI đang điều khiển → bị từ chối", r)
-        ok(api2.test_api_steps("A", [{"type": "home"}])["ok"] is False and api2.test_flow("A", [])["ok"] is False and api2.run_flow("A", "x")["ok"] is False,
+        ok(api2.test_api_steps("A", [{"type": "home"}])["ok"] is False and api2.test_flow("A", [])["ok"] is False,
            "«chạy thử kịch bản / bước API» cũng bị từ chối")
         ok("máy đang được điều khiển" in api2.ble_status("A")["status"], "hỏi trạng thái Bluetooth KHÔNG chen lệnh vào cổng của máy AI đang dùng", api2.ble_status("A"))
         r = api2.esp_chip("/dev/cu.A")

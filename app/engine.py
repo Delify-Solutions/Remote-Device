@@ -148,13 +148,12 @@ def _tell(on_step, i, ok=None, msg=""):
             pass
 
 
-def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None, pause_gate=None, capture=False, check=True, start=0, on_step=None):
+def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None, pause_gate=None, capture=False, start=0, on_step=None):
     """Chạy cả flow. Trả list kết quả [{i, type, ok, msg}] (`i` = vị trí của bước trong `steps`, kể cả khi chạy từ giữa).
     stop_check: hàm trả True để DỪNG giữa chừng (dùng khi dừng 1 máy).
     pause_gate: hàm được gọi TRƯỚC mỗi bước; đang «tạm dừng» thì nó chặn ở đó (người xử lý tay) cho tới khi tiếp tục hoặc bị dừng.
     capture: CHẠY THỬ trong trình sửa — không kiểm màn hình; bước thao tác CHƯA có ảnh mẫu thì chụp màn hình ngay trước bước, bước làm được
     thì kết quả mang theo ảnh mẫu (`screen`) để giao diện gắn vào bước.
-    check=False: không kiểm màn hình (chạy flow cũ trong trình dựng — không có ai bấm «Tiếp tục»).
     start: bắt đầu từ bước thứ `start` (0 = đầu) — «chạy tiếp từ bước N» sau khi máy dừng vì lỗi; các bước trước đó KHÔNG làm.
     on_step(i, ok, msg): báo tiến độ — ok=None lúc BẮT ĐẦU bước i (trước cả lúc kiểm màn hình), True / False lúc bước xong."""
     results = []
@@ -170,8 +169,8 @@ def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None, pause_ga
             break
         _tell(on_step, i)
         ref = None
-        if capture or not check:                        # chạy thử / chạy flow cũ trong trình dựng: không kiểm màn hình
-            ref = capture_ref(nav, step) if capture else None
+        if capture:                                     # chạy thử trong trình sửa: không kiểm màn hình, chụp ảnh mẫu cho bước chưa có
+            ref = capture_ref(nav, step)
             seen = True
         else:
             try:

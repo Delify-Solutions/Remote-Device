@@ -123,7 +123,7 @@ def _env():
 
 def _make_named_sketch(name):
     """Tạo bản sao firmware với DEVICE_NAME = name trong thư mục tạm. Trả đường sketch dir."""
-    tmp = tempfile.mkdtemp(prefix="wda_fw_")
+    tmp = tempfile.mkdtemp(prefix="ipf_fw_")
     dst = os.path.join(tmp, "esp32_hid")
     shutil.copytree(FW_DIR, dst)
     ino = os.path.join(dst, "esp32_hid.ino")
