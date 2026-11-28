@@ -909,6 +909,19 @@ $f['currencies'] = 'JPY, XX1';
 $pv = $post('/admin/pools/save', $f);
 ok($pv['code'] === 200 && str_contains($pv['text'], 'XX1') && str_contains($pv['text'], 'không hợp lệ') && str_contains($pv['text'], 'value="¥1,500"')
     && Pools::find($wpId)['cfg']['currencies'] === ['JPY', 'CHF'], 'loại tiền gõ sai → báo lỗi, giữ nguyên các ô giá đang nhập, không lưu gì', $pv['code']);
+// danh sách cột khai thiếu (vd trình duyệt cũ đã bỏ JPY khỏi pk_currencies khi ô loại tiền gõ dở) nhưng ô giá JPY vẫn gửi lên:
+// trang báo lỗi vẫn dựng lại đủ ô giá JPY → sửa ô loại tiền rồi lưu lần nữa KHÔNG làm mất giá JPY
+$f = $poolForm($wpId);
+$f['currencies'] = 'JPYY, CHF';
+$f['pk_currencies'] = 'CHF';
+$pv = $post('/admin/pools/save', $f);
+$f2 = $poolForm($wpId);
+$f2['currencies'] = str_repeat('USD ', 1) . 'JPY CHF EUR GBP AUD CAD SGD HKD THB KRW';     // 11 loại tiền → bị từ chối
+$f2['pk_currencies'] = '';
+$pv2 = $post('/admin/pools/save', $f2);
+ok($pv['code'] === 200 && str_contains($pv['text'], 'name="pp_JPY_amount[]" value="1500"') && $pv2['code'] === 200 && str_contains($pv2['text'], 'name="pp_JPY_amount[]" value="1500"')
+    && str_contains($pv2['text'], 'name="pk_currencies" value="JPY,CHF"') && (int) Db::val("SELECT amount FROM package_prices WHERE package_id=? AND currency='JPY'", [$pid['gem_s']]) === 150000,
+    'ô loại tiền bị từ chối (gõ sai / quá 10 loại) mà danh sách cột khai thiếu → trang báo lỗi vẫn giữ đủ ô giá đã gửi; giá trong CSDL không mất', [$pv['code'], $pv2['code']]);
 $f = $poolForm($wpId);
 $f['pp_JPY_amount'][0] = 'mười';
 $pv = $post('/admin/pools/save', $f);
@@ -1230,6 +1243,21 @@ $post("/admin/jobs/$S4id/delete", []);
 ok(Jobs::byId($S4id) !== null, 'đơn chờ đối soát (dù không tạm giữ tiền) → không xoá được, phải chốt trước');
 $dash = http('GET', '/admin', null, null, $ah)['text'];
 ok($dash !== '', 'trang tổng quan vẫn hiển thị khi có khoá «Đơn thử»');
+
+// ---- sửa pool: gõ thêm loại tiền là có ô giá ngay → lưu MỘT lần thì giá của loại tiền mới cũng được lưu ----
+$cpId = Pools::save(null, 'pool-cur', 'Pool loại tiền', 'Game', true, array_merge($wc, ['currencies' => ['JPY']]));
+Pools::savePackages($cpId, [['code' => 'k1', 'name' => 'Gói 1', 'limit_type' => 'multi', 'active' => true, 'prices' => ['JPY' => ['amount' => '1500', 'display' => '¥1,500']]]]);
+$pe = http('GET', "/admin/pools/$cpId", null, null, $ah)['text'];
+ok(str_contains($pe, 'data-cur-sync') && str_contains($pe, 'class="pp-cur" data-cur="JPY"') && str_contains($pe, 'name="pk_currencies" value="JPY"'),
+    'trang sửa pool: ô loại tiền điều khiển ô giá từng gói (mỗi loại tiền một cặp giá + chữ trên máy)');
+$k1 = (int) Db::val("SELECT id FROM packages WHERE pool_id=? AND code='k1'", [$cpId]);
+$post('/admin/pools/save', ['id' => $cpId, 'code' => 'pool-cur', 'name' => 'Pool loại tiền', 'game' => 'Game', 'active' => '1', 'queue_ttl_min' => '30', 'silent_min' => '15',
+    'currencies' => 'JPY, USD', 'pk_currencies' => 'JPY,USD',
+    'pk_id' => [$k1], 'pk_code' => ['k1'], 'pk_name' => ['Gói 1'], 'pk_ocr' => [''], 'pk_price' => [''], 'pk_limit' => ['multi'], 'pk_max' => ['0'], 'pk_active' => ['1'],
+    'pp_JPY_amount' => ['1500'], 'pp_JPY_display' => ['¥1,500'], 'pp_USD_amount' => ['9.99'], 'pp_USD_display' => ['$9.99']]);
+$pr2 = Pools::prices($cpId)[$k1] ?? [];
+ok(Pools::find($cpId)['cfg']['currencies'] === ['JPY', 'USD'] && ($pr2['USD'] ?? null) === ['amount' => '9.99', 'display' => '$9.99'] && ($pr2['JPY']['amount'] ?? '') === '1500',
+    'thêm loại tiền USD + nhập giá USD rồi lưu MỘT lần → lưu cả loại tiền lẫn giá (không phải lưu hai lần)', $pr2);
 
 echo "\n== Trang quản trị + tài liệu ==\n";
 $docs = http('GET', '/docs');

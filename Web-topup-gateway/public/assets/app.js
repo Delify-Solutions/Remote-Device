@@ -200,3 +200,49 @@ if (editModal) {
     window.bootstrap.Modal.getOrCreateInstance(editModal).show();
   }
 }
+
+
+// ---- POOL: loại tiền → ô giá của từng gói hiện NGAY (không phải lưu rồi mới thấy cột giá) ----
+// Loại tiền bị xoá khỏi ô chỉ bị ẨN + tắt (không gửi đi), gõ lại thì hiện lại với giá cũ — gõ dở («JP») không làm mất giá đã nhập.
+const curSync = document.querySelector('[data-cur-sync]');
+if (curSync) {
+  const zero = JSON.parse(curSync.dataset.zero || '[]'), examples = JSON.parse(curSync.dataset.examples || '{}');
+  const colsInput = curSync.form.querySelector('[name=pk_currencies]');
+  const cell = (c) => {
+    const span = document.createElement('span');
+    span.className = 'pp-cur'; span.dataset.cur = c;
+    const box = (cap, name, ph, extra) => '<label class="pp"><span class="pp-cap">' + c + ' · ' + cap + '</span><input class="form-control form-control-sm" type="text" name="pp_' + c + '_' + name + '[]" value="" placeholder="' + ph + '"' + extra + '></label>';
+    span.innerHTML = box('giá', 'amount', zero.includes(c) ? '1500' : '63.00', ' inputmode="decimal"') + box('chữ hiện trên máy', 'display', examples[c] || ('vd: 9.99 ' + c), '');
+    return span;
+  };
+  const rows = () => [...document.querySelectorAll('#rep-pk .cols-pk')].concat([...((document.getElementById('tpl-pk') || {}).content || document.createDocumentFragment()).querySelectorAll('.cols-pk')]);
+  // đọc ô loại tiền ĐÚNG như gateway (Pools::parseCurrencies): tách theo khoảng trắng / phẩy / chấm phẩy, mỗi mã đúng 3 chữ A–Z, tối đa 10.
+  // Gõ sai / gõ dở → null: GIỮ NGUYÊN các ô giá đang có (không ẩn, không đổi danh sách cột gửi đi) để không bao giờ làm mất giá đã nhập.
+  const parse = (raw) => {
+    const toks = raw.replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, '').split(/[ \t\n\r\f\v,;]+/).filter(Boolean), out = [];     // đúng các dấu cách PHP \s nhận
+    for (const t of toks) {
+      if (!/^[A-Za-z]{3}$/.test(t)) return null;
+      const c = t.replace(/[a-z]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 32));
+      if (!out.includes(c)) out.push(c);
+    }
+    return out.length <= 10 ? out : null;
+  };
+  const sync = () => {
+    const want = parse(curSync.value);
+    curSync.classList.toggle('is-invalid', want === null);
+    if (want === null) return;
+    rows().forEach((row) => {
+      const box = row.querySelector('.pk-prices');
+      if (!box) return;
+      want.forEach((c) => { if (!box.querySelector('.pp-cur[data-cur="' + c + '"]')) box.appendChild(cell(c)); });
+      box.querySelectorAll('.pp-cur').forEach((sp) => {
+        const on = want.includes(sp.dataset.cur);
+        sp.hidden = !on;
+        sp.querySelectorAll('input').forEach((i) => { i.disabled = !on; });
+      });
+    });
+    colsInput.value = want.join(',');              // cột giá gửi đi = đúng các loại tiền đang có trong ô
+  };
+  curSync.addEventListener('input', sync);
+  sync();
+}
