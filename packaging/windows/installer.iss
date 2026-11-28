@@ -1,25 +1,26 @@
 ; Bo cai iPhone Farm cho Windows (Inno Setup 6). Dung boi packaging/build.sh:
-;   ISCC /DVer=<ban> /DStage=<thu muc da gom> /DOutDir=<thu muc ra> /DOutName=<ten tep> installer.iss
+;   ISCC /DIpfVer=<ban> /DIpfStage=<thu muc da gom> /DIpfOutDir=<thu muc ra> /DIpfOutName=<ten tep> installer.iss
+; (ten bien co tien to Ipf: "Ver" la bien co san cua bo tien xu ly Inno Setup, dat de len la hong)
 ; Cai vao %LOCALAPPDATA%\iPhoneFarm (khong can quyen admin; app ghi du lieu vao app\data ngay trong thu muc cai).
 ; Chu trong tep nay viet khong dau de khong phu thuoc bang ma cua may dung.
 
-#ifndef Ver
-  #define Ver "dev"
+#ifndef IpfVer
+  #define IpfVer "dev"
 #endif
-#ifndef Stage
-  #define Stage "..\..\build\stage"
+#ifndef IpfStage
+  #define IpfStage "..\..\build\stage"
 #endif
-#ifndef OutDir
-  #define OutDir "..\..\dist"
+#ifndef IpfOutDir
+  #define IpfOutDir "..\..\dist"
 #endif
-#ifndef OutName
-  #define OutName "iPhoneFarm-Setup"
+#ifndef IpfOutName
+  #define IpfOutName "iPhoneFarm-Setup"
 #endif
 
 [Setup]
 AppId={{6C0E5F0B-5D3A-4E0B-9C55-1F7B1E6F2A41}
 AppName=iPhone Farm
-AppVersion={#Ver}
+AppVersion={#IpfVer}
 AppPublisher=Delify Solutions
 DefaultDirName={localappdata}\iPhoneFarm
 DisableDirPage=yes
@@ -28,12 +29,12 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
-OutputDir={#OutDir}
-OutputBaseFilename={#OutName}
+OutputDir={#IpfOutDir}
+OutputBaseFilename={#IpfOutName}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayName=iPhone Farm {#Ver}
+UninstallDisplayName=iPhone Farm {#IpfVer}
 CloseApplications=yes
 SetupLogging=yes
 
@@ -45,9 +46,9 @@ Type: filesandordirs; Name: "{app}\wheels"
 Type: filesandordirs; Name: "{app}\models"
 
 [Files]
-Source: "{#Stage}\*"; DestDir: "{app}"; Excludes: "\farm.conf"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#IpfStage}\*"; DestDir: "{app}"; Excludes: "\farm.conf"; Flags: recursesubdirs createallsubdirs ignoreversion
 ; tep cau hinh nguoi dung co the da sua: chi chep khi chua co, go cai dat khong xoa
-Source: "{#Stage}\farm.conf"; DestDir: "{app}"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: "{#IpfStage}\farm.conf"; DestDir: "{app}"; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Icons]
 Name: "{autoprograms}\iPhone Farm"; Filename: "{app}\run.bat"; WorkingDir: "{app}"; Comment: "iPhone Farm Manager"

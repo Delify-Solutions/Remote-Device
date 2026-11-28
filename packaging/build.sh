@@ -132,7 +132,7 @@ if [ "$PLATFORM" = windows ]; then
   [ -f "$ISCC" ] || { echo "✗ chưa có Inno Setup 6 (choco install innosetup)"; exit 1; }
   OUT="iPhoneFarm-Setup-$VER"
   rm -f "$DIST/$OUT.exe"
-  MSYS2_ARG_CONV_EXCL='*' "$ISCC" "/Qp" "/DVer=$VER" "/DStage=$(cygpath -w "$STAGE")" "/DOutDir=$(cygpath -w "$DIST")" "/DOutName=$OUT" \
+  MSYS2_ARG_CONV_EXCL='*' "$ISCC" "/Qp" "/DIpfVer=$VER" "/DIpfStage=$(cygpath -w "$STAGE")" "/DIpfOutDir=$(cygpath -w "$DIST")" "/DIpfOutName=$OUT" \
     "$(cygpath -w "$ROOT/packaging/windows/installer.iss")"
   ls -la "$DIST/$OUT.exe"
 else
