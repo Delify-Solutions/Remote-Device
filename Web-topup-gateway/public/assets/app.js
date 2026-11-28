@@ -43,13 +43,20 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// chọn khoá Tool → ô tên máy gợi ý đúng các máy của khoá đó (vẫn gõ tự do được)
-document.addEventListener('change', (e) => {
-  const sel = e.target.closest('[data-devlist]');
-  if (!sel) return;
-  const input = document.querySelector(sel.dataset.devlist);
-  if (input) input.setAttribute('list', 'dl-dev-' + sel.value);
-});
+// thêm ví: chọn máy → ô loại tiền chỉ còn các loại tiền mà pool của máy đang bán
+const walletMachine = document.querySelector('[data-wallet-machine]');
+if (walletMachine) {
+  const cur = document.querySelector('[data-wallet-cur]');
+  const fill = () => {
+    const opt = walletMachine.selectedOptions[0];
+    const list = opt && opt.dataset.cur ? opt.dataset.cur.split(',') : [];
+    const keep = cur.value;
+    cur.innerHTML = list.map((c) => '<option>' + c.replace(/[^A-Z]/g, '') + '</option>').join('');
+    if (list.includes(keep)) cur.value = keep;
+  };
+  walletMachine.addEventListener('change', fill);
+  fill();
+}
 
 // hộp xác nhận cho thao tác khó đảo ngược
 document.addEventListener('submit', (e) => {

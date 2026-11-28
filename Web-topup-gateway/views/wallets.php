@@ -1,5 +1,24 @@
 <?php
-$firstKey = (int) ($toolKeys[0]['id'] ?? 0);
+// máy chọn được = máy tool đã báo, thuộc ít nhất một pool có khai loại tiền; gom theo pool
+$byPool = [];
+$noPool = [];
+$noCur = [];
+foreach ($machines as $mc) {
+    if (!$mc['pools']) { $noPool[] = $mc; continue; }
+    if (!$mc['currencies']) { $k = implode(', ', $mc['pools']); $noCur[$k]['pools'] = $mc['pools']; $noCur[$k]['names'][] = $mc['name']; continue; }
+    foreach ($mc['pools'] as $pc) { $byPool[$pc][] = $mc; }
+}
+$multiKey = count(array_unique(array_column($machines, 'key_id'))) > 1;
+$sel = null;                                   // máy được chọn sẵn (vừa gửi lỗi / link ?machine=) hoặc máy đầu tiên → điền sẵn loại tiền khi chưa có JS
+foreach ($byPool as $list) {
+    foreach ($list as $mc) {
+        if ($mc['value'] === $pick) {
+            $sel = $mc;
+        }
+        $sel ??= $mc;
+    }
+}
+$label = static fn (array $mc): string => $mc['name'] . ($multiKey ? ' — ' . $mc['key_name'] : '') . ' · ' . $mc['state'] . ($mc['wallet'] ? ' · đang có ví ' . $mc['wallet'] : '');
 ?>
 <div class="page-head">
   <div><h4 class="mb-1">Ví &amp; tài khoản Apple</h4>
@@ -9,26 +28,39 @@ $firstKey = (int) ($toolKeys[0]['id'] ?? 0);
 <div class="card mb-6">
   <h5 class="card-header">Thêm ví cho một máy</h5>
   <div class="card-body">
-  <?php if (!$toolKeys): ?><div class="empty py-3">Chưa có khoá Tool nào — tạo ở trang <a href="/admin/keys">Khoá API</a> trước.</div><?php else: ?>
+  <?php if (!$machines): ?>
+    <div class="empty py-3">Gateway chưa thấy máy nào. Mở tool và cho máy chạy kịch bản nhận đơn — máy sẽ hiện ở trang <a href="/admin/scripts">Kịch bản &amp; máy</a> rồi mới gắn ví được.</div>
+  <?php else: ?>
+    <?php foreach ($noCur as $names => $nc): $pcs = $nc['pools']; ?>
+    <div class="alert alert-warning">Pool <b><?= e($names) ?></b> chưa có <b>loại tiền + giá gói</b><?= count($pcs) > 1 ? ' chung cho cả các pool này' : '' ?> nên máy của pool này (<?= e(implode(', ', array_unique($nc['names']))) ?>) chưa gắn ví được — máy có ví mà pool không có giá thì không nhận được đơn nào.
+      <?php foreach ($pcs as $pc): if (isset($pools[$pc])): ?><a href="/admin/pools/<?= (int) $pools[$pc]['id'] ?>" class="alert-link">Khai giá cho pool <?= e($pools[$pc]['name']) ?></a> <?php endif; endforeach; ?></div>
+    <?php endforeach; ?>
+    <?php if ($byPool): ?>
     <form method="post" action="/admin/wallets/create" class="row g-4 align-items-end">
       <?= Csrf::field() ?>
-      <div class="col-sm-6 col-lg-3"><label class="form-label">Khoá Tool</label>
-        <select class="form-select" name="tool_key_id" data-devlist="#w-device"><?php foreach ($toolKeys as $k): ?><option value="<?= (int) $k['id'] ?>"><?= e($k['name']) ?></option><?php endforeach; ?></select></div>
-      <div class="col-sm-6 col-lg-3"><label class="form-label">Máy (đúng tên máy trong tool)</label>
-        <input class="form-control" id="w-device" type="text" name="device" list="dl-dev-<?= $firstKey ?>" maxlength="80" placeholder="iPhoneFarm-01" required autocomplete="off"></div>
-      <div class="col-sm-6 col-lg-3"><label class="form-label">Tài khoản Apple</label>
-        <input class="form-control" type="text" name="apple_account" maxlength="160" placeholder="apple@example.com" required autocomplete="off"></div>
-      <div class="col-6 col-lg-1"><label class="form-label">Loại tiền</label>
-        <input class="form-control mono" type="text" name="currency" list="dl-cur" maxlength="3" pattern="[A-Za-z]{3}" placeholder="JPY" required autocomplete="off"></div>
-      <div class="col-6 col-lg-2"><label class="form-label">Số dư ban đầu</label>
-        <input class="form-control" type="text" name="balance" inputmode="decimal" placeholder="0"></div>
-      <div class="col-sm-8 col-lg-9"><label class="form-label">Ghi chú (tuỳ chọn)</label>
-        <input class="form-control" type="text" name="note" maxlength="200" placeholder="vd: tài khoản vùng Nhật, nạp bằng thẻ quà tặng"></div>
+      <div class="col-sm-6 col-lg-4"><label class="form-label" for="w-machine">Máy</label>
+        <select class="form-select" id="w-machine" name="machine" required data-wallet-machine>
+          <?php foreach ($byPool as $pc => $list): ?>
+          <optgroup label="Pool <?= e($pools[$pc]['name'] ?? $pc) ?>">
+            <?php foreach ($list as $mc): ?><option value="<?= e($mc['value']) ?>" data-cur="<?= e(implode(',', $mc['currencies'])) ?>" <?= $pick === $mc['value'] ? 'selected' : '' ?>><?= e($label($mc)) ?></option><?php endforeach; ?>
+          </optgroup>
+          <?php endforeach; ?>
+        </select></div>
+      <div class="col-sm-6 col-lg-4"><label class="form-label" for="w-apple">Tài khoản Apple đăng nhập trên máy</label>
+        <input class="form-control" id="w-apple" type="text" name="apple_account" maxlength="160" placeholder="apple@example.com" required autocomplete="off"></div>
+      <div class="col-6 col-lg-2"><label class="form-label" for="w-cur">Loại tiền</label>
+        <select class="form-select mono" id="w-cur" name="currency" required data-wallet-cur><?php foreach ($sel['currencies'] ?? [] as $c): ?><option><?= e($c) ?></option><?php endforeach; ?></select></div>
+      <div class="col-6 col-lg-2"><label class="form-label" for="w-bal">Số dư ban đầu</label>
+        <input class="form-control" id="w-bal" type="text" name="balance" inputmode="decimal" placeholder="0"></div>
+      <div class="col-sm-8 col-lg-9"><label class="form-label" for="w-note">Ghi chú (tuỳ chọn)</label>
+        <input class="form-control" id="w-note" type="text" name="note" maxlength="200" placeholder="vd: tài khoản vùng Nhật, nạp bằng thẻ quà tặng"></div>
       <div class="col-sm-4 col-lg-3"><button class="btn btn-primary w-100"><i class="ti tabler-plus me-1"></i>Thêm ví</button></div>
     </form>
-    <?php foreach ($toolKeys as $k): ?><datalist id="dl-dev-<?= (int) $k['id'] ?>"><?php foreach ($devices[(int) $k['id']] ?? [] as $d): ?><option value="<?= e($d) ?>"></option><?php endforeach; ?></datalist><?php endforeach; ?>
-    <datalist id="dl-cur"><?php foreach ($currencies as $c): ?><option value="<?= e($c) ?>"></option><?php endforeach; ?></datalist>
-    <p class="form-text mb-0 mt-3">Số tiền viết như trên máy: <code>1500</code> / <code>1.500</code> (JPY) · <code>63.50</code> / <code>63,50</code> (CHF). Thêm ví mới cho một máy thì ví cũ của máy đó <b>thôi dùng</b> (mỗi máy chỉ một ví đang dùng); các đơn đang tạm giữ ở ví cũ vẫn tính vào ví cũ.</p>
+    <p class="form-text mb-0 mt-3">Chỉ hiện máy đang chạy kịch bản nhận đơn của một pool (và pool đó đã khai giá). Loại tiền = các loại tiền pool của máy đang bán. Số tiền viết như trên máy: <code>1500</code> / <code>1.500</code> (JPY) · <code>63.50</code> / <code>63,50</code> (CHF). Thêm ví mới cho một máy thì ví cũ của máy đó <b>thôi dùng</b> (mỗi máy chỉ một ví đang dùng); các đơn đang tạm giữ ở ví cũ vẫn tính vào ví cũ.</p>
+    <?php endif; ?>
+    <?php if ($noPool): ?>
+    <p class="form-text mb-0 mt-2">Máy chưa thuộc pool nào (tool chưa báo máy chạy kịch bản nhận đơn của một pool có trên gateway): <?= e(implode(', ', array_map(static fn ($mc) => $mc['name'] . ($multiKey ? ' (' . $mc['key_name'] . ')' : ''), $noPool))) ?>.</p>
+    <?php endif; ?>
   <?php endif; ?>
   </div>
 </div>

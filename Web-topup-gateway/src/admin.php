@@ -505,16 +505,17 @@ final class Admin
         }
         $actor = 'admin:' . $user['username'];
         if ($m === 'POST' && ($s[1] ?? '') === 'create') {
+            $mk = array_pad(explode('|', (string) Req::post('machine', ''), 2), 2, '');     // «id khoá Tool|tên máy» chọn từ danh sách máy
             $cur = Money::currency(Req::post('currency', ''));
             $rawInit = trim((string) Req::post('balance', ''));
             // loại tiền sai thì chưa đọc được số dư — Wallets::create báo lỗi loại tiền
             $init = ($cur === null || $rawInit === '') ? 0 : Money::parse($rawInit, $cur);
             $res = $init === null ? 'Số dư ban đầu không hợp lệ' . (Money::decimals((string) $cur) === 0 ? ' (' . $cur . ' không có phần lẻ).' : '.')
-                : Wallets::create((int) Req::post('tool_key_id', '0'), (string) Req::post('device', ''), (string) Req::post('apple_account', ''),
+                : Wallets::create((int) $mk[0], (string) $mk[1], (string) Req::post('apple_account', ''),
                                   (string) Req::post('currency', ''), $init, (string) Req::post('note', ''), $actor);
             if (is_string($res)) {
                 Flash::set($res, 'bad');
-                Res::redirect('/admin/wallets');
+                Res::redirect('/admin/wallets?machine=' . rawurlencode((string) Req::post('machine', '')));     // giữ máy đang chọn
             }
             Flash::set('Đã thêm ví — máy này từ giờ chỉ nhận đơn mà ví đủ tiền.');
             Res::redirect('/admin/wallets/' . $res);
@@ -565,17 +566,8 @@ final class Admin
                             'entries' => Wallets::entries($id, $per, ($page - 1) * $per), 'total' => $total, 'page' => $page, 'per' => $per]);
         }
         if ($m === 'GET' && !isset($s[1])) {
-            $devices = [];
-            foreach (Db::all('SELECT tool_key_id, name FROM devices ORDER BY name') as $d) {
-                $devices[(int) $d['tool_key_id']][] = $d['name'];
-            }
-            $currencies = [];
-            foreach (Pools::all() as $p) {
-                $currencies = array_merge($currencies, $p['cfg']['currencies']);
-            }
             view('wallets', ['user' => $user, 'nav' => 'wallets', 'title' => 'Ví & tài khoản Apple', 'wallets' => Wallets::all(),
-                             'toolKeys' => Db::all("SELECT id, name FROM api_keys WHERE kind='tool' ORDER BY name"), 'devices' => $devices,
-                             'currencies' => array_values(array_unique($currencies))]);
+                             'machines' => Wallets::machines(), 'pools' => array_column(Pools::all(), null, 'code'), 'pick' => (string) (Req::q('machine') ?? '')]);
         }
         Res::notFound();
     }

@@ -755,14 +755,51 @@ ok($wl['code'] === 200 && str_contains($wl['text'], 'Thêm ví cho một máy') 
     'trang «Ví & tài khoản Apple» hiển thị, có trong menu', $wl['code']);
 ok(http('GET', '/admin/wallets')['code'] === 302, '/admin/wallets chưa đăng nhập → chuyển về trang đăng nhập');
 $kidT = (int) $tool['id'];
+Devices::touch($kidT, 'Vi-01', 'wallet-pool', 'free', null);          // máy tool đã báo, thuộc pool ví (như sau khi máy nhận đơn của pool)
 $noCsrf = http('POST', '/admin/wallets/create', null, http_build_query(['tool_key_id' => $kidT, 'device' => 'Vi-01', 'apple_account' => 'x@example.com', 'currency' => 'JPY']),
     array_merge($ah, ['Content-Type: application/x-www-form-urlencoded']));
 ok($noCsrf['code'] === 419 && (int) Db::val('SELECT COUNT(*) FROM wallets') === 0, 'thêm ví không có mã CSRF → 419, không ghi gì');
-$bad = $post('/admin/wallets/create', ['tool_key_id' => $kidT, 'device' => 'Vi-01', 'apple_account' => 'apple01@example.com', 'currency' => 'JP', 'balance' => '1000']);
-$bad2 = $post('/admin/wallets/create', ['tool_key_id' => (int) $shop['id'], 'device' => 'Vi-01', 'apple_account' => 'apple01@example.com', 'currency' => 'JPY']);
+$bad = $post('/admin/wallets/create', ['machine' => $kidT . '|Vi-01', 'apple_account' => 'apple01@example.com', 'currency' => 'JP', 'balance' => '1000']);
+$bad2 = $post('/admin/wallets/create', ['machine' => (int) $shop['id'] . '|Vi-01', 'apple_account' => 'apple01@example.com', 'currency' => 'JPY']);
 ok($bad['code'] === 302 && $bad2['code'] === 302 && (int) Db::val('SELECT COUNT(*) FROM wallets') === 0
     && str_contains(http('GET', '/admin/wallets', null, null, $ah)['text'], 'Loại tiền phải là mã ISO'), 'loại tiền sai / khoá không phải khoá Tool → báo lỗi, không tạo ví');
-$c1 = $post('/admin/wallets/create', ['tool_key_id' => $kidT, 'device' => 'Vi-01', 'apple_account' => 'apple01@example.com', 'currency' => 'jpy', 'balance' => '20.000', 'note' => 'vùng Nhật']);
+Devices::touch($kidT, 'Vi-khong-pool', null, 'free', null);
+Pools::save(null, 'pool-chua-gia', 'Pool chưa giá', 'Game', true, Pools::defaults());
+Devices::touch($kidT, 'Vi-chua-gia', 'pool-chua-gia', 'free', null);
+$wform = http('GET', '/admin/wallets', null, null, $ah)['text'];
+$bad3 = $post('/admin/wallets/create', ['machine' => $kidT . '|May-Go-Nham', 'apple_account' => 'apple01@example.com', 'currency' => 'JPY']);
+$bad4 = $post('/admin/wallets/create', ['machine' => $kidT . '|Vi-khong-pool', 'apple_account' => 'apple01@example.com', 'currency' => 'JPY']);
+$bad5 = $post('/admin/wallets/create', ['machine' => $kidT . '|Vi-chua-gia', 'apple_account' => 'apple01@example.com', 'currency' => 'JPY']);
+$bad6 = $post('/admin/wallets/create', ['machine' => $kidT . '|Vi-01', 'apple_account' => 'apple01@example.com', 'currency' => 'USD']);
+ok(str_contains($wform, 'name="machine"') && str_contains($wform, 'Pool Pool ví') && str_contains($wform, 'value="' . $kidT . '|Vi-01" data-cur="JPY,CHF"')
+    && !str_contains($wform, 'value="' . $kidT . '|Vi-khong-pool"') && !str_contains($wform, 'value="' . $kidT . '|Vi-chua-gia"')
+    && str_contains($wform, 'chưa có <b>loại tiền + giá gói</b>') && !str_contains($wform, 'name="device"'),
+    'form thêm ví: CHỌN máy từ danh sách máy của pool (gom theo pool, loại tiền theo pool của máy), không gõ tên máy; máy chưa thuộc pool / pool chưa khai giá không chọn được, có lời nhắc');
+// máy thuộc pool qua kịch bản NHẬN ĐƠN tool khai (sync) — đường chính; máy chạy kịch bản của 2 pool chỉ được loại tiền CHUNG;
+// pool khai loại tiền mà chưa nhập giá gói nào thì loại tiền đó không dùng được
+$wcB = $wc; $wcB['currencies'] = ['USD', 'JPY', 'EUR'];
+Pools::savePackages(Pools::save(null, 'pool-usd', 'Pool USD', 'Game', true, $wcB), [['code' => 'u1', 'name' => 'Gói USD', 'limit_type' => 'multi', 'active' => true,
+    'prices' => ['USD' => ['amount' => '9.99', 'display' => '$9.99'], 'JPY' => ['amount' => '1500', 'display' => '']]]]);
+foreach ([['s-a', 'wallet-pool'], ['s-b', 'pool-usd']] as [$suid, $spool]) {
+    Db::insert('tool_scripts', ['tool_key_id' => $kidT, 'uid' => 'g:' . $suid, 'group_name' => 'G', 'name' => $suid, 'run_mode' => 'orders', 'pool_code' => $spool,
+        'loops' => 1, 'step_count' => 1, 'vars' => '[]', 'outline' => '[]', 'first_seen_at' => time(), 'updated_at' => time()]);
+}
+Devices::touch($kidT, 'Vi-sync', 'pool-chua-gia', 'free', null);                 // pool của đơn cũ — tool đã khai kịch bản khác nên không tính
+Db::run("UPDATE devices SET scripts=?, synced_at=? WHERE tool_key_id=? AND name='Vi-sync'", [jenc(['g:s-b']), time(), $kidT]);
+Devices::touch($kidT, 'Vi-2pool', null, 'free', null);
+Db::run("UPDATE devices SET scripts=?, synced_at=? WHERE tool_key_id=? AND name='Vi-2pool'", [jenc(['g:s-a', 'g:s-b']), time(), $kidT]);
+$mm = array_column(Wallets::machines(), null, 'name');
+ok(($mm['Vi-sync']['pools'] ?? null) === ['pool-usd'] && ($mm['Vi-sync']['currencies'] ?? null) === ['USD', 'JPY'],
+    'máy thuộc pool theo kịch bản nhận đơn tool khai (pool của đơn cũ không tính); loại tiền đã khai nhưng chưa có giá gói (EUR) không dùng được', $mm['Vi-sync'] ?? null);
+ok(($mm['Vi-2pool']['pools'] ?? null) === ['wallet-pool', 'pool-usd'] && ($mm['Vi-2pool']['currencies'] ?? null) === ['JPY'],
+    'máy chạy kịch bản của 2 pool → chỉ chọn được loại tiền CẢ HAI pool đều có giá (JPY), không phải USD / CHF', $mm['Vi-2pool'] ?? null);
+$bad7 = $post('/admin/wallets/create', ['machine' => $kidT . '|Vi-2pool', 'apple_account' => 'apple01@example.com', 'currency' => 'USD']);
+$bad8 = $post('/admin/wallets/create', ['machine' => $kidT . '|Vi-sync', 'apple_account' => 'apple01@example.com', 'currency' => 'EUR']);
+ok($bad7['code'] === 302 && str_contains($bad7['head'], 'machine=') && $bad8['code'] === 302 && (int) Db::val('SELECT COUNT(*) FROM wallets') === 0,
+    'gắn ví USD cho máy 2 pool / ví EUR (chưa có giá) → từ chối; quay lại form vẫn giữ máy đang chọn');
+ok((int) Db::val('SELECT COUNT(*) FROM wallets') === 0 && $bad3['code'] === 302 && $bad4['code'] === 302 && $bad5['code'] === 302 && $bad6['code'] === 302,
+    'gắn ví vào máy không có thật / chưa thuộc pool / pool chưa khai giá / loại tiền pool không bán → từ chối, không tạo ví');
+$c1 = $post('/admin/wallets/create', ['machine' => $kidT . '|Vi-01', 'apple_account' => 'apple01@example.com', 'currency' => 'jpy', 'balance' => '20.000', 'note' => 'vùng Nhật']);
 preg_match('#Location: /admin/wallets/(\d+)#', $c1['head'], $wm);
 $W1 = (int) ($wm[1] ?? 0);
 $w1 = Wallets::find($W1);
@@ -770,7 +807,7 @@ $e1 = Wallets::entries($W1, 10, 0);
 ok($c1['code'] === 302 && $w1 && $w1['currency'] === 'JPY' && (int) $w1['balance'] === 2000000 && (int) $w1['active'] === 1 && $w1['device'] === 'Vi-01'
     && count($e1) === 1 && $e1[0]['kind'] === 'topup' && (int) $e1[0]['amount'] === 2000000 && (int) $e1[0]['balance_after'] === 2000000 && $e1[0]['note'] === 'Số dư ban đầu' && $e1[0]['actor'] === 'admin:chu',
     'thêm ví (khoá Tool + máy + tài khoản Apple + loại tiền + số dư ban đầu) → ghi sổ cái «Số dư ban đầu»', [$w1, $e1]);
-$c2 = $post('/admin/wallets/create', ['tool_key_id' => $kidT, 'device' => 'Vi-01', 'apple_account' => 'apple02@example.com', 'currency' => 'CHF', 'balance' => '']);
+$c2 = $post('/admin/wallets/create', ['machine' => $kidT . '|Vi-01', 'apple_account' => 'apple02@example.com', 'currency' => 'CHF', 'balance' => '']);
 preg_match('#Location: /admin/wallets/(\d+)#', $c2['head'], $wm2);
 $W2 = (int) ($wm2[1] ?? 0);
 $act = static fn (): array => array_map('intval', array_column(Db::all("SELECT id FROM wallets WHERE tool_key_id=? AND device='Vi-01' AND active=1", [$kidT]), 'id'));
@@ -1117,7 +1154,8 @@ $st((int) $T1['id'], ['to' => 'done']);
 ok(Jobs::byId((int) $T1['id'])['status'] === 'done', 'chờ đối soát → hoàn tất (như nút chốt)');
 
 // ---- tiền ví khi đổi trạng thái ----
-$post('/admin/wallets/create', ['tool_key_id' => $kidT, 'device' => 'Adm-W', 'apple_account' => 'adm@example.com', 'currency' => 'JPY', 'balance' => '100000']);
+Devices::touch($kidT, 'Adm-W', 'admin-pool', 'free', null);
+$post('/admin/wallets/create', ['machine' => $kidT . '|Adm-W', 'apple_account' => 'adm@example.com', 'currency' => 'JPY', 'balance' => '100000']);
 $AW = (int) Db::val("SELECT id FROM wallets WHERE device='Adm-W' AND active=1");
 $bal = static fn (): int => (int) Wallets::find($AW)['balance'];
 $mkA = static fn (string $ref, int $qty): string => (string) (http('POST', '/api/shop/jobs', $SK, ['pool' => 'admin-pool', 'ref' => $ref, 'login' => ['username' => strtolower($ref) . '@example.com', 'password' => 'x'],

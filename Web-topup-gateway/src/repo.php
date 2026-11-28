@@ -1207,6 +1207,61 @@ final class Wallets
         return $out;
     }
 
+    /**
+     * Các máy gateway đang biết (tool đã báo qua sync / máy đã từng nhận đơn), kèm POOL của máy và các loại tiền dùng được:
+     * máy thuộc pool khi tool khai máy chạy kịch bản NHẬN ĐƠN của pool đó, hoặc máy đã nhận đơn của pool đó.
+     * @return list<array{value: string, key_id: int, key_name: string, name: string, pools: list<string>, currencies: list<string>, state: string, wallet: ?string}>
+     */
+    public static function machines(): array
+    {
+        // loại tiền DÙNG ĐƯỢC của pool = có trong danh sách loại tiền của pool VÀ có ít nhất một gói đang bán đã nhập giá loại tiền đó
+        // (chỉ khai loại tiền mà chưa nhập giá thì máy có ví loại đó không nhận được đơn nào)
+        $poolCur = [];
+        foreach (Pools::all() as $p) {
+            $priced = self::enabled() ? array_column(Db::all('SELECT DISTINCT pp.currency FROM package_prices pp JOIN packages k ON k.id=pp.package_id WHERE k.pool_id=? AND k.active=1',
+                [$p['id']]), 'currency') : [];
+            $poolCur[$p['code']] = array_values(array_intersect($p['cfg']['currencies'], $priced));
+        }
+        $scriptPool = [];
+        if (Schema::version() >= 4) {
+            foreach (Db::all("SELECT tool_key_id, uid, pool_code FROM tool_scripts WHERE run_mode='orders' AND pool_code IS NOT NULL AND pool_code<>''") as $r) {
+                $scriptPool[$r['tool_key_id'] . '|' . $r['uid']] = (string) $r['pool_code'];
+            }
+        }
+        $wallet = [];
+        foreach (self::enabled() ? Db::all('SELECT tool_key_id, device, currency, apple_account FROM wallets WHERE active=1') : [] as $w) {
+            $wallet[$w['tool_key_id'] . '|' . $w['device']] = self::mask((string) $w['apple_account']) . ' · ' . $w['currency'];
+        }
+        $out = [];
+        foreach (Db::all("SELECT d.*, k.name AS key_name FROM devices d JOIN api_keys k ON k.id=d.tool_key_id AND k.kind='tool' AND k.active=1 ORDER BY k.name, k.id, d.name") as $d) {
+            if (($d['status'] ?? '') === 'removed') {
+                continue;
+            }
+            // pool của máy: theo kịch bản NHẬN ĐƠN tool khai cho máy (đúng lúc này); tool chưa từng khai kịch bản cho máy thì mới dựa vào
+            // pool của đơn máy nhận gần nhất (máy đã chuyển sang kịch bản pool khác thì pool cũ không còn tính)
+            $pools = [];
+            foreach (jdec($d['scripts'] ?? null) as $uid) {
+                $pc = $scriptPool[$d['tool_key_id'] . '|' . $uid] ?? null;
+                if ($pc !== null && isset($poolCur[$pc]) && !in_array($pc, $pools, true)) {
+                    $pools[] = $pc;
+                }
+            }
+            if (!$pools && ($d['synced_at'] ?? null) === null && (string) ($d['pool_code'] ?? '') !== '' && isset($poolCur[$d['pool_code']])) {
+                $pools[] = (string) $d['pool_code'];
+            }
+            // máy chạy kịch bản của NHIỀU pool: chỉ loại tiền mà MỌI pool đều bán (không thì đơn của pool kia luôn «chưa có giá»)
+            $cur = null;
+            foreach ($pools as $pc) {
+                $cur = $cur === null ? $poolCur[$pc] : array_values(array_intersect($cur, $poolCur[$pc]));
+            }
+            $cur ??= [];
+            $v = $d['tool_key_id'] . '|' . $d['name'];
+            $out[] = ['value' => $v, 'key_id' => (int) $d['tool_key_id'], 'key_name' => (string) $d['key_name'], 'name' => (string) $d['name'],
+                      'pools' => $pools, 'currencies' => $cur, 'state' => Tools::state($d)[1], 'wallet' => $wallet[$v] ?? null];
+        }
+        return $out;
+    }
+
     /** @return int|string id ví mới, hoặc câu lỗi */
     public static function create(int $keyId, string $device, string $account, string $currency, int $initial, string $note, string $actor): int|string
     {
@@ -1216,7 +1271,24 @@ final class Wallets
         }
         $device = clean($device, 80);
         if ($device === '') {
-            return 'Chưa nhập tên máy (đúng tên máy trong tool).';
+            return 'Chưa chọn máy.';
+        }
+        // ví gắn vào một máy CÓ THẬT trong pool: máy tool đã báo, đang chạy kịch bản nhận đơn của pool có khai loại tiền
+        $m = null;
+        foreach (self::machines() as $x) {
+            if ($x['key_id'] === $keyId && $x['name'] === $device) {
+                $m = $x;
+            }
+        }
+        if ($m === null) {
+            return 'Không có máy «' . $device . '» trong danh sách máy của tool — mở tool (máy phải hiện ở trang «Kịch bản & máy») rồi chọn lại.';
+        }
+        if (!$m['pools']) {
+            return 'Máy «' . $device . '» chưa thuộc pool nào — trong tool, cho máy chạy một kịch bản NHẬN ĐƠN của pool rồi mới gắn ví.';
+        }
+        if (!$m['currencies']) {
+            return 'Pool «' . implode(', ', $m['pools']) . '» của máy chưa có loại tiền nào đã nhập giá gói' . (count($m['pools']) > 1 ? ' (chung cho mọi pool của máy)' : '')
+                . ' — vào trang Pool thêm loại tiền và giá từng gói trước (không thì máy có ví sẽ không nhận được đơn nào).';
         }
         $account = clean($account, 160);
         if ($account === '') {
@@ -1225,6 +1297,9 @@ final class Wallets
         $cur = Money::currency($currency);
         if ($cur === null) {
             return 'Loại tiền phải là mã ISO 3 chữ cái (vd JPY, CHF, USD).';
+        }
+        if (!in_array($cur, $m['currencies'], true)) {
+            return 'Pool của máy không bán bằng ' . $cur . ' — chọn một trong: ' . implode(', ', $m['currencies']) . '.';
         }
         if ($initial < 0) {
             return 'Số dư ban đầu không được âm.';
