@@ -19,12 +19,12 @@ import hashlib, json, re, threading, time
 
 from gateway import GatewayError
 
-PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")     # cùng dạng với apimode.PLACEHOLDER
+PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")     # cùng dạng với stepexec.PLACEHOLDER
 VAR_OK = re.compile(r"^[A-Za-z][A-Za-z0-9_.]{0,59}$")
 ID_OK = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
 STEP_TYPE_OK = re.compile(r"^[a-z][a-z_]{0,19}$")
 MAX_OUTLINE = 80
-ORDER_PHASES = ("login", "otp", "nav", "purchase", "after", "finish")      # giai đoạn của một đơn (cùng thứ tự với apimode.PHASES)
+ORDER_PHASES = ("login", "otp", "nav", "purchase", "after", "finish")      # giai đoạn của một đơn (cùng thứ tự với jobflow.PHASES)
 MAX_DEVICES, MAX_SCRIPTS = 200, 300      # trần của gateway cho một khoá Tool
 MAX_CATALOG_BYTES = 600_000              # danh mục lớn hơn chừng này thì bỏ dàn ý (gateway chỉ nhận thân tối đa 1 MB)
 MAX_BODY_BYTES = 950_000

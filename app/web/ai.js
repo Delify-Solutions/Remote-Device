@@ -1,5 +1,5 @@
 // ai.js — trang «Kết nối AI»: cầu nối MCP cho AI + dòng lệnh `farm`.
-// Dùng chung các hàm của app.js: $, $$, esc, API, toast, busy, copyText.
+// Dùng chung các hàm của core.js: $, $$, esc, API, toast, busy, copyText.
 
 let AI_INFO = null;
 

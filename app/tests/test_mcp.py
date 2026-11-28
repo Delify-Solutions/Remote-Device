@@ -20,12 +20,12 @@ sys.path.insert(0, HERE)
 import cv2
 import numpy as np
 
-import apimode, cli, control, mcpserver
+import cli, control, mcpserver
 from mcpserver import McpServer, Remote, Result, Tool, ToolError, serve_http, serve_stdio
 import test_api_mode as T
 
 REAL_SLEEP = time.sleep
-time.sleep = lambda s: None              # bỏ các quãng nghỉ dành cho máy thật (apimode/control dùng chung mô-đun time)
+time.sleep = lambda s: None              # bỏ các quãng nghỉ dành cho máy thật (stepexec / jobflow / control dùng chung mô-đun time)
 
 PASS = FAIL = 0
 def ok(cond, name, ctx=None):

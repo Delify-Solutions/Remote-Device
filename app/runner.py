@@ -27,8 +27,8 @@ from collections import deque
 
 import engine
 import store
-import apimode
-from apimode import Outcome
+import jobflow, stepexec
+from jobflow import Outcome
 from gateway import GatewayError, call_retry
 
 RESULT_LABEL = {"done": "HOÀN TẤT", "failed": "THẤT BẠI (chưa nạp)", "review": "CHỜ ĐỐI SOÁT"}
@@ -37,7 +37,7 @@ RESULT_LABEL = {"done": "HOÀN TẤT", "failed": "THẤT BẠI (chưa nạp)", "
 
 def steps_sig(steps):
     """«Dấu» của danh sách bước (loại + chữ / phím / app của từng bước, băm FNV-1a 32 bit trên các đơn vị UTF-16) — giao diện tính
-    đúng như vậy (stepsSig trong web/app.js) để biết kịch bản có bị sửa khác đi kể từ lượt chạy không. Băm để chữ của bước không đi
+    đúng như vậy (stepsSig trong web/groups.js) để biết kịch bản có bị sửa khác đi kể từ lượt chạy không. Băm để chữ của bước không đi
     ra ngoài qua trạng thái chạy."""
     s = "\n".join("%s\x1f%s" % (st.get("type"), st.get("text") or st.get("name") or st.get("app") or st.get("keys") or "")
                   for st in steps if isinstance(st, dict))
@@ -63,7 +63,7 @@ class Runner:
     def __init__(self, session_getter, gateway_factory=None, journal=None, on_log=None):
         self._session = session_getter          # name -> Nav
         self._gateway = gateway_factory         # () -> Gateway (ném GatewayError nếu chưa cấu hình)
-        self.journal = journal                  # apimode.Journal
+        self.journal = journal                  # jobflow.Journal
         self.on_log = on_log                    # (entry dict) -> None
         self.lock = threading.Lock()
         self.workers = {}                       # name -> dict
@@ -97,7 +97,7 @@ class Runner:
     SCREEN_ALERT_JPEG = 70
 
     def _screen_helper(self, name, w):
-        """Bộ xử lý MÀN HÌNH LẠ của một lần chạy (apimode.screen_gate gọi khi màn hình vẫn khác ảnh mẫu của bước sau khi đã chờ):
+        """Bộ xử lý MÀN HÌNH LẠ của một lần chạy (stepexec.screen_gate gọi khi màn hình vẫn khác ảnh mẫu của bước sau khi đã chờ):
         TẠM DỪNG MÁY ngay tại bước đó, báo admin (Telegram, kèm ảnh màn hình trừ lúc đang làm đơn của khách), chờ admin xử lý tay rồi bấm
         «Tiếp tục» → làm tiếp bước (admin đã xác nhận). Bấm Dừng → bước không làm; «Dừng ngay» giữa đơn → Aborted như mọi lần dừng ngay."""
         def helper(step, why, img):
@@ -154,26 +154,26 @@ class Runner:
                 return False, None, "không đọc được màn hình (%s)" % e
 
         def tap(x, y, verify=None):
-            ok, twhy, _ = apimode._tap(nav, x, y, verify=verify)
+            ok, twhy, _ = stepexec._tap(nav, x, y, verify=verify)
             return ok, twhy
         w_status = w.get("status")
-        w["status"] = "Màn hình lạ ở bước «%s» — đang hỏi AI" % apimode.observed_what(step, {})
-        self._log(name, "Màn hình lạ ở bước «%s»: %s — hỏi AI (%s)" % (apimode.observed_what(step, {}), why, cfg["model"]), "warn")
+        w["status"] = "Màn hình lạ ở bước «%s» — đang hỏi AI" % stepexec.observed_what(step, {})
+        self._log(name, "Màn hình lạ ở bước «%s»: %s — hỏi AI (%s)" % (stepexec.observed_what(step, {}), why, cfg["model"]), "warn")
         try:
             ok, ai_why = aiscreen.handle(nav, step, why, img, cfg, matches, tap, say=lambda t, k="": self._log(name, t, k),
-                                         sleep=lambda sec: apimode._sleep(sec, aborted), cancel=cancel)
+                                         sleep=lambda sec: stepexec._sleep(sec, aborted), cancel=cancel)
         finally:
             w["status"] = w_status
         if ok:
-            self._log(name, "AI đã xử lý màn hình lạ — làm tiếp bước «%s»" % apimode.observed_what(step, {}), "ok")
+            self._log(name, "AI đã xử lý màn hình lạ — làm tiếp bước «%s»" % stepexec.observed_what(step, {}), "ok")
             return True, ""
         return False, ai_why, latest["img"]
 
     def _admin_pause(self, name, w, step, why, img=None):
-        what = apimode.observed_what(step, {})
+        what = stepexec.observed_what(step, {})
         stop, abort = w["stop"], w.get("abort")
         if abort is not None and abort.is_set():
-            raise apimode.Aborted()
+            raise stepexec.Aborted()
         if stop.is_set():                                # đã bấm Dừng: không tạm dừng / không báo «chờ admin» nữa — bước không làm, dừng
             return False, "đã dừng theo yêu cầu — %s" % why
         # Người vận hành đã bấm «Tạm dừng» TỪ TRƯỚC (máy nhận đơn: làm nốt đơn này, không nhận đơn mới): nhớ lại để «Tiếp tục» của lần
@@ -202,7 +202,7 @@ class Runner:
             stop.wait(0.25)
         w["paused"] = False
         if abort is not None and abort.is_set():
-            raise apimode.Aborted()
+            raise stepexec.Aborted()
         if stop.is_set():
             return False, "đã dừng theo yêu cầu (máy đang chờ admin xử lý màn hình lạ)"
         if asked_before:
@@ -581,7 +581,7 @@ class Runner:
                     p["next"] = i + 1
                 else:
                     p["bad"] = i
-                    p["msg"] = apimode.observed_why(st, msg)      # lời đã che (không lộ chữ gõ / biến bí mật)
+                    p["msg"] = stepexec.observed_why(st, msg)      # lời đã che (không lộ chữ gõ / biến bí mật)
             w["prog"] = p
 
         def gate():
@@ -616,15 +616,15 @@ class Runner:
                     st = steps[bad["i"]]
                     last = mode == "once" or (mode == "loop" and loops > 0 and count >= loops)
                     self._alert(name, "link" if notify.link_trouble(bad.get("msg")) else "failed",
-                                "%s (%s)" % (apimode.observed_why(st, bad.get("msg")),
+                                "%s (%s)" % (stepexec.observed_why(st, bad.get("msg")),
                                              "kịch bản dừng ở bước này" if last else "vòng %d dừng ở bước này, máy chạy tiếp vòng sau" % count), w,
-                                step="%d/%d · %s" % (bad["i"] + 1, len(steps), apimode.observed_what(st, {})))
+                                step="%d/%d · %s" % (bad["i"] + 1, len(steps), stepexec.observed_what(st, {})))
             except Exception as e:
                 w["last_ok"] = False
                 w["last_msg"] = str(e)
                 p = dict(w.get("prog") or {})
                 if p.get("at") is not None:                     # lỗi giữa một bước → bước đó là bước lỗi (chạy tiếp thì làm lại bước đó)
-                    p["bad"], p["msg"] = p["at"], apimode.observed_why(steps[p["at"]], ("lỗi khi chạy bước — %s" % e)[:300])
+                    p["bad"], p["msg"] = p["at"], stepexec.observed_why(steps[p["at"]], ("lỗi khi chạy bước — %s" % e)[:300])
                 w["prog"] = p
                 if not stop.is_set():
                     self._alert(name, "failed", "lỗi khi chạy kịch bản — %s" % e, w)
@@ -646,7 +646,7 @@ class Runner:
         (trước đây giai đoạn trống thì máy chạy bước của gateway; giờ bước chỉ soạn ở tool). Ghi vào kịch bản đã lưu lẫn cấu hình của lần
         chạy này, rồi đánh dấu đã chép — không bao giờ chép lại. Trả None, hoặc LỜI BÁO khi không chép được (bước đời cũ sai dạng ở giai
         đoạn kịch bản đang trống) — khi đó máy không được chạy thiếu giai đoạn."""
-        legacy, bad = apimode.legacy_gateway_steps(pool)
+        legacy, bad = jobflow.legacy_gateway_steps(pool)
         res = None
         try:
             res = store.adopt_gateway_steps(w.get("group_id"), w.get("script_id"), legacy, bad)
@@ -660,7 +660,7 @@ class Runner:
             return None
         blocked = res["blocked"] if res else {ph: msg for ph, msg in bad.items() if not api["steps"][ph]}
         if blocked:
-            return apimode.legacy_blocked_text(blocked)
+            return jobflow.legacy_blocked_text(blocked)
         copied = {}
         for ph, steps in legacy.items():
             if not api["steps"][ph]:
@@ -669,7 +669,7 @@ class Runner:
         api["gw_steps_copied"] = True
         if copied:
             say("Đã chép %d bước cũ từ gateway vào kịch bản (%s) — từ giờ sửa bước ngay trong kịch bản này"
-                % (sum(copied.values()), ", ".join("%s: %d" % (apimode.PHASE_LABEL[p], n) for p, n in copied.items())))
+                % (sum(copied.values()), ", ".join("%s: %d" % (jobflow.PHASE_LABEL[p], n) for p, n in copied.items())))
         return None
 
     def _run_api(self, name, plan, w):
@@ -763,15 +763,15 @@ class Runner:
                     stuck = self._adopt_gateway_steps(w, api, pool, say)
                     if stuck:
                         return halt(stuck)
-                steps = apimode.order_steps(api["steps"])
-                missing = apimode.validate(pool, steps)
+                steps = jobflow.order_steps(api["steps"])
+                missing = jobflow.validate(pool, steps)
                 if missing:
                     return halt("chưa đủ cấu hình để máy tự chạy đơn của pool «%s»: %s — luật thì thêm ở trang quản trị gateway (Pool), "
                                 "bước thì thêm trong kịch bản nhận đơn ở tool" % (pool_code, "; ".join(missing)))
 
             # --- máy có sẵn sàng không? (không nhận đơn khi máy đang hỏng) ---
             try:
-                problem = apimode.preflight(nav)
+                problem = jobflow.preflight(nav)
             except Exception as e:
                 problem = str(e)
             if problem:
@@ -821,7 +821,7 @@ class Runner:
                 status("Kiểm tra game đã đăng xuất chưa…")
                 try:
                     state = self._ensure_logged_out(nav, steps, pool, api["login_wait"], say, abort.is_set)
-                except apimode.Aborted:
+                except stepexec.Aborted:
                     break
                 except Exception as e:
                     probe_errors += 1
@@ -864,7 +864,7 @@ class Runner:
             import wallets
             # bước mua cần {{apple.*}} (gõ mật khẩu Apple ID vào bảng mua) mà ví của máy chưa lưu → KHÔNG xin đơn (nhận đơn rồi mới thấy
             # thiếu thì đơn của khách hỏng); báo admin một lần
-            need = sorted({k for k in apimode.PLACEHOLDER.findall(json.dumps((steps.get("purchase") or []) + (steps.get("after") or []), ensure_ascii=False))
+            need = sorted({k for k in stepexec.PLACEHOLDER.findall(json.dumps((steps.get("purchase") or []) + (steps.get("after") or []), ensure_ascii=False))
                            if k.startswith("apple.")})
             have = wallets.apple(name) if need else {}
             miss = [k for k in need if not have.get(k.split(".", 1)[1])]
@@ -955,19 +955,19 @@ class Runner:
         Mở game → đọc màn hình. Nếu còn đăng nhập (hoặc không nhận ra màn hình) thì chạy các bước
         «Kết thúc đơn» (đăng xuất) rồi kiểm lần nữa."""
         rules = pool.get("rules") or []
-        state = apimode.session_probe(nav, steps, rules, wait, abort)
+        state = jobflow.session_probe(nav, steps, rules, wait, abort)
         if state == "out":
             return state
         say("Game %s → chạy các bước kết thúc đơn (đăng xuất) rồi kiểm lại"
             % ("còn đang đăng nhập một tài khoản" if state == "in" else "đang ở màn hình lạ"))
         try:
-            apimode.watch_phase(nav, apimode.PHASE_LABEL["finish"], len(steps.get("finish") or []))
-            apimode.run_steps(nav, steps.get("finish") or [], {}, abort)
-        except apimode.Aborted:
+            stepexec.watch_phase(nav, jobflow.PHASE_LABEL["finish"], len(steps.get("finish") or []))
+            stepexec.run_steps(nav, steps.get("finish") or [], {}, abort)
+        except stepexec.Aborted:
             raise
         except Exception as e:
             say("Bước kết thúc đơn lỗi: %s" % e, "bad")
-        return apimode.session_probe(nav, steps, rules, wait, abort)
+        return jobflow.session_probe(nav, steps, rules, wait, abort)
 
     def _finish(self, nav, steps, say, status=None, strict=True):
         """Chạy các bước kết thúc đơn (đăng xuất…).
@@ -981,8 +981,8 @@ class Runner:
         if status:
             status("Đang kết thúc đơn (đăng xuất)")
         try:
-            apimode.watch_phase(nav, apimode.PHASE_LABEL["finish"], len(fin))
-            ok, why, idx, _ = apimode.run_steps(nav, fin, {})
+            stepexec.watch_phase(nav, jobflow.PHASE_LABEL["finish"], len(fin))
+            ok, why, idx, _ = stepexec.run_steps(nav, fin, {})
         except Exception as e:
             ok, why = False, str(e)
         if ok:
@@ -991,7 +991,7 @@ class Runner:
             say("Bước kết thúc đơn lỗi: %s" % why, "bad")
             return False
         try:
-            apimode.hid(nav, "combo gui h")         # chưa đăng nhập gì → chỉ cần về màn hình chính
+            stepexec.hid(nav, "combo gui h")         # chưa đăng nhập gì → chỉ cần về màn hình chính
         except Exception:
             pass
         return True
@@ -1060,7 +1060,7 @@ class Runner:
                 j.set(name, phase="purchasing")
 
         import wallets
-        flow = apimode.JobFlow(nav, gw, job, pool, steps, opts=opts,
+        flow = jobflow.JobFlow(nav, gw, job, pool, steps, opts=opts,
                                status=lambda t: status("%s · %s" % (ref, t)), log=say,
                                abort=abort.is_set, on_purchase_start=on_buy,
                                apple=wallets.apple(name))         # {{apple.account}} / {{apple.password}} cho bảng mua của App Store

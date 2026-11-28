@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Kiểm ẢNH MẪU + KIỂM MÀN HÌNH TRƯỚC MỖI BƯỚC (screencheck.py, apimode.screen_gate, engine.run_flow, runner._admin_pause):
+Kiểm ẢNH MẪU + KIỂM MÀN HÌNH TRƯỚC MỖI BƯỚC (screencheck.py, stepexec.screen_gate, engine.run_flow, runner._admin_pause):
   • ảnh mẫu: chữ chuẩn hoá (bỏ dấu, số → 9), bỏ dòng quá ngắn / toàn số / email / mã người chơi; hai lần đọc chỉ giữ chữ chung;
   • so khớp: theo chữ (đủ dòng) hoặc theo hình (ít chữ); khác chiều ảnh → khác;
   • trước bước thao tác có ảnh mẫu: khớp → làm; khác (sau khi chờ) → KHÔNG làm bước; có bộ xử lý (lúc chạy thật) → giao cho nó;
@@ -18,7 +18,7 @@ os.environ["IPF_NO_TELEGRAM"] = "1"
 import cv2
 import numpy as np
 import screencheck as sc
-import apimode, engine
+import jobflow, stepexec, engine
 
 PASS = FAIL = 0
 
@@ -108,26 +108,26 @@ def main():
     ok(not sc.score(ad, img, ["Ad", "Install", "120"])["ok"], "con số lẻ trên màn quảng cáo («120») không «khớp» mọi dòng mẫu có số")
     ok(sc.ref_texts(["Name: Hoang Anh", "Ten: Duong", "090 123 4567", "Gift Box"]) == ["gift box"], "bỏ dòng tên / số điện thoại viết cách")
 
-    print("== 3. Kiểm trước bước (apimode.screen_gate / run_steps) ==")
-    apimode.SCREEN_WAIT = 0.6
-    real_sleep = apimode._sleep
-    apimode._sleep = lambda sec, abort=None: (abort and abort() and (_ for _ in ()).throw(apimode.Aborted())) or time.sleep(min(sec, 0.05))
+    print("== 3. Kiểm trước bước (stepexec.screen_gate / run_steps) ==")
+    stepexec.SCREEN_WAIT = 0.6
+    real_sleep = stepexec._sleep
+    stepexec._sleep = lambda sec, abort=None: (abort and abort() and (_ for _ in ()).throw(stepexec.Aborted())) or time.sleep(min(sec, 0.05))
     step = {"type": "key", "name": "enter", "screen": ref}
     nav = Nav([(img, MAIN)])
-    ok(apimode.screen_gate(nav, step) == (True, ""), "khớp ngay → làm bước")
+    ok(stepexec.screen_gate(nav, step) == (True, ""), "khớp ngay → làm bước")
     nav = Nav([(img, SHOP), (img, SHOP), (img, MAIN)])
-    ok(apimode.screen_gate(nav, step) == (True, ""), "lúc đầu khác (đang chuyển màn), khớp trong lúc chờ → làm bước")
+    ok(stepexec.screen_gate(nav, step) == (True, ""), "lúc đầu khác (đang chuyển màn), khớp trong lúc chờ → làm bước")
     nav = Nav([(img, SHOP)])
-    r = apimode.screen_gate(nav, step)
+    r = stepexec.screen_gate(nav, step)
     ok(r[0] is False and "khác ảnh mẫu" in r[1], "khác mãi, không có bộ xử lý (chạy thử / AI điều khiển) → không làm, nêu lý do", r)
     got = []
     nav = Nav([(img, SHOP)])
     nav.screen_helper = lambda st, why, im: got.append((st, why, im)) or (True, "")
-    ok(apimode.screen_gate(nav, step) == (True, "") and got and got[0][0] is step and got[0][2] is not None, "khác mãi, có bộ xử lý (chạy thật) → giao cho nó")
+    ok(stepexec.screen_gate(nav, step) == (True, "") and got and got[0][0] is step and got[0][2] is not None, "khác mãi, có bộ xử lý (chạy thật) → giao cho nó")
     got.clear()
     nav = Nav([(img, SHOP)])
     nav.screen_helper = lambda st, why, im: got.append(st) or (True, "")
-    r = apimode.screen_gate(nav, dict(step, optional=True))
+    r = stepexec.screen_gate(nav, dict(step, optional=True))
     ok(r[0] is False and not got, "bước «bỏ qua nếu lỗi» màn hình khác (lúc chạy thật) → bỏ qua, KHÔNG tạm dừng máy", (r, got))
 
     class Flaky(Eyes):
@@ -141,75 +141,75 @@ def main():
                 raise RuntimeError("usbmux lỗi")
             return super().screenshot()
     nav = Nav([(img, MAIN)]); nav.e = Flaky([(img, MAIN)], 2)
-    ok(apimode.screen_gate(nav, step) == (True, ""), "chụp màn hình lỗi tạm thời → nhìn lại, khớp thì làm bước (không hỏng cả lượt)")
+    ok(stepexec.screen_gate(nav, step) == (True, ""), "chụp màn hình lỗi tạm thời → nhìn lại, khớp thì làm bước (không hỏng cả lượt)")
     nav = Nav([(img, MAIN)]); nav.e = Flaky([(img, MAIN)], 999)
-    r = apimode.screen_gate(nav, step)
+    r = stepexec.screen_gate(nav, step)
     ok(r[0] is False and "không đọc được màn hình" in r[1], "chụp lỗi mãi → không làm bước, nêu lý do (không ném lỗi)", r)
     got.clear()
     nav = Nav([(img, MAIN)]); nav.e = Flaky([(img, MAIN)], 999)
     nav.screen_helper = lambda st, why, im: got.append(im) or (True, "")
-    ok(apimode.screen_gate(nav, step) == (True, "") and got == [None], "chụp lỗi mãi lúc chạy thật → giao cho bộ xử lý (tạm dừng chờ admin), không có ảnh")
+    ok(stepexec.screen_gate(nav, step) == (True, "") and got == [None], "chụp lỗi mãi lúc chạy thật → giao cho bộ xử lý (tạm dừng chờ admin), không có ảnh")
     nav = Nav([(img, SHOP)])
-    ok(apimode.screen_gate(nav, step)[0] is False and any(c == "home" for c in nav.h.sent), "màn hình khác ở lần nhìn đầu → cất con trỏ ra góc rồi mới nhìn lại")
+    ok(stepexec.screen_gate(nav, step)[0] is False and any(c == "home" for c in nav.h.sent), "màn hình khác ở lần nhìn đầu → cất con trỏ ra góc rồi mới nhìn lại")
     nav = Nav([(img, SHOP)])
     try:
-        apimode.screen_gate(nav, step, abort=lambda: True)
+        stepexec.screen_gate(nav, step, abort=lambda: True)
         ok(False, "bị «Dừng ngay» trong lúc chờ → Aborted")
-    except apimode.Aborted:
+    except stepexec.Aborted:
         ok(True, "bị «Dừng ngay» trong lúc chờ → Aborted")
-    real_exec = apimode.exec_step
+    real_exec = stepexec.exec_step
     done = []
-    apimode.exec_step = lambda nav, st, vars, abort=None: done.append(st) or (True, "", True)
+    stepexec.exec_step = lambda nav, st, vars, abort=None: done.append(st) or (True, "", True)
     try:
         nav = Nav([(img, SHOP)])
-        r = apimode.run_steps(nav, [{"type": "home"}, step, {"type": "key", "name": "tab"}], {})
+        r = stepexec.run_steps(nav, [{"type": "home"}, step, {"type": "key", "name": "tab"}], {})
         ok(r[0] is False and r[2] == 1 and done == [{"type": "home"}] and "khác ảnh mẫu" in r[1], "run_steps: màn hình khác → dừng TRƯỚC bước đó, không làm nó", r)
         done.clear()
         nav = Nav([(img, SHOP)])
-        r = apimode.run_steps(nav, [dict(step, optional=True), {"type": "key", "name": "tab"}], {})
+        r = stepexec.run_steps(nav, [dict(step, optional=True), {"type": "key", "name": "tab"}], {})
         ok(r[0] is True and done == [{"type": "key", "name": "tab"}], "bước «bỏ qua nếu lỗi» màn hình khác → bỏ qua bước đó, làm tiếp", done)
     finally:
-        apimode.exec_step = real_exec
+        stepexec.exec_step = real_exec
 
     print("== 4. engine.run_flow: chạy thật kiểm, chạy thử chụp ảnh mẫu ==")
     real_run = engine.run_step
     done = []
     engine.run_step = lambda nav, st, log=print: done.append(st) or (True, "ok")
-    real_cap = apimode.capture_screen
+    real_cap = stepexec.capture_screen
     try:
         nav = Nav([(img, SHOP)])
         res = engine.run_flow(nav, [step, {"type": "key", "name": "tab"}], log=lambda *a: None)
         ok(len(res) == 1 and res[0]["ok"] is False and not done, "chạy thật: màn hình khác → bước không làm, kịch bản dừng", res)
-        apimode.capture_screen = lambda nav: {"v": 1, "img": "x", "texts": ["shop"], "w": 1, "h": 1}
+        stepexec.capture_screen = lambda nav: {"v": 1, "img": "x", "texts": ["shop"], "w": 1, "h": 1}
         done.clear()
         nav = Nav([(img, SHOP)])
         res = engine.run_flow(nav, [step, {"type": "tap_text", "text": "Shop"}, {"type": "wait", "seconds": 0}], log=lambda *a: None, capture=True)
         ok(len(done) == 3 and "screen" not in res[0] and res[1].get("screen", {}).get("texts") == ["shop"] and "screen" not in res[2],
            "chạy thử: không kiểm; chụp ảnh mẫu cho bước thao tác CHƯA có (bước đã có / bước chờ thì không)", res)
-        apimode.capture_screen = lambda nav: (_ for _ in ()).throw(RuntimeError("chụp hỏng"))
+        stepexec.capture_screen = lambda nav: (_ for _ in ()).throw(RuntimeError("chụp hỏng"))
         res = engine.run_flow(Nav([(img, SHOP)]), [{"type": "tap_text", "text": "Shop"}], log=lambda *a: None, capture=True)
         ok(res[0]["ok"] and "screen" not in res[0], "chụp ảnh mẫu hỏng → lượt chạy thử vẫn chạy bình thường")
     finally:
         engine.run_step = real_run
-        apimode.capture_screen = real_cap
-    apimode._sleep = real_sleep
+        stepexec.capture_screen = real_cap
+    stepexec._sleep = real_sleep
 
     print("== 4b. Giai đoạn MUA cũng được kiểm ==")
-    apimode._sleep = lambda sec, abort=None: (abort and abort() and (_ for _ in ()).throw(apimode.Aborted())) or time.sleep(min(sec, 0.02))
+    stepexec._sleep = lambda sec, abort=None: (abort and abort() and (_ for _ in ()).throw(stepexec.Aborted())) or time.sleep(min(sec, 0.02))
 
     class BuyEyes(Eyes):
         def read_text(self, img=None, *a, **k):
             return " ".join(self._cur()[1])
     sent = []
-    real_exec = apimode.exec_step
-    apimode.exec_step = lambda nav, st, vars, abort=None: sent.append(st) or (True, "", True)
+    real_exec = stepexec.exec_step
+    stepexec.exec_step = lambda nav, st, vars, abort=None: sent.append(st) or (True, "", True)
     try:
         for plist, label in (([dict(step)], "màn hình khác ở bước mua ĐẦU TIÊN → không bấm gì, «lỗi tool» (chưa chạm vào máy)"),
                              ([{"type": "key", "name": "tab"}, dict(step)], "đã chạm một bước rồi mới gặp màn hình khác → không làm bước đó, «không chắc» (không báo «chưa mua»)")):
             sent.clear()
             nav = Nav([(img, SHOP)]); nav.e = BuyEyes([(img, SHOP)])
             steps = {"login": [], "finish": [], "otp": [], "nav": [], "after": [], "purchase": plist}
-            jf = apimode.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": []}, steps,
+            jf = jobflow.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": []}, steps,
                                  opts={"purchase_wait": 0.3, "clear_wait": 0.1}, log=lambda *a, **k: None)
             jf.PRE_LOOKS = 1
             v, why = jf._buy_one({"code": "c", "name": "1050 Coins", "qty": 1}, {})
@@ -226,15 +226,15 @@ def main():
             return False, "đã dừng"
         nav.screen_helper = helper
         steps = {"login": [], "finish": [], "otp": [], "nav": [], "after": [], "purchase": [dict(step)]}
-        jf = apimode.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": []}, steps,
+        jf = jobflow.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": []}, steps,
                              opts={"purchase_wait": 0.3, "clear_wait": 0.1}, log=lambda *a, **k: None)
         jf.PRE_LOOKS = 1
         v, why = jf._buy_one({"code": "c", "name": "1050 Coins", "qty": 1}, {})
         ok(v not in ("failed", "failed_tool", "ok") and jf.risky and getattr(nav, "buying", None) is False,
            "có lệnh ra board trong lúc kiểm màn hình trước bước mua → tính «đã chạm» (không chắc), không bao giờ «chưa mua»", (v, jf.risky))
     finally:
-        apimode.exec_step = real_exec
-        apimode._sleep = real_sleep
+        stepexec.exec_step = real_exec
+        stepexec._sleep = real_sleep
 
     print("== 5. Bộ chạy: tạm dừng chờ admin ==")
     import runner as runmod
@@ -253,7 +253,7 @@ def main():
         def go():
             try:
                 out["r"] = R._admin_pause("M1", w, step, "màn hình khác ảnh mẫu của bước", img)
-            except apimode.Aborted:
+            except stepexec.Aborted:
                 out["r"] = "Aborted"
         alerts.clear()
         th = threading.Thread(target=go); th.start(); time.sleep(0.3)

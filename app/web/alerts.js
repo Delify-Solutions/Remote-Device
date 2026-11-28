@@ -1,5 +1,5 @@
 // alerts.js — trang «Thông báo & AI»: Telegram báo cho admin + nhà cung cấp AI xử lý màn hình lạ.
-// Dùng chung các hàm của app.js: $, $$, esc, API, toast, busy, loadTelegram, loadAiScreen (app.js gọi alertsBadge lúc mở app + mỗi 30 giây).
+// Dùng chung các hàm của core.js: $, $$, esc, API, toast, busy (main.js gọi alertsBadge, loadTelegram, loadAiScreen lúc mở app + mỗi 30 giây).
 // Mã bot / API key KHÔNG BAO GIỜ được trả về trang: ô để trống = giữ cái đang lưu.
 
 let TG_CFG = null, AIP_CFG = null, TG_CHATS = null;
@@ -32,6 +32,27 @@ function alertsNavState() {
   const tg = TG_CFG && TG_CFG.has_token && TG_CFG.chat, ai = AIP_CFG && AIP_CFG.usable;
   b.textContent = (tg ? "TG" : "") + (tg && ai ? " · " : "") + (ai ? "AI" : "") || "chưa cài";
   b.className = "badge rounded-pill ms-auto " + (tg || ai ? "bg-label-success" : "bg-label-secondary");
+}
+
+async function loadAiScreen() {                    // chấm trạng thái AI cạnh nút «AI màn hình lạ» ở trang «Nhóm & Kịch bản»
+  const dot = $("#ai-dot");
+  if (!dot) return;
+  try {
+    const c = await API().ai_screen_get();
+    dot.className = "gw-dot " + (c.usable ? "ok" : "");
+    dot.title = c.usable ? `Đang bật · ${c.provider} · ${c.model}` : (c.enabled === false ? "Đang tắt" : "Chưa có API key");
+  } catch (e) {}
+}
+
+async function loadTelegram() {
+  const dot = $("#tg-dot");
+  if (!dot) return;
+  try {
+    const c = await API().telegram_get();
+    const ready = c.has_token && c.chat;
+    dot.className = "gw-dot " + (ready ? (c.last_error ? "bad" : "ok") : "");
+    dot.title = ready ? (c.last_error ? "Lần gửi gần nhất lỗi: " + c.last_error : `Đang bật · đã gửi ${c.sent} tin từ lúc mở app`) : "Chưa cấu hình";
+  } catch (e) {}
 }
 
 /* ---------------- Telegram ---------------- */

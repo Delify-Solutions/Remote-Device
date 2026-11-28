@@ -228,8 +228,12 @@ def _make_handler(w: WebDev):
             if path in ("/", "/index.html"):
                 with open(os.path.join(w.web_dir, "index.html"), encoding="utf-8") as f:
                     html = f.read()
-                tag = '<script src="app.js"></script>'
-                html = html.replace(tag, '<script src="__devshim.js"></script>\n' + tag, 1)
+                # cầu nối phải nạp TRƯỚC tệp JS đầu tiên của giao diện (thẻ <script src> đầu tiên không thuộc bộ giao diện mua sẵn vuexy/) —
+                # tìm theo vị trí, không theo tên tệp; trang không có thẻ nào như vậy thì báo lỗi rõ thay vì lặng lẽ chạy không có cầu nối
+                first = re.search(r'<script\s+src="(?!vuexy/)', html)
+                if not first:
+                    return self._send(500, "index.html không có thẻ <script src> nào của giao diện — không chèn được cầu nối của bản web", "text/plain; charset=utf-8")
+                html = html[:first.start()] + '<script src="__devshim.js"></script>\n' + html[first.start():]
                 return self._send(200, html, "text/html; charset=utf-8")
             return self._static(path)
 

@@ -328,17 +328,17 @@ def handle(nav, step, why, img, cfg, matches, tap, say=lambda *a, **k: None, sle
     """Xử lý màn hình lạ bằng AI. `matches()` → (khớp ảnh mẫu?, ảnh mới, lý do); `tap(x, y, verify)` → (bấm được?, lý do);
     `cancel()` → None | "stop" | "abort" (người vận hành bấm Dừng / Dừng ngay).
     Trả (True, "") khi màn hình đã KHỚP ảnh mẫu sau khi AI xử lý; (False, lý do) khi không xử lý được (bên gọi tạm dừng máy chờ admin).
-    Bị «Dừng ngay» → ném apimode.Aborted (kể cả khi đang chờ AI trả lời — không chờ hết); bấm Dừng → (False, …), không bấm thêm gì."""
-    import screencheck, apimode
+    Bị «Dừng ngay» → ném stepexec.Aborted (kể cả khi đang chờ AI trả lời — không chờ hết); bấm Dừng → (False, …), không bấm thêm gì."""
+    import screencheck, stepexec
     asker = asker or ask
     ref_img = screencheck.ref_image(step.get("screen") or {})
-    step_text = apimode.observed_what(step, {})
+    step_text = stepexec.observed_what(step, {})
     last = why
 
     def stopped():
         c = cancel() if cancel else None
         if c == "abort":
-            raise apimode.Aborted()
+            raise stepexec.Aborted()
         return c == "stop"
     for n in range(TRIES):
         if img is None:
@@ -353,7 +353,7 @@ def handle(nav, step, why, img, cfg, matches, tap, say=lambda *a, **k: None, sle
             return False, "không hỏi được AI: %s" % (str(e)[:120] or type(e).__name__)
         if how == "cancel" or stopped():
             if d == "abort":
-                raise apimode.Aborted()
+                raise stepexec.Aborted()
             return False, "đã dừng theo yêu cầu"
         if not isinstance(d, dict) or d.get("kind") not in KINDS:
             return False, "AI trả lời sai dạng"

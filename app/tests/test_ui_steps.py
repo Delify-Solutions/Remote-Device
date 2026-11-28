@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Kiểm phần LỘ TRÌNH CÁC BƯỚC của trình sửa kịch bản (app/web/app.js) — lấy đúng mã nguồn các hàm, chạy bằng `node`, không cần trình duyệt:
+Kiểm phần LỘ TRÌNH CÁC BƯỚC của trình sửa kịch bản (app/web/steps.js, stepedit.js, screen.js, orders.js…) — lấy đúng mã nguồn các hàm từ các
+tệp JS của trang (nối lại theo thứ tự nạp trong index.html), chạy bằng `node`, không cần trình duyệt:
   • mỗi loại bước viết thành một câu; chữ do người dùng / thiết bị đưa vào luôn được thoát HTML; {{biến}} thành nhãn riêng;
   • loại bước lạ (kể cả trùng tên thuộc tính có sẵn như «constructor») không làm hỏng trang;
   • đổi cách chạy của kịch bản sang «nhận đơn» và ngược lại: bước không bị mất, không bị nhân đôi;
@@ -17,7 +18,7 @@ import json, os, re, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from test_ui_controls import APP_JS, function_source
+from test_ui_controls import function_source, ui_source
 
 PASS = FAIL = 0
 
@@ -259,7 +260,7 @@ def main():
     if not node:
         print("BỎ QUA: cần lệnh `node` để chạy mã giao diện.")
         return 0
-    src = open(APP_JS, encoding="utf-8").read()
+    src = ui_source()
     esc_line = next(l for l in src.splitlines() if l.startswith("const esc ="))
     parts = [esc_line] + [const_source(src, n) for n in ("SWIPE_DIR", "STEP_LABEL", "STEP_KIND", "API_PHASES", "ORDER_LABEL", "REQUIRED_PHASES", "TEXT_WAIT_NEW", "REGION_DRAG", "IF_KEYS",
                                                          "NEAR_DIR_LABEL", "SCROLL_LABEL")]
@@ -450,21 +451,26 @@ def main():
        and at[1] == "Đã chép 12 bước cũ từ gateway vào kịch bản (Đăng nhập: 7, Vào danh sách gói: 3, Kết thúc đơn: 2) — từ giờ sửa bước ở đây" and at[2:] == ["", "", ""],
        "lời báo sau khi chép: tổng số bước + từng giai đoạn theo thứ tự chạy; giai đoạn lạ / số lạ bị bỏ; không chép bước nào → không báo", at)
 
-    print("== 11. MỘT bảng loại bước: giao diện, ảnh mẫu, lời mô tả cho AI đều khớp bộ chạy (apimode.STEP_TYPES) ==")
+    print("== 11. MỘT bảng loại bước: giao diện, ảnh mẫu, lời mô tả cho AI đều khớp bộ chạy (stepexec.STEP_TYPES) ==")
     import inspect
     sys.path.insert(0, os.path.dirname(HERE))
-    import apimode, screencheck, store
+    import jobflow, stepexec, screencheck, store
     app_dir = os.path.dirname(HERE)
-    js = open(APP_JS, encoding="utf-8").read()
+    js = ui_source()
     html = open(os.path.join(app_dir, "web", "index.html"), encoding="utf-8").read()
     body_of = lambda name: const_source(js, name).split("=", 1)[1]
     arr = lambda name: json.loads(body_of(name).strip().rstrip(";"))
-    types = set(apimode.STEP_TYPES)
+    types = set(stepexec.STEP_TYPES)
     label_keys, kind_keys = set(re.findall(r"([a-z_]+): \"", body_of("STEP_LABEL"))), set(re.findall(r"([a-z_]+): \[", body_of("STEP_KIND")))
     palette = set(re.findall(r'data-add="([a-z_]+)"', html)) - {"pick"}            # «pick» = bấm lên ảnh để thêm bước tap
-    ok(len(apimode.STEP_TYPES) == len(types) == 15 and label_keys == types and kind_keys == types and palette | {"tap"} == types,
+    ok(len(stepexec.STEP_TYPES) == len(types) == 15 and label_keys == types and kind_keys == types and palette | {"tap"} == types,
        "mọi loại bước của bộ chạy đều có nhãn + biểu tượng + nút trong bảng chọn của trình sửa; giao diện không có loại nào bộ chạy không biết",
        {"thiếu nhãn": sorted(types - label_keys), "nhãn lạ": sorted(label_keys - types), "thiếu nút": sorted(types - palette - {"tap"}), "nút lạ": sorted(palette - types)})
+    import glob
+    from test_ui_controls import page_scripts
+    on_disk = {os.path.basename(f) for f in glob.glob(os.path.join(app_dir, "web", "*.js"))} - {"_mock.js"}
+    ok(set(page_scripts()) == on_disk and len(page_scripts()) == len(set(page_scripts())),
+       "mọi tệp .js của giao diện đều được trang nạp (đúng một lần) — không tệp nào nằm đó mà không chạy", sorted(on_disk ^ set(page_scripts())))
     test_html = open(os.path.join(app_dir, "web", "_test.html"), encoding="utf-8").read()
     ok(set(re.findall(r'data-add="([a-z_]+)"', test_html)) == palette | {"pick"}, "trang thử (_test.html) có đúng bảng chọn hành động của trang thật")
 
@@ -482,51 +488,51 @@ def main():
 
     def enters(step):                # → "" nếu bộ chạy có nhánh cho bước này, không thì lời lỗi «loại bước lạ»
         try:
-            apimode._exec_step(Boom(), step, {})
-        except apimode.ConfigError as e:
+            stepexec._exec_step(Boom(), step, {})
+        except stepexec.ConfigError as e:
             return str(e) if "loại bước lạ" in str(e) else ""
         except Exception:
             pass
         return ""
-    real_sleep, apimode._sleep = apimode._sleep, (lambda *a, **k: None)
+    real_sleep, stepexec._sleep = stepexec._sleep, (lambda *a, **k: None)
     try:
-        lost = [t for t in apimode.STEP_TYPES if enters(dict(minimal[t], type=t))]
+        lost = [t for t in stepexec.STEP_TYPES if enters(dict(minimal[t], type=t))]
         unknown = enters({"type": "loai_la"})
-        run_src = inspect.getsource(apimode._exec_step)
+        run_src = inspect.getsource(stepexec._exec_step)
         branches = set(re.findall(r'"([a-z_]+)"', " ".join(re.findall(r"^    if t (?:==|in) ([^\n]*?):", run_src, re.M))))
-        ok(sorted(minimal) == sorted(apimode.STEP_TYPES) and lost == [] and branches == types and "loại bước lạ" in unknown,
+        ok(sorted(minimal) == sorted(stepexec.STEP_TYPES) and lost == [] and branches == types and "loại bước lạ" in unknown,
            "bộ chạy có nhánh THẬT cho đủ các loại trong bảng và không có nhánh nào ngoài bảng; loại lạ → báo lỗi cấu hình (không lặng lẽ bỏ qua)",
            {"mất nhánh": lost, "nhánh ngoài bảng": sorted(branches - types), "thiếu trong bộ chạy": sorted(types - branches)})
 
         # bước bấm / giữ theo toạ độ mà THIẾU toạ độ → lỗi cấu hình trước khi chạm máy (không bao giờ bấm bừa vào 0,0)
         def refuses(step):
             try:
-                apimode._exec_step(Boom(), step, {})
-            except apimode.ConfigError as e:
+                stepexec._exec_step(Boom(), step, {})
+            except stepexec.ConfigError as e:
                 return "toạ độ" in str(e)
             except Exception:
                 return False
             return False
         ok(all(refuses(st) for st in ({"type": "tap"}, {"type": "tap", "text": "Mua"}, {"type": "tap", "x": "a", "y": 1}, {"type": "hold", "seconds": 1}, {"type": "hold", "x": 5})),
            "bước «bấm / bấm giữ theo toạ độ» thiếu x, y (hoặc không phải số) → lỗi cấu hình, KHÔNG chạm vào máy")
-        sec = apimode._seconds
+        sec = stepexec._seconds
         bad_sec = None
         try:
             sec({"seconds": "abc"}, "seconds", 1.0, "Chờ")
-        except apimode.ConfigError as e:
+        except stepexec.ConfigError as e:
             bad_sec = str(e)
         ok(sec({"seconds": 0}, "seconds", 1.0, "x") == 0.0 and sec({}, "seconds", 1.0, "x") == 1.0 and sec({"seconds": ""}, "seconds", 2.5, "x") == 2.5
            and sec({"seconds": "1.5"}, "seconds", 1.0, "x") == 1.5 and bad_sec and "số giây" in bad_sec,
            "số giây ghi 0 là 0 (không bị coi là «không ghi»); không ghi → mặc định; không phải số → lỗi cấu hình")
     finally:
-        apimode._sleep = real_sleep
-    ok(arr("SCREEN_TYPES") == list(screencheck.CHECK_TYPES) and set(screencheck.CHECK_TYPES) <= types and set(apimode.INPUT_TYPES) <= types,
+        stepexec._sleep = real_sleep
+    ok(arr("SCREEN_TYPES") == list(screencheck.CHECK_TYPES) and set(screencheck.CHECK_TYPES) <= types and set(stepexec.INPUT_TYPES) <= types,
        "loại bước có ảnh mẫu trong giao diện = screencheck.CHECK_TYPES; các bảng con (bước chạm máy, bước có ảnh mẫu) nằm trong bảng gốc", arr("SCREEN_TYPES"))
     js_phases = re.findall(r'\["([a-z]+)",', body_of("API_PHASES"))
-    ok(js_phases == list(apimode.PHASES) == list(store.API_PHASES) and arr("REQUIRED_PHASES") == list(apimode.REQUIRED_PHASES)
-       and set(re.findall(r"([a-z]+):", body_of("ORDER_LABEL"))) == set(apimode.PHASES),
+    ok(js_phases == list(jobflow.PHASES) == list(store.API_PHASES) and arr("REQUIRED_PHASES") == list(jobflow.REQUIRED_PHASES)
+       and set(re.findall(r"([a-z]+):", body_of("ORDER_LABEL"))) == set(jobflow.PHASES),
        "sáu giai đoạn của đơn + ba giai đoạn bắt buộc: giao diện, kho lưu và bộ chạy cùng một danh sách, cùng thứ tự", (js_phases, arr("REQUIRED_PHASES")))
-    ok(set(arr("IF_KEYS")) <= set(apimode.KEYS), "phím chọn được ở bước có điều kiện đều là phím bộ chạy nhận", arr("IF_KEYS"))
+    ok(set(arr("IF_KEYS")) <= set(stepexec.KEYS), "phím chọn được ở bước có điều kiện đều là phím bộ chạy nhận", arr("IF_KEYS"))
 
     # «chờ thấy chữ» không ghi thời gian: MỘT con số — trình sửa hiện / điền sẵn bao nhiêu thì bộ chạy chờ đúng bấy nhiêu
     in_text = re.findall(r'case "wait_text":[^\n]*s\.timeout \|\| (\d+)', js)
@@ -543,21 +549,21 @@ def main():
     def tick():
         clock["t"] += 4.0
         return clock["t"]
-    real_time, real_sleep2, real_park = apimode.time, apimode._sleep, apimode.park
-    apimode.time, apimode._sleep, apimode.park = types_mod.SimpleNamespace(time=tick, sleep=lambda s: None), (lambda *a, **k: None), (lambda nav: None)
+    real_time, real_sleep2, real_park = stepexec.time, stepexec._sleep, stepexec.park
+    stepexec.time, stepexec._sleep, stepexec.park = types_mod.SimpleNamespace(time=tick, sleep=lambda s: None), (lambda *a, **k: None), (lambda nav: None)
     try:
-        dflt = apimode._exec_step(Blank(), {"type": "wait_text", "text": "zzz"}, {})
-        zero = apimode._exec_step(Blank(), {"type": "wait_text", "text": "zzz", "timeout": 0}, {})
+        dflt = stepexec._exec_step(Blank(), {"type": "wait_text", "text": "zzz"}, {})
+        zero = stepexec._exec_step(Blank(), {"type": "wait_text", "text": "zzz", "timeout": 0}, {})
     finally:
-        apimode.time, apimode._sleep, apimode.park = real_time, real_sleep2, real_park
-    want = str(apimode.WAIT_TEXT_TIMEOUT)
+        stepexec.time, stepexec._sleep, stepexec.park = real_time, real_sleep2, real_park
+    want = str(stepexec.WAIT_TEXT_TIMEOUT)
     ok(len(in_text) == 2 and len(in_form) == 1 and len(in_save) == 1 and set(in_text + in_form + in_save) == {want}
        and dflt[0] is False and ("chờ %ss không thấy" % want) in dflt[1] and zero[0] is False and "chờ 0s không thấy" in zero[1],
        "bước «chờ thấy chữ» không ghi thời gian: câu của bước, ô điền sẵn, giá trị ghi khi để trống và thời gian bộ chạy THẬT SỰ chờ là cùng một con số; ghi 0 = nhìn một lần",
        (in_text, in_form, in_save, dflt, zero))
     ctl = open(os.path.join(app_dir, "control.py"), encoding="utf-8").read()
     desc = ctl[ctl.index('Tool("run_steps"'):ctl.index('Tool(', ctl.index('Tool("run_steps"') + 10)]
-    undocumented = [t for t in apimode.STEP_TYPES if not re.search(r"(?<![a-z_])%s%s" % (t, r"(?![a-z_])" if t == "home" else r" \{"), desc)]
+    undocumented = [t for t in stepexec.STEP_TYPES if not re.search(r"(?<![a-z_])%s%s" % (t, r"(?![a-z_])" if t == "home" else r" \{"), desc)]
     ok(undocumented == [], "lời mô tả công cụ run_steps cho AI nêu đủ mọi loại bước kèm tham số của nó (dạng «tên {…}»)", undocumented)
 
     print("\n%s" % ("✅ TẤT CẢ %d kiểm tra đều đạt." % PASS if not FAIL else "❌ %d lỗi / %d kiểm tra." % (FAIL, PASS + FAIL)))

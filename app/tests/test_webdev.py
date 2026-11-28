@@ -6,7 +6,7 @@ Kiểm chế độ WEB dev (app/webdev.py) bằng Api giả — không cần ph�
   • /api chỉ gọi được hàm CÔNG KHAI của LỚP Api; JSON hỏng / quá lớn / độ dài lạ / Transfer-Encoding bị từ chối; lỗi trong hàm → {ok:false};
   • yêu cầu bị từ chối thì ĐÓNG kết nối (thân chưa đọc không thành yêu cầu kế tiếp); kết nối im lặng bị đóng; ký tự có dấu trong khoá/cookie không làm sập;
   • tệp tĩnh chỉ trong thư mục web, bỏ «_…», «.», «..», mã hoá %2e%2e, liên kết tượng trưng trỏ ra ngoài;
-  • trang chính được chèn cầu nối trước app.js; SSE đẩy đúng chuỗi JS từ `push()`; gui._push đi qua web khi bật chế độ web;
+  • trang chính được chèn cầu nối trước core.js (tệp JS đầu tiên của giao diện); SSE đẩy đúng chuỗi JS từ `push()`; gui._push đi qua web khi bật chế độ web;
   • khoá tạo ra đã 0600 ngay từ đầu, tệp cũ quyền rộng được siết lại; chế độ web không chụp màn hình máy đang làm đơn của khách;
   • `pip install` chỉ nhận gói app cần; `--web-port` sai → báo lỗi, không mở cổng nào.
 
@@ -48,8 +48,8 @@ def main():
     tmp = tempfile.mkdtemp(prefix="webdev-")
     try:
         web = os.path.join(tmp, "web"); os.makedirs(os.path.join(web, "sub")); os.makedirs(os.path.join(web, "_backup"))
-        open(os.path.join(web, "index.html"), "w", encoding="utf-8").write('<html><head></head><body><script src="vendor.js"></script>\n<script src="app.js"></script></body></html>')
-        open(os.path.join(web, "app.js"), "w").write("// app")
+        open(os.path.join(web, "index.html"), "w", encoding="utf-8").write('<html><head></head><body><script src="vuexy/theme.js"></script>\n<script src="core.js"></script>\n<script src="main.js"></script></body></html>')
+        open(os.path.join(web, "core.js"), "w").write("// app")
         open(os.path.join(web, "sub", "x.js"), "w").write("var x=1;")
         open(os.path.join(web, "_mock.js"), "w").write("// mock")
         open(os.path.join(web, "_backup", "y.js"), "w").write("// y")
@@ -100,7 +100,7 @@ def main():
             r = c.getresponse(); b = r.read(); hd = dict(r.getheaders()); c.close()
             return r.status, b, hd
 
-        for p in ("/", "/app.js", "/api/echo", "/events"):
+        for p in ("/", "/core.js", "/api/echo", "/events"):
             st, _, _ = req("GET" if p != "/api/echo" else "POST", p, body={"args": [1]} if p == "/api/echo" else None, cookie=False)
             ok(st == 401, "không có cookie → 401 (%s)" % p, st)
         ok(req("GET", "/?t=sai-khoa", cookie=False)[0] == 401, "đổi khoá SAI → 401")
@@ -266,7 +266,14 @@ def main():
         print("\n== 4. Trang chính + tệp tĩnh ==")
         st, b, hd = req("GET", "/")
         html = b.decode()
-        ok(st == 200 and html.index("__devshim.js") < html.index('src="app.js"') and "vendor.js" in html and "text/html" in hd.get("Content-Type", ""), "trang chính chèn cầu nối TRƯỚC app.js")
+        ok(st == 200 and html.index("vuexy/theme.js") < html.index("__devshim.js") < html.index('src="core.js"') < html.index('src="main.js"') and html.count("__devshim.js") == 1
+           and "text/html" in hd.get("Content-Type", ""), "trang chính chèn cầu nối MỘT lần, ngay trước tệp JS đầu tiên của giao diện (sau bộ giao diện mua sẵn vuexy/)")
+        page = os.path.join(web, "index.html")
+        keep = open(page, encoding="utf-8").read()
+        open(page, "w", encoding="utf-8").write('<html><body><script src="vuexy/theme.js"></script></body></html>')
+        st0, b0, _ = req("GET", "/")
+        open(page, "w", encoding="utf-8").write(keep)
+        ok(st0 == 500 and "cầu nối" in b0.decode(), "trang không có tệp JS nào của giao diện → báo lỗi rõ, không lặng lẽ chạy thiếu cầu nối", st0)
         st, b, hd = req("GET", "/__devshim.js")
         ok(st == 200 and b"window.pywebview" in b and b"EventSource" in b and b"/api/" in b and "javascript" in hd.get("Content-Type", ""), "tệp cầu nối: window.pywebview.api + EventSource")
         st, b, hd = req("GET", "/sub/x.js")

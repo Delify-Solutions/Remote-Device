@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Kiểm BỘ NÚT điều khiển một máy trên giao diện (app/web/app.js → runControlsHtml) — không cần trình duyệt, không cần phần cứng.
-Lấy đúng mã nguồn các hàm từ app.js, chạy bằng `node` trên MỌI tổ hợp trạng thái của máy, rồi kiểm:
+Kiểm BỘ NÚT điều khiển một máy trên giao diện (app/web/run.js → runControlsHtml) — không cần trình duyệt, không cần phần cứng.
+Lấy đúng mã nguồn các hàm từ các tệp JS của trang, chạy bằng `node` trên MỌI tổ hợp trạng thái của máy, rồi kiểm:
   • không trạng thái nào «không có nút» (luôn có đường ra);
   • không bao giờ hiện cùng lúc «Dừng máy / Tạm dừng» và «Tiếp tục»;
   • máy đang nghỉ → «Dừng máy»; đang dừng để xử lý tay → «Tiếp tục»; đang chạy → «Tạm dừng» + «Dừng»;
@@ -12,11 +12,30 @@ Lấy đúng mã nguồn các hàm từ app.js, chạy bằng `node` trên MỌI
     ./.venv/bin/python app/tests/test_ui_controls.py        (cần lệnh `node`; không có thì bỏ qua)
 """
 from __future__ import annotations
-import itertools, json, os, shutil, subprocess, sys
+import itertools, json, os, re, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-APP_JS = os.path.join(os.path.dirname(HERE), "web", "app.js")
+WEB = os.path.join(os.path.dirname(HERE), "web")
 PASS = FAIL = 0
+
+
+def page_scripts(page: str = "index.html") -> list:
+    """Tên các tệp JS RIÊNG của giao diện, đúng thứ tự trang nạp — đọc từ các thẻ `<script src>` của trang (bỏ thư viện trong vuexy/).
+    Thêm / bớt / đổi tên một tệp JS của trang thì các bài test giao diện tự theo, không phải sửa danh sách tệp ở đâu cả."""
+    with open(os.path.join(WEB, page), encoding="utf-8") as f:
+        names = [s for s in re.findall(r'<script\s+src="([^"]+)"', f.read()) if not s.startswith("vuexy/")]
+    if not names:
+        raise RuntimeError("không thấy thẻ <script src> nào của giao diện trong " + page)
+    return names
+
+
+def ui_source() -> str:
+    """Mã nguồn của CẢ giao diện: các tệp JS của trang thật (index.html) nối lại theo đúng thứ tự nạp."""
+    parts = []
+    for name in page_scripts():
+        with open(os.path.join(WEB, name), encoding="utf-8") as f:
+            parts.append(f.read())
+    return "\n".join(parts)
 
 
 def ok(cond, name, ctx=None):
@@ -28,7 +47,7 @@ def ok(cond, name, ctx=None):
 
 
 def function_source(src: str, name: str) -> str:
-    """Mã nguồn nguyên văn của `function <name>(…) {…}` trong app.js (đếm ngoặc nhọn, bỏ qua chuỗi và chú thích)."""
+    """Mã nguồn nguyên văn của `function <name>(…) {…}` trong mã giao diện `src` (đếm ngoặc nhọn, bỏ qua chuỗi và chú thích)."""
     start = src.index("function %s(" % name)
     i = src.index("{", src.index(")", start))
     depth, quote, k = 0, None, i
@@ -65,7 +84,7 @@ def main():
     if not node:
         print("BỎ QUA: cần lệnh `node` để chạy mã giao diện.")
         return 0
-    src = open(APP_JS, encoding="utf-8").read()
+    src = ui_source()
     funcs = "\n".join(function_source(src, n) for n in ("isHeld", "runControlsHtml", "devRunState"))
     esc_line = next(l for l in src.splitlines() if l.startswith("const esc ="))
     states = []

@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 import cv2
 
-import apimode, esp, store
+import jobflow, stepexec, esp, store
 from eyes import norm_text
 from nav import Nav
 
@@ -78,7 +78,7 @@ def main() -> int:
 
     def has(img, *alts):
         t = txt(img)
-        return any(apimode.text_has(t, a) for a in alts)
+        return any(stepexec.text_has(t, a) for a in alts)
 
     def page(img):
         if has(img, "FaceTime") and has(img, "App Store"):
@@ -115,7 +115,7 @@ def main() -> int:
         print("  %s %-56s %s" % ("✓" if ok else "✗", label, extra)); sys.stdout.flush()
 
     try:
-        why = apimode.preflight(nav)
+        why = jobflow.preflight(nav)
         print("Máy %s: %s" % (name, why or "sẵn sàng"))
         if why:
             return 1

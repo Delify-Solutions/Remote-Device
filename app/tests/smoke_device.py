@@ -7,7 +7,7 @@ Thử các thao tác của CHẾ ĐỘ API trên iPhone THẬT — bằng việc
 
 TẮT app iPhone Farm Manager trước khi chạy (một cổng serial chỉ một chương trình mở được).
 
-Chạy đúng các bước mà một đơn nạp dùng, theo đúng code của chế độ API (apimode.py):
+Chạy đúng các bước mà một đơn nạp dùng, theo đúng code lúc nhận đơn (stepexec.py + jobflow.py):
   kiểm máy sẵn sàng → kiểm bàn phím tiếng Anh → mở app qua Spotlight (gõ + Enter) → chờ chữ
   → dò chữ «Wi-Fi» + đưa con trỏ tới + bấm → dò chữ «‹ Cài đặt» + bấm (quay lại) → về màn hình chính.
 Chỉ đi lại giữa hai trang của Cài đặt, không bật/tắt gì.
@@ -20,7 +20,7 @@ import os, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-import apimode, esp, store
+import jobflow, stepexec, esp, store
 from eyes import norm_text
 from nav import Nav
 
@@ -51,7 +51,7 @@ def main():
     def step(label, steps):
         t = time.time()
         try:
-            ok, why, _, _ = apimode.run_steps(nav, steps, {})
+            ok, why, _, _ = stepexec.run_steps(nav, steps, {})
         except Exception as e:                                   # lỗi cấu hình / mất chụp màn…
             ok, why = False, "%s: %s" % (type(e).__name__, e)
         print("  %s %-44s %5.1fs%s" % ("✓" if ok else "✗", label, time.time() - t, ("   → " + why) if why else ""))
@@ -62,12 +62,12 @@ def main():
     def wait_gone(text, timeout=10.0):
         end = time.time() + timeout
         while time.time() < end:
-            if not apimode.text_has(screen(), text):
+            if not stepexec.text_has(screen(), text):
                 return True
         return False
 
     try:
-        why = apimode.preflight(nav)
+        why = jobflow.preflight(nav)
         print("Máy %s (%s): %s" % (name, port, why or "sẵn sàng"))
         if why:
             return 1
@@ -91,7 +91,7 @@ def main():
                             [{"type": "tap_text", "text": "Cài đặt|Settings"}, {"type": "wait_text", "text": "Bluetooth", "timeout": 10}]):
                     break
             step("bước «bỏ qua nếu lỗi» không có trên màn", [{"type": "tap_text", "text": "KhongCoChuNay123", "optional": True}])
-            jpg = apimode.shot_jpeg(nav)
+            jpg = jobflow.shot_jpeg(nav)
             print("  %s %-44s %s" % ("✓" if jpg else "✗", "chụp ảnh JPEG (ảnh bill gửi gateway)", ("%d KB" % (len(jpg) // 1024)) if jpg else ""))
             if not jpg:
                 bad.append("chụp ảnh")

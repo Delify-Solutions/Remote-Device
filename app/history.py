@@ -2,7 +2,7 @@
 """
 history.py — «máy nào đang chạy bước nào» + LỊCH SỬ riêng của từng máy và từng đơn.
 
-Mỗi máy có một bộ theo dõi (`Tracker`). Bộ chạy bước (apimode.exec_step — engine.run_step cũng đi qua nó) báo cho nó lúc BẮT ĐẦU và lúc XONG từng
+Mỗi máy có một bộ theo dõi (`Tracker`). Bộ chạy bước (stepexec.exec_step — engine.run_step cũng đi qua nó) báo cho nó lúc BẮT ĐẦU và lúc XONG từng
 bước; bộ chạy kịch bản (runner) báo lúc bắt đầu / kết thúc một lượt chạy, một giai đoạn, một đơn. Từ đó có:
 
   • trạng thái TRỰC TIẾP (trong bộ nhớ): máy đang ở lượt chạy nào, giai đoạn nào, bước thứ mấy / tổng số, là bước gì, từ bao giờ;
@@ -10,7 +10,7 @@ bước; bộ chạy kịch bản (runner) báo lúc bắt đầu / kết thúc 
     gian, bắt đầu / kết thúc đơn, lời nhắn của bộ chạy);
   • lịch sử theo ĐƠN: `<thư mục>/don.jsonl` — mỗi đơn một dòng tóm tắt; các bước của đơn lấy từ lịch sử của máy đã chạy nó.
 
-KHÔNG có bí mật: chữ của bước là lời mô tả đã che (`apimode.describe` giữ nguyên tên `{{username}}`, `{{password}}`, `{{otp}}`), lý do
+KHÔNG có bí mật: chữ của bước là lời mô tả đã che (`stepexec.describe` giữ nguyên tên `{{username}}`, `{{password}}`, `{{otp}}`), lý do
 của bước do bộ chạy tạo ra và không chứa giá trị của khách; của đơn chỉ ghi mã đơn + gói, không ghi thông tin đăng nhập.
 
 Ghi lịch sử không bao giờ được làm hỏng việc đang chạy: mọi lỗi đọc / ghi tệp đều bị nuốt.

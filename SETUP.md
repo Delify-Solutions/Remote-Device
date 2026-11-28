@@ -499,7 +499,7 @@ App có thêm một **cầu nối điều khiển**: AI (Claude Code, Claude Des
     và kịch bản chạy tay chưa thế `{{biến}}` bằng dữ liệu.
 - MCP / CLI: `list_groups` liệt kê kịch bản (tên, số bước, cách chạy — không lộ nội dung bước); `start_run` nhận `script` (bỏ trống được khi nhóm
   chỉ có 1 kịch bản; nhóm nhiều kịch bản mà không nêu thì bị từ chối).
-- Kiểm bằng `./.venv/bin/python app/tests/test_groups.py` (133 mục: lưu / chuẩn hoá kịch bản, kịch bản nhận đơn, máy nhiều nhóm, một máy một kịch bản, dừng máy / tiếp tục (cả lúc máy đang nghỉ), dừng đúng việc, dừng tất cả, máy đang giữ chờ kiểm tra). Bộ nút trên giao diện: `app/tests/test_ui_controls.py` (12 mục, chạy mã `app.js` bằng `node` trên mọi tổ hợp trạng thái).
+- Kiểm bằng `./.venv/bin/python app/tests/test_groups.py` (133 mục: lưu / chuẩn hoá kịch bản, kịch bản nhận đơn, máy nhiều nhóm, một máy một kịch bản, dừng máy / tiếp tục (cả lúc máy đang nghỉ), dừng đúng việc, dừng tất cả, máy đang giữ chờ kiểm tra). Bộ nút trên giao diện: `app/tests/test_ui_controls.py` (12 mục, chạy mã giao diện (các tệp `.js` của trang) bằng `node` trên mọi tổ hợp trạng thái).
 
 ### Cách hoạt động
 - **App đang mở** → mọi lệnh của AI/CLI được chuyển cho app thực hiện (app là nơi DUY NHẤT giữ cổng serial của board).
@@ -785,7 +785,7 @@ Làm theo 3 phần, cả 3 đã xong: Telegram, ảnh mẫu + tạm dừng tại
 - Kiểm thử đặt `IPF_NO_TELEGRAM=1`: không bao giờ gửi tin thật (app có thể đã cấu hình Telegram thật).
 - Kiểm thử: `./.venv/bin/python app/tests/test_notify.py`, gồm gửi đi, lọc loại, gộp tin trùng, ảnh, che mã bot, nối vào bộ chạy, luồng xem board.
 
-### Ảnh mẫu của bước + kiểm màn hình trước khi làm (`app/screencheck.py`, `apimode.screen_gate`)
+### Ảnh mẫu của bước + kiểm màn hình trước khi làm (`app/screencheck.py`, `stepexec.screen_gate`)
 - **Bước nào được kiểm:** bước THAO TÁC (bấm toạ độ / chữ / vùng ảnh, bấm giữ, gõ, phím, tổ hợp phím, vuốt) có ảnh mẫu và không bị tắt
   kiểm. Bước tự chờ / tự xử lý thứ lúc có lúc không («nếu thấy … thì bấm», «chờ chữ», «kiểm có chữ»), mở app, về Home, chờ thì không kiểm.
 - **Ảnh mẫu** (trường `screen` của bước, lưu trong kịch bản): ảnh thu nhỏ (cạnh dài 480 px, ~20–30 KB) + các dòng chữ của màn hình NGAY

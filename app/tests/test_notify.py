@@ -245,7 +245,7 @@ def main():
     ok(got and got[0][0] == "review" and "DH-1" in got[0][2][-1] and wh.get("hold"),
        "nhận đơn dừng GIỮ máy (đơn bị gián đoạn giữa lúc mua) → «Đơn cần đối soát» qua đúng đường halt(hold=True)", got)
     # Máy nhận đơn đang CHỜ ĐƠN (không chạy bước nào) mất Bluetooth / board → vẫn phải báo (một lần), sẵn sàng lại rồi mất lại → báo lại
-    import apimode, boardhealth
+    import jobflow, boardhealth
 
     class Hh:
         ser = object()
@@ -277,10 +277,10 @@ def main():
 
         def claim(self, *a, **k):
             return {}
-    saved = apimode.order_steps, apimode.validate, boardhealth.recover, runmod.Runner._ensure_logged_out
+    saved = jobflow.order_steps, jobflow.validate, boardhealth.recover, runmod.Runner._ensure_logged_out
     try:
-        apimode.order_steps = lambda st: {"login": [1], "finish": [1]}
-        apimode.validate = lambda pool, st: []
+        jobflow.order_steps = lambda st: {"login": [1], "finish": [1]}
+        jobflow.validate = lambda pool, st: []
         boardhealth.recover = lambda h, log=None: {"ok": True, "actions": [], "health": None}
         for seq, expect, label in ((["bt"], "link", "Bluetooth rớt lúc chờ đơn"), (["unplugged"], "link", "board rút / cổng hỏng lúc chờ đơn")):
             got.clear()
@@ -324,7 +324,7 @@ def main():
         ok(notify.money(40000000, "JPY") == "400.000 JPY" and notify.money(80, "CHF") == "0,80 CHF" and notify.money("x", "JPY") == "?",
            "hiển thị tiền (đơn vị ×100): yên không có phần lẻ, CHF có 2 số lẻ")
     finally:
-        apimode.order_steps, apimode.validate, boardhealth.recover, runmod.Runner._ensure_logged_out = saved
+        jobflow.order_steps, jobflow.validate, boardhealth.recover, runmod.Runner._ensure_logged_out = saved
     got.clear()
     w_ = {"stop": threading.Event(), "abort": threading.Event(), "pause": threading.Event(), "group_name": "Nạp", "script_name": "đơn"}
     R2 = runmod.Runner(lambda n: object(), gateway_factory=lambda: None)

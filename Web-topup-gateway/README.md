@@ -135,7 +135,7 @@ Test **cả hai đầu** (tool thật ↔ gateway thật, iPhone giả lập) n�
 |---|---|
 | Lõi: env, DB, mã hoá, request/response, phiên admin, CSRF, giới hạn tần suất, lưu ảnh | `src/core.php` |
 | Bảng & migration (MySQL + SQLite) | `src/schema.php` |
-| Nghiệp vụ: pool/gói, khoá, máy, **máy rảnh + danh mục kịch bản do tool tự báo** (`Tools`), **ví tài khoản Apple** (`Money`, `Wallets` — ví do tool quản lý: gateway giữ bản sao + tiền của từng đơn), **vòng đời đơn**, OTP, webhook | `src/repo.php` |
+| Nghiệp vụ: pool/gói, khoá, máy, **máy rảnh + danh mục kịch bản do tool tự báo** (`Tools`), **ví tài khoản Apple** (`Money`, `Wallets` — ví do tool quản lý: gateway giữ bản sao + tiền của từng đơn), **vòng đời đơn**, OTP, webhook | `src/repo/` — mỗi lớp một tệp (`Pools.php`, `Jobs.php`, `Wallets.php`, …) |
 | API shop / tool, file ảnh, cron HTTP | `src/api.php` |
 | **Mô tả API cho /docs** (sửa API thì sửa ở đây cùng lúc) | `src/spec.php` |
 | Trang quản trị | `src/admin.php`, `views/` (khung trang: `views/layout.php`) |

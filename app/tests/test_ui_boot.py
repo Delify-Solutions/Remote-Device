@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Kiểm GIAO DIỆN KHỞI ĐỘNG TRỌN VẸN: nạp đủ các tệp JS của trang (_mock.js giả API + app.js + ai.js + alerts.js) trong `node`, với một DOM giả
+Kiểm GIAO DIỆN KHỞI ĐỘNG TRỌN VẸN: nạp đủ các tệp JS của trang (_mock.js giả API + mọi tệp trong các thẻ <script src> của index.html, đúng
+thứ tự nạp: core.js … main.js) trong `node`, với một DOM giả
 «cái gì cũng có», chạy hàm khởi động init() và mở từng trang, rồi kiểm KHÔNG CÓ lỗi «gọi hàm / biến không tồn tại» (ReferenceError).
 
-Vì sao cần: các bài test giao diện khác chỉ lấy riêng từng hàm trong app.js ra chạy. Lỗi ở cấp cả trang — vd xoá một hàm mà chỗ khác còn gọi —
+Vì sao cần: các bài test giao diện khác chỉ lấy riêng từng hàm trong các tệp JS ra chạy. Lỗi ở cấp cả trang — vd xoá một hàm mà chỗ khác còn gọi —
 làm init() dừng giữa chừng và nửa số nút không còn tác dụng mà không bài nào bắt được (verify 2026-11-28: xoá nhầm loadAiScreen).
 
 Sau đó mở KỊCH BẢN NHẬN ĐƠN của nhóm mẫu (cả trình sửa chạy trên DOM giả) và kiểm việc chép MỘT LẦN bước đời cũ từ gateway vào kịch bản:
@@ -15,12 +16,16 @@ from __future__ import annotations
 import json, os, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from test_ui_controls import page_scripts
+
 WEB = os.path.join(os.path.dirname(HERE), "web")
 PASS = FAIL = 0
 
 HARNESS = r"""
 const fs = require("fs"), path = require("path"), vm = require("vm");
-const WEB = process.argv[process.argv.length - 1];
+const WEB = process.argv[process.argv.length - 2];
+const FILES = JSON.parse(process.argv[process.argv.length - 1]);     // các tệp JS của trang, đúng thứ tự nạp (xem main: đọc từ thẻ <script src>)
 const errors = [];
 // DOM giả: mọi thuộc tính / lời gọi trả về chính nó (đọc gì cũng có, gọi gì cũng được), trừ vài thứ cần đúng kiểu.
 function any(name) {
@@ -81,7 +86,7 @@ const ctx = vm.createContext(win);
 const fmt = (e) => (e && e.stack ? e.stack.split("\n").slice(0, 2).join(" | ") : String(e));
 process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + fmt(e)));
 process.on("uncaughtException", (e) => errors.push("uncaughtException: " + fmt(e)));      // lỗi trong hàm hẹn giờ (vd init gọi từ pywebviewready)
-for (const f of ["_mock.js", "app.js", "ai.js", "alerts.js", "wallets.js"]) {
+for (const f of FILES) {
   try { new vm.Script(fs.readFileSync(path.join(WEB, f), "utf8"), { filename: f }).runInContext(ctx); }
   catch (e) { errors.push("load " + f + ": " + (e && e.stack ? e.stack.split("\n").slice(0, 2).join(" | ") : e)); }
 }
@@ -148,8 +153,13 @@ def main():
     if not node:
         print("  (BỎ QUA: máy không có node)")
         return 0
+    # Nạp đúng các tệp của trang THẬT (thẻ <script src> của index.html, đúng thứ tự), đứng trước là _mock.js giả API — như trang thử _test.html.
+    # Thêm / bớt một tệp JS của trang thì bài này tự theo; hai trang lệch danh sách tệp thì dừng ngay ở đây chứ không kiểm trên bản lệch.
+    files = ["_mock.js"] + page_scripts()
+    assert page_scripts("_test.html") == files, "_test.html phải nạp _mock.js rồi ĐÚNG các tệp JS của index.html, cùng thứ tự: %s ≠ %s" % (page_scripts("_test.html"), files)
+    files_arg = json.dumps(files)
     print("== Khởi động cả trang (init + mở từng trang) ==")
-    r = subprocess.run([node, "-e", HARNESS, WEB], capture_output=True, text=True, timeout=60)
+    r = subprocess.run([node, "-e", HARNESS, WEB, files_arg], capture_output=True, text=True, timeout=60)
     try:
         res = json.loads(r.stdout)                      # không in ra gì (node sập) = HỎNG, không phải «không có lỗi»
         errs, flow = res["errors"], res["flow"]
@@ -165,7 +175,7 @@ def main():
     probe = HARNESS.replace("(async () => {\n  await sleep(200);",
                             "process.stdout.write('MISSING[' + %s.filter(n => typeof ctx[n] !== 'function').join(',') + ']\\n');\nprocess.exit(0);\n(async () => {\n  await sleep(200);" % json.dumps(names), 1)
     assert probe != HARNESS, "không chèn được phép kiểm tên hàm"
-    r2 = subprocess.run([node, "-e", probe, WEB], capture_output=True, text=True, timeout=60)
+    r2 = subprocess.run([node, "-e", probe, WEB, files_arg], capture_output=True, text=True, timeout=60)
     line = next((ln for ln in (r2.stdout or "").splitlines() if ln.startswith("MISSING[")), None)
     missing = [n for n in line[len("MISSING["):].rstrip("]").split(",") if n] if line else None
     ok(missing == [], "các hàm chính của trang đều có: " + ", ".join(names), missing if missing is not None else (r2.stdout[-200:], r2.stderr[-200:]))

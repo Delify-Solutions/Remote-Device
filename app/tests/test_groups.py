@@ -291,7 +291,8 @@ def main():
             import shutil, subprocess, json as _json, re as _re
             node = shutil.which("node")
             if node:                                                      # «dấu» các bước: giao diện (stepsSig) tính GIỐNG HỆT bộ chạy
-                src = open(os.path.join(os.path.dirname(HERE), "web", "app.js"), encoding="utf-8").read()
+                from test_ui_controls import ui_source
+                src = ui_source()                                         # mọi tệp JS của trang, theo thứ tự nạp
                 fn = _re.search(r"function stepsSig\(steps\) \{.*?\n\}", src, _re.S).group(0)
                 cases = [scr5["steps"], [{"type": "tap_text", "text": "Đăng nhập 😀 «Sign Players»"}, {"type": "launch", "app": "eFootball"},
                                          {"type": "combo", "keys": "cmd a"}, {"type": "wait", "seconds": 2}, {"type": "tap", "x": 1, "y": 2}], []]

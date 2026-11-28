@@ -5,7 +5,11 @@ define('BASE', dirname(__DIR__));
 
 require BASE . '/src/core.php';
 require BASE . '/src/schema.php';
-require BASE . '/src/repo.php';
+// nghiệp vụ: mỗi lớp một tệp trong src/repo/ (thứ tự không quan trọng với PHP, xếp theo thứ tự đọc)
+foreach (['Settings', 'Pools', 'Keys', 'Devices', 'Tools', 'Money', 'Wallets', 'Jobs', 'Webhooks', 'Seed'] as $class) {
+    require BASE . '/src/repo/' . $class . '.php';
+}
+unset($class);
 require BASE . '/src/api.php';
 require BASE . '/src/spec.php';
 require BASE . '/src/admin.php';

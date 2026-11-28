@@ -146,7 +146,7 @@ def main():
     aiscreen.handle(Nav(), STEP, "w", IMG, CFG, lambda: (True, IMG, ""), tap_v, sleep=lambda s: None,
                     asker=lambda *a: aiscreen.parse(json.dumps({"kind": "ad", "close_label": "", "x": 1290, "y": 40, "confidence": 0.9, "reason": ""})))
     ok(seen_v == {"same": True, "changed": False}, "bấm có kiểm: vùng quanh nút đã đổi trong lúc đưa con trỏ tới → không bấm", seen_v)
-    import apimode, threading as th_, time as tm_
+    import stepexec, threading as th_, time as tm_
     flag = {"c": None}
 
     def slow_asker(cfg, img, ref, st, why):
@@ -159,7 +159,7 @@ def main():
         aiscreen.handle(Nav(), STEP, "w", IMG, CFG, lambda: (True, IMG, ""), lambda x, y, v=None: taps2.append((x, y)) or (True, ""),
                         sleep=lambda s: None, asker=slow_asker, cancel=lambda: flag["c"])
         ok(False, "«Dừng ngay» trong lúc AI đang trả lời → dừng ngay, KHÔNG bấm")
-    except apimode.Aborted:
+    except stepexec.Aborted:
         ok(not taps2 and tm_.time() - t0 < 0.8, "«Dừng ngay» trong lúc AI đang trả lời → dừng ngay (không chờ AI xong), KHÔNG bấm", (taps2, tm_.time() - t0))
     flag["c"] = None
     th_.Timer(0.2, lambda: flag.update(c="stop")).start()
@@ -316,8 +316,7 @@ def main():
         w = worker(); w["stop"].set()
         r = R._screen_helper("M1", w)(STEP, "khác ảnh mẫu", IMG)
         ok(not calls and r[0] is False and not alerts, "đã bấm Dừng → không hỏi AI, không tạm dừng", (calls, r))
-        import apimode
-
+        import stepexec
         def slow(*a, sleep=None, **k):
             sleep(5)
             return True, ""
@@ -327,7 +326,7 @@ def main():
         try:
             R._screen_helper("M1", w)(STEP, "khác ảnh mẫu", IMG)
             ok(False, "«Dừng ngay» trong lúc AI đang xử lý → dừng ngay (Aborted)")
-        except apimode.Aborted:
+        except stepexec.Aborted:
             ok(True, "«Dừng ngay» trong lúc AI đang xử lý → dừng ngay (Aborted)")
     finally:
         runmod.store.get_settings, aiscreen.handle = saved

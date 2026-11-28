@@ -11,7 +11,7 @@ import json, os, shutil, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-import store, wallets, presence, apimode
+import store, wallets, presence, jobflow, stepexec
 
 PASS = FAIL = 0
 
@@ -143,14 +143,14 @@ def main():
         L = lambda t, x, y, w=60, h=20: {"text": t, "x": x, "y": y, "w": w, "h": h}
         # hai ô cạnh nhau: ô sale 500 (có Remaining: 1) và ô thường 500 (không có) — bố cục ngang như danh sách eFootball
         lines = [L("500", 200, 300), L("Remaining: 1", 200, 260, 120), L("CHF 2.30", 200, 420), L("500", 800, 300), L("CHF 3.80", 800, 420)]
-        left = [apimode._flat("Remaining: 1")]
-        ok(apimode.once_left_in_card(lines, (200, 300), left, (1334, 750)), "ô sale 500 có «Remaining: 1» trong ô → còn mua được")
-        ok(not apimode.once_left_in_card(lines, (800, 300), left, (1334, 750)), "ô thường 500 bên cạnh: «Remaining: 1» thuộc ô kia → KHÔNG tính")
-        ok(not apimode.once_left_in_card([L("500", 200, 300), L("CHF 2.30", 200, 420)], (200, 300), left, (1334, 750)), "ô không có chữ → gói đã mua / hết lượt")
-        ok(not apimode.once_left_in_card([L("500", 200, 300), L("Remaining: 1", 200, 700, 120)], (200, 300), left, (1334, 750)), "chữ ở quá xa ô gói → không tính")
+        left = [stepexec._flat("Remaining: 1")]
+        ok(stepexec.once_left_in_card(lines, (200, 300), left, (1334, 750)), "ô sale 500 có «Remaining: 1» trong ô → còn mua được")
+        ok(not stepexec.once_left_in_card(lines, (800, 300), left, (1334, 750)), "ô thường 500 bên cạnh: «Remaining: 1» thuộc ô kia → KHÔNG tính")
+        ok(not stepexec.once_left_in_card([L("500", 200, 300), L("CHF 2.30", 200, 420)], (200, 300), left, (1334, 750)), "ô không có chữ → gói đã mua / hết lượt")
+        ok(not stepexec.once_left_in_card([L("500", 200, 300), L("Remaining: 1", 200, 700, 120)], (200, 300), left, (1334, 750)), "chữ ở quá xa ô gói → không tính")
         print("== 7. Bộ chạy đơn: gói «1 lần» — kiểm ô gói trước khi mua (không bấm gì) ==")
         import numpy as np
-        apimode._sleep = lambda *a, **k: None                          # bài thử: không chờ thật
+        stepexec._sleep = lambda *a, **k: None                          # bài thử: không chờ thật
 
         class E:
             def __init__(self, lines): self.lines = lines
@@ -168,7 +168,7 @@ def main():
         pv = {"package.ocr_text": "500", "package.price_text": "CHF 2.30", "package.name": "Coin Sale 500", "package.code": "sale_500"}
         item = {"code": "sale_500", "name": "Coin Sale 500", "limit_type": "once"}
         pkgs = [{"code": "coin_500", "ocr_text": "500"}, {"code": "sale_500", "ocr_text": "500"}]
-        mk = lambda lines, rules=None: apimode.JobFlow(Nv(lines), None, {"id": "J1", "items": [item]}, {"rules": rules or [], "packages": pkgs}, steps)
+        mk = lambda lines, rules=None: jobflow.JobFlow(Nv(lines), None, {"id": "J1", "items": [item]}, {"rules": rules or [], "packages": pkgs}, steps)
         f1 = mk(sale)
         ok(f1._once_left(item, pv) == (True, "") and not [c for c in f1.nav.h.sent if c != "home"],
            "ô sale 500 (500 · CHF 2.30) có «Remaining: 1» → còn mua được; không bấm gì", f1._once_left(item, pv))
@@ -180,9 +180,9 @@ def main():
         ok(r3[0] is False and "Remaining: 1" in r3[1], "ô gói còn nhưng không có «Remaining: 1» → coi như đã mua / hết lượt, không bấm", r3)
         f4 = mk([L("500", 200, 300), L("Còn lại: 1", 200, 260, 120), L("CHF 2.30", 200, 420)], rules=[{"when": "once_left", "value": "Còn lại: 1"}])
         ok(f4._once_left(item, pv) == (True, ""), "chữ «còn 1 lượt» lấy theo luật once_left của pool (game tiếng khác)")
-        f5 = apimode.JobFlow(None, None, {"id": "J1"}, {}, {}, apple={"account": "apple01@example.com", "password": "Mk-Apple#1"})
+        f5 = jobflow.JobFlow(None, None, {"id": "J1"}, {}, {}, apple={"account": "apple01@example.com", "password": "Mk-Apple#1"})
         ok(f5.apple == {"account": "apple01@example.com", "password": "Mk-Apple#1"}
-           and apimode.describe({"type": "type", "text": "{{apple.password}}"}, {"apple.password": "Mk-Apple#1"}) == "Gõ «{{apple.password}}»",
+           and stepexec.describe({"type": "type", "text": "{{apple.password}}"}, {"apple.password": "Mk-Apple#1"}) == "Gõ «{{apple.password}}»",
            "bộ chạy đơn nhận tài khoản / mật khẩu Apple của máy; nhật ký chỉ ghi TÊN biến {{apple.password}}, không ghi mật khẩu")
         print("== 8. Chống áp trùng / tính trùng tiền của đơn ==")
         wallets.save("M3", "apple03@example.com", "JPY")
@@ -226,7 +226,7 @@ def main():
 
         print("== 9. Gói «1 lần»: giá yên, máy ở sai màn hình, thiếu mật khẩu Apple ID ==")
         yen = [L("500", 200, 300), L("¥160", 200, 420), L("Remaining: 1", 200, 460, 120), L("500", 800, 300), L("¥320", 800, 420)]
-        ok(apimode.once_left_in_card(yen, (200, 300), left, (1334, 750)), "giá «¥160» không bị coi là số coin của ô khác → «Remaining: 1» vẫn thuộc đúng ô")
+        ok(stepexec.once_left_in_card(yen, (200, 300), left, (1334, 750)), "giá «¥160» không bị coi là số coin của ô khác → «Remaining: 1» vẫn thuộc đúng ô")
         f6 = mk([L("Trang chủ", 600, 100), L("Sự kiện", 600, 200)])
         f6.pool = {"rules": [], "packages": [{"code": "coin_500", "ocr_text": "500"}, {"code": "sale_500", "ocr_text": "500"}]}
         r6 = f6._once_left(item, pv)
@@ -235,15 +235,15 @@ def main():
         f7.pool = {"rules": [], "packages": [{"code": "coin_500", "ocr_text": "500"}, {"code": "sale_500", "ocr_text": "500"}]}
         ok(f7._once_left(item, pv)[0] is False, "đang ở cửa hàng (thấy ô gói khác) mà không có ô sale 500 → «đã mua rồi»")
         st8 = {"purchase": [{"type": "tap_text", "text": "{{package.ocr_text}}"}, {"type": "type", "text": "{{apple.password}}"}], "login": [], "finish": []}
-        f8 = apimode.JobFlow(Nv([]), None, {"id": "J8", "items": [item], "login": {"username": "k@example.com", "apple.password": "cua-khach"}}, {"rules": []}, st8)
-        apimode.validate, real_validate = (lambda pool, st: []), apimode.validate
+        f8 = jobflow.JobFlow(Nv([]), None, {"id": "J8", "items": [item], "login": {"username": "k@example.com", "apple.password": "cua-khach"}}, {"rules": []}, st8)
+        jobflow.validate, real_validate = (lambda pool, st: []), jobflow.validate
         try:
             try:
                 f8._flow(); ok(False, "thiếu mật khẩu Apple ID → dừng trước khi đăng nhập")
-            except apimode.ConfigError as e:
+            except stepexec.ConfigError as e:
                 ok("apple.password" in str(e), "bước mua cần {{apple.password}} mà máy chưa lưu → dừng NGAY trước khi đăng nhập (trường «apple.password» của khách không thay được)", str(e))
         finally:
-            apimode.validate = real_validate
+            jobflow.validate = real_validate
     finally:
         store.DATA_DIR = real
         shutil.rmtree(tmp, ignore_errors=True)

@@ -1278,7 +1278,7 @@ ok(($r4c['ok'] ?? false) === true && Jobs::byId($S4id)['note'] === 'gói tắt' 
 // máy có ví nhận đơn vừa được sửa gói → định giá theo gói MỚI; lệnh giao đơn chỉ ghi đè gói khi gói chưa bị sửa giữa chừng
 $cl4 = http('POST', '/api/tool/claim', $TK, ['device' => 'Adm-W', 'pool' => 'admin-pool', 'wallet' => $walAW])['json'];
 ok(($cl4['job']['ref'] ?? '') === 'ADM-S4' && ($cl4['job']['items'][0]['qty'] ?? 0) === 2 && (int) Jobs::byId($S4id)['cost'] === 200000
-    && preg_match('/status=\'queued\'\$cond",/', (string) file_get_contents(dirname(__DIR__) . '/src/repo.php')) === 1,
+    && preg_match('/status=\'queued\'\$cond",/', (string) file_get_contents(dirname(__DIR__) . '/src/repo/Jobs.php')) === 1,
     'máy có ví nhận đơn đã sửa: định giá theo số lượng mới (2 × 1.000 JPY); lệnh giao đơn kèm điều kiện «gói chưa đổi» (không đè bản admin vừa sửa)', $cl4['job']['items'] ?? null);
 // đơn chờ đối soát (kể cả máy không ví) → không xoá được: shop còn chờ kết quả cuối
 http('POST', "/api/tool/jobs/$S4/result", $TK, ['result' => 'review', 'message' => 'không chắc']);

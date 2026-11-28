@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import cv2
 import webview
 
-import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth, presence, history, notify, aiscreen, wallets
+import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, jobflow, stepexec, control, boardhealth, presence, history, notify, aiscreen, wallets
 from nav import Nav
 from hands import Hands
 from eyes import Eyes
@@ -214,7 +214,7 @@ def _gateway():
 
 
 # chạy kịch bản nhóm / nhận đơn từ gateway; mỗi máy một worker, dừng độc lập
-RUNNER = Runner(MGR.session, gateway_factory=_gateway, journal=apimode.Journal(store.DATA_DIR),
+RUNNER = Runner(MGR.session, gateway_factory=_gateway, journal=jobflow.Journal(store.DATA_DIR),
                 on_log=lambda entry: _push("window.__runLog && window.__runLog(%s)" % json.dumps(entry)))
 RUNNER.history = HISTORY
 # Thông báo Telegram cho admin (máy dừng chờ admin, đơn cần đối soát, bước lỗi, board / Bluetooth mất kết nối) — xem notify.py
@@ -304,7 +304,7 @@ def _note_ble(name, status):
 
 
 def _owes_order(name):
-    """Máy còn ĐƠN DỞ trong sổ (apimode.Journal — bền qua lần khởi động lại): đã nhận đơn mà chưa báo xong kết quả. Trạng thái «dừng chờ
+    """Máy còn ĐƠN DỞ trong sổ (jobflow.Journal — bền qua lần khởi động lại): đã nhận đơn mà chưa báo xong kết quả. Trạng thái «dừng chờ
     kiểm tra» chỉ nằm trong bộ nhớ, nên sau khi app khởi động lại đây là dấu vết duy nhất cho biết máy chưa được phép coi là rảnh."""
     j = RUNNER.journal
     if j is None:
@@ -1000,7 +1000,7 @@ class Api:
             _gateway().pool(o["pool"])
         except GatewayError as e:
             return e.vi()
-        if not apimode.order_steps(o["steps"])["purchase"]:
+        if not jobflow.order_steps(o["steps"])["purchase"]:
             return "%s chưa có «các bước mua 1 gói»." % what
         return None
 
@@ -1014,18 +1014,18 @@ class Api:
     def _adopt_gateway_steps(g, script=None):
         """Kịch bản nhận đơn CHƯA chép bước đời cũ từ gateway → chép (một lần; xem store.adopt_gateway_steps). Trả (nhóm đọc lại sau khi
         chép, {giai đoạn: số bước vừa chép}); không phải kịch bản nhận đơn / đã chép / chưa chọn pool → (nhóm như cũ, None).
-        Không đọc được pool → ném GatewayError; bước đời cũ SAI DẠNG ở giai đoạn kịch bản đang trống → ném apimode.ConfigError. Cả hai đều
+        Không đọc được pool → ném GatewayError; bước đời cũ SAI DẠNG ở giai đoạn kịch bản đang trống → ném stepexec.ConfigError. Cả hai đều
         chưa đánh dấu gì (lần sau thử lại) và người gọi KHÔNG được cho máy chạy."""
         sc = store.pick_script(g, script)
         o = store.api_defaults(sc.get("orders")) if sc and sc.get("mode") == "orders" else None
         if not (o and o["pool"] and not o["gw_steps_copied"]):
             return g, None
-        legacy, bad = apimode.legacy_gateway_steps(_gateway().pool(o["pool"]))
+        legacy, bad = jobflow.legacy_gateway_steps(_gateway().pool(o["pool"]))
         res = store.adopt_gateway_steps(g["id"], sc["id"], legacy, bad)
         if res is None:
             return g, None
         if res["blocked"]:
-            raise apimode.ConfigError(apimode.legacy_blocked_text(res["blocked"]))
+            raise stepexec.ConfigError(jobflow.legacy_blocked_text(res["blocked"]))
         return (store.get_group(g["id"]) or g), res["copied"]
 
     def orders_adopt(self, group_id, script_id):
@@ -1038,7 +1038,7 @@ class Api:
             g, copied = Api._adopt_gateway_steps(g, script_id)
         except GatewayError as e:
             return {"ok": False, "error": e.vi()}
-        except apimode.ConfigError as e:
+        except stepexec.ConfigError as e:
             return {"ok": False, "blocked": True, "error": "Chưa chép được: %s." % e}
         return {"ok": True, "copied": copied or {}, "group": g}
 
@@ -1105,7 +1105,7 @@ class Api:
             g, copied = Api._adopt_gateway_steps(g, script)
         except GatewayError as e:
             return {"ok": False, "error": e.vi()}
-        except apimode.ConfigError as e:
+        except stepexec.ConfigError as e:
             return {"ok": False, "error": "Chưa chạy: %s." % e}
         return Api._with_copy(self._group_run(g, names, script), g, copied)
 
@@ -1156,7 +1156,7 @@ class Api:
             g, copied = Api._adopt_gateway_steps(g, script)
         except GatewayError as e:
             return {"ok": False, "error": e.vi()}
-        except apimode.ConfigError as e:
+        except stepexec.ConfigError as e:
             return {"ok": False, "error": "Chưa chạy: %s." % e}
         return Api._with_copy(self._machine_run(g, name, script, start_at), g, copied)
 
@@ -1303,20 +1303,20 @@ class Api:
     @staticmethod
     def _test_api_steps(nav, steps, vars):
             results = []
-            apimode.watch_phase(nav, None, len(steps or []))
+            stepexec.watch_phase(nav, None, len(steps or []))
             for i, st in enumerate(steps or []):
                 ref = engine.capture_ref(nav, st)            # ảnh mẫu (màn hình ngay trước bước) cho bước thao tác chưa có
                 try:
-                    ok, msg, _ = apimode.exec_step(nav, st, vars)
-                except (apimode.ConfigError, apimode.InputError) as e:
+                    ok, msg, _ = stepexec.exec_step(nav, st, vars)
+                except (stepexec.ConfigError, stepexec.InputError) as e:
                     ok, msg = False, str(e)
                 except Exception as e:
                     ok, msg = False, "lỗi: %s" % e
                 results.append(dict({"i": i, "type": st.get("type"), "ok": ok,
-                                     "msg": apimode.describe(st, vars) + ((" — " + msg) if msg else "")}, **({"screen": ref} if ok and ref else {})))     # (bước có điều kiện: «đã bấm» hay «không thấy — bỏ qua»)
+                                     "msg": stepexec.describe(st, vars) + ((" — " + msg) if msg else "")}, **({"screen": ref} if ok and ref else {})))     # (bước có điều kiện: «đã bấm» hay «không thấy — bỏ qua»)
                 if not ok:
                     break
-                time.sleep(apimode.STEP_GAP)
+                time.sleep(stepexec.STEP_GAP)
             return {"ok": True, "results": results}
 
     # ---- kết nối Topup Gateway (cho các kịch bản nhận đơn) ----
@@ -1375,7 +1375,7 @@ class Api:
                 priv = _web_privacy(name) if WEBDEV is not None else None
                 if priv:
                     return {"ok": False, "error": priv}
-                return {"ok": True, "screen": apimode.capture_screen(nav)}
+                return {"ok": True, "screen": stepexec.capture_screen(nav)}
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
@@ -1625,7 +1625,7 @@ class Api:
                     "rules": pool.get("rules") or [], "packages": pool.get("packages") or [],
                     "login_fields": pool.get("login_fields") or [], "otp": pool.get("otp") or {},
                     # thiếu các thứ này thì máy KHÔNG nhận đơn — giao diện phải nói rõ cho người vận hành
-                    "missing_rules": apimode.missing_rules(pool)}
+                    "missing_rules": jobflow.missing_rules(pool)}
         except GatewayError as e:
             return {"ok": False, "error": e.vi()}
 

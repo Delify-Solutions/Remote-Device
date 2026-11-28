@@ -96,7 +96,7 @@ class Hands:
             self.ser.timeout = min(0.05, max(0.005, left))
             self._rx += self.ser.read(max(1, getattr(self.ser, "in_waiting", 0) or 1))
 
-    presses = 0         # số lần lệnh nhấn nút chuột (click / down) đã được GHI ra cổng — xem apimode.gesture()
+    presses = 0         # số lần lệnh nhấn nút chuột (click / down) đã được GHI ra cổng — xem stepexec.gesture()
 
     _owed = False       # lệnh trước CHƯA nhận được câu trả lời (hết giờ) → câu trả lời muộn của nó có thể còn tới
 

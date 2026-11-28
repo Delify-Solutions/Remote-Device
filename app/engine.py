@@ -23,18 +23,17 @@ Mỗi bước là dict JSON, ví dụ:
 from __future__ import annotations
 import time
 
-import apimode
-
+import stepexec
 def run_step(nav, step):
     """Chạy 1 bước của kịch bản. Trả (ok: bool, message: str) — lời mô tả bước, kèm lý do khi có.
-    MỘT bộ chạy cho mọi nơi: đây chính là apimode.exec_step — cùng cách làm với lúc nhận đơn (dò chữ nhiều cách viết, bấm có kiểm lại,
+    MỘT bộ chạy cho mọi nơi: đây chính là stepexec.exec_step — cùng cách làm với lúc nhận đơn (dò chữ nhiều cách viết, bấm có kiểm lại,
     nhịp bàn phím, báo «máy đang ở bước nào» cho bộ theo dõi). Kịch bản thường không có dữ liệu của đơn nên bước dùng {{biến}} sẽ báo lỗi
     thay vì gõ nguyên chữ {{…}}. Lỗi cấu hình / lỗi bất ngờ → (False, lời báo), không ném ra ngoài."""
     try:
-        ok, why, _ = apimode.exec_step(nav, step, {})
+        ok, why, _ = stepexec.exec_step(nav, step, {})
     except Exception as e:
         return False, "lỗi %s: %s" % (step.get("type"), e)
-    return ok, apimode.describe(step, {}) + ((" — " + why) if why else "")
+    return ok, stepexec.describe(step, {}) + ((" — " + why) if why else "")
 
 
 def capture_ref(nav, step):
@@ -44,7 +43,7 @@ def capture_ref(nav, step):
     if not isinstance(step, dict) or step.get("type") not in screencheck.CHECK_TYPES or screencheck.valid(step.get("screen")):
         return None
     try:
-        return apimode.capture_screen(nav)
+        return stepexec.capture_screen(nav)
     except Exception:
         return None
 
@@ -68,7 +67,7 @@ def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None, pause_ga
     on_step(i, ok, msg): báo tiến độ — ok=None lúc BẮT ĐẦU bước i (trước cả lúc kiểm màn hình), True / False lúc bước xong."""
     results = []
     start = max(0, min(int(start or 0), len(steps)))
-    apimode.watch_phase(nav, None, len(steps), start)
+    stepexec.watch_phase(nav, None, len(steps), start)
     for i, step in enumerate(steps):
         if i < start:
             continue
@@ -84,8 +83,8 @@ def run_flow(nav, steps, log=print, stop_on_fail=True, stop_check=None, pause_ga
             seen = True
         else:
             try:
-                seen, why = apimode.screen_gate(nav, step, stop_check)
-            except apimode.Aborted:
+                seen, why = stepexec.screen_gate(nav, step, stop_check)
+            except stepexec.Aborted:
                 log("  ⟂ đã dừng theo yêu cầu")
                 break
         if not seen:                                    # màn hình không phải màn hình của bước này → KHÔNG làm bước

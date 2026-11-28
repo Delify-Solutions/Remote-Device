@@ -366,11 +366,11 @@ def wiring_tests():
         gui.RUNNER.journal.state = {"M1": {"job": "J1", "ref": "NG1", "phase": "finished", "delivered": True}}
         ok(st("M1") == "idle", "đơn trong sổ đã báo xong → máy lại rảnh")
 
-        # sổ đơn THẬT (apimode.Journal): tệp hỏng phải bị coi là «không biết» → không báo rảnh; tệp chưa có = chưa từng có đơn
-        import apimode
+        # sổ đơn THẬT (jobflow.Journal): tệp hỏng phải bị coi là «không biết» → không báo rảnh; tệp chưa có = chưa từng có đơn
+        import jobflow
         jdir = tempfile.mkdtemp(prefix="presence-journal-")
         try:
-            gui.RUNNER.journal = apimode.Journal(jdir)
+            gui.RUNNER.journal = jobflow.Journal(jdir)
             ok(st("M1") == "idle", "sổ đơn chưa có tệp (chưa từng nhận đơn) → máy rảnh bình thường")
             gui.RUNNER.journal.set("M1", job="J9", ref="NG9", phase="claimed", delivered=False)
             ok(st("M1") == "hold", "sổ thật ghi máy đang giữ một đơn chưa báo xong → không rảnh")

@@ -194,7 +194,7 @@ final class Schema
                 'ALTER TABLE tool_scripts ADD COLUMN pool_code VARCHAR(40) NULL',
             ],
 
-            // Giá gói theo loại tiền + tiền của đơn (jobs.currency / cost / wallet_state — xem Wallets, Pools::priced trong repo.php).
+            // Giá gói theo loại tiền + tiền của đơn (jobs.currency / cost / wallet_state — xem Wallets, Pools::priced trong src/repo/).
             // Hai bảng wallets / wallet_entries và cột jobs.wallet_id là VÍ KHAI Ở GATEWAY đời đầu: từ migration 6 ví do tool quản lý, không còn
             // mã nào đọc / ghi chúng (để nguyên trong CSDL — không bắt mọi nơi đã cài phải chạy thêm một migration chỉ để bỏ bảng trống).
             // Số tiền luôn là SỐ NGUYÊN = số tiền × 100 (1.500 JPY → 150000, 63,00 CHF → 6300) — không bao giờ dùng số thực.

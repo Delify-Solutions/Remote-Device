@@ -2,7 +2,7 @@
 """
 Test đầu-cuối CHẾ ĐỘ API của tool:   ./.venv/bin/python app/tests/test_api_mode.py
 
-  tool (code nạp THẬT: runner.py + apimode.py + gateway.py)
+  tool (code nạp THẬT: runner.py + jobflow.py + stepexec.py + gateway.py)
      │  điều khiển một iPHONE GIẢ (mô phỏng game: đăng nhập, OTP, cửa hàng, xác nhận mua…)
      ▼
   Topup Gateway THẬT (Web-topup-gateway, chạy tạm bằng `php -S` trên SQLite tạm)
@@ -24,8 +24,8 @@ sys.path.insert(0, APP)
 
 import numpy as np
 
-import apimode
-from apimode import Journal
+import jobflow, stepexec
+from jobflow import Journal
 from eyes import norm_text
 from gateway import Gateway, GatewayError
 from runner import Runner
@@ -33,12 +33,12 @@ from runner import Runner
 # ---- chạy nhanh: bỏ các quãng nghỉ dành cho máy thật (vẫn giữ kiểm «Dừng ngay») ----
 def _fast_sleep(sec, abort=None):
     if abort and abort():
-        raise apimode.Aborted()
+        raise stepexec.Aborted()
     time.sleep(min(max(sec, 0), 0.02))
-apimode._sleep = _fast_sleep
-apimode.STEP_GAP = 0
-PROD_NEG_GRACE = apimode.JobFlow.NEG_GRACE        # hằng số THẬT — có một bài thử riêng chạy với nó (đồng hồ giả)
-apimode.JobFlow.NEG_GRACE = 0.25         # (thật: 30 giây) thời gian chữ báo lỗi phải hiện ổn định trước khi được tin
+stepexec._sleep = _fast_sleep
+stepexec.STEP_GAP = 0
+PROD_NEG_GRACE = jobflow.JobFlow.NEG_GRACE        # hằng số THẬT — có một bài thử riêng chạy với nó (đồng hồ giả)
+jobflow.JobFlow.NEG_GRACE = 0.25         # (thật: 30 giây) thời gian chữ báo lỗi phải hiện ổn định trước khi được tin
 
 PASS = FAIL = 0
 def ok(cond, name, ctx=None):
@@ -274,7 +274,7 @@ class FakeHands:
 
 
 class BurstHands(FakeHands):
-    """Board có lệnh gửi liền mạch (như board thật) → code đi nhánh `burst` của apimode.click()."""
+    """Board có lệnh gửi liền mạch (như board thật) → code đi nhánh `burst` của stepexec.click()."""
     WAKE = ("move 1 0", "move -1 0")
 
     def burst(self, cmds, wait=1.0):
@@ -625,18 +625,18 @@ def run_all(gw, rigs):
     pools = c.pools()
     ok(any(p.get("code") == "game-test" for p in pools), "tool lấy được danh sách pool để chọn", pools)
     pool = c.pool("game-test")
-    steps = apimode.order_steps(BASE_STEPS)
-    ok([len(steps[p]) for p in apimode.PHASES] == [7, 2, 1, 2, 1, 4], "bước 6 giai đoạn lấy từ KỊCH BẢN của tool (OTP để trống → mặc định: gõ mã + Enter)",
-       {p: len(steps[p]) for p in apimode.PHASES})
-    only = apimode.order_steps({"purchase": [{"type": "tap", "x": 1, "y": 2}, "rác", {"khong": "co-type"}]})
+    steps = jobflow.order_steps(BASE_STEPS)
+    ok([len(steps[p]) for p in jobflow.PHASES] == [7, 2, 1, 2, 1, 4], "bước 6 giai đoạn lấy từ KỊCH BẢN của tool (OTP để trống → mặc định: gõ mã + Enter)",
+       {p: len(steps[p]) for p in jobflow.PHASES})
+    only = jobflow.order_steps({"purchase": [{"type": "tap", "x": 1, "y": 2}, "rác", {"khong": "co-type"}]})
     ok(only["purchase"] == [{"type": "tap", "x": 1, "y": 2}] and only["login"] == [] and only["finish"] == [] and len(only["otp"]) == 2,
        "giai đoạn kịch bản không soạn thì TRỐNG — bộ chạy không lấy bước nào từ gateway; phần tử rác bị bỏ", only)
-    ok(apimode.legacy_gateway_steps(pool) == ({}, {}) and not any(k.endswith("_steps") for k in pool), "pool thường: gateway không giữ (và không trả) bước nào", [k for k in pool if k.endswith("_steps")])
-    legacy, bad = apimode.legacy_gateway_steps(c.pool("game-legacy"))
-    ok(bad == {} and legacy == {p: BASE_STEPS[p] for p in apimode.PHASES if BASE_STEPS[p]},
+    ok(jobflow.legacy_gateway_steps(pool) == ({}, {}) and not any(k.endswith("_steps") for k in pool), "pool thường: gateway không giữ (và không trả) bước nào", [k for k in pool if k.endswith("_steps")])
+    legacy, bad = jobflow.legacy_gateway_steps(c.pool("game-legacy"))
+    ok(bad == {} and legacy == {p: BASE_STEPS[p] for p in jobflow.PHASES if BASE_STEPS[p]},
        "pool ĐỜI CŨ: bước còn lưu ở gateway đổi đúng sang dạng của tool (giữ cờ «bỏ qua nếu lỗi», «chờ chữ @3s» → chờ 3 giây)", legacy)
     old_pool = {"login_steps": [{"type": "home", "value": "", "note": " về home "}], "nav_steps": [{"type": "tap_text", "value": "Shop"}, {"type": "tap", "value": "sai"}], "finish_steps": "rác"}
-    lg2, bad2 = apimode.legacy_gateway_steps(old_pool)
+    lg2, bad2 = jobflow.legacy_gateway_steps(old_pool)
     ok(lg2 == {"login": [{"type": "home", "note": "về home"}]} and list(bad2) == ["nav"] and "x,y" in bad2["nav"],
        "giai đoạn đời cũ có bước sai dạng → bỏ CẢ giai đoạn đó kèm lời báo theo giai đoạn; giai đoạn khác vẫn đổi (ghi chú của bước đi theo)", (lg2, bad2))
     # bộ chạy (lưới an toàn khi kịch bản chưa chép): giai đoạn kịch bản đang trống mà bước đời cũ sai dạng → KHÔNG chạy; có bước rồi thì không vướng
@@ -651,11 +651,11 @@ def run_all(gw, rigs):
     ok(free is None and ap2["gw_steps_copied"] is True and ap2["steps"]["finish"] == [{"type": "home"}] and ap2["steps"]["nav"] == [{"type": "tap_text", "text": "Shop"}]
        and ap2["steps"]["login"] == [{"type": "home"}] and len(said) == 1 and "Đã chép 1 bước cũ" in said[0],
        "…giai đoạn sai dạng mà kịch bản đã tự có bước → không vướng: chép các giai đoạn trống còn lại, giữ nguyên bước của kịch bản", (free, said))
-    ok(apimode.validate(pool, steps) == [], "pool đủ luật + kịch bản đủ bước → tool chịu chạy", apimode.validate(pool, steps))
+    ok(jobflow.validate(pool, steps) == [], "pool đủ luật + kịch bản đủ bước → tool chịu chạy", jobflow.validate(pool, steps))
     bare = c.pool("game-bare")
-    miss = apimode.validate(bare, steps)
+    miss = jobflow.validate(bare, steps)
     ok(len(miss) == 3 and all("thiếu luật" in m for m in miss), "pool thiếu 3 luật bắt buộc (chưa đăng nhập / đăng nhập thành công / nạp thành công) → bị từ chối", miss)
-    ok(any("chưa có bước" in m for m in apimode.validate(pool, dict(steps, finish=[]))), "thiếu bước kết thúc đơn (đăng xuất) → bị từ chối")
+    ok(any("chưa có bước" in m for m in jobflow.validate(pool, dict(steps, finish=[]))), "thiếu bước kết thúc đơn (đăng xuất) → bị từ chối")
 
     print("\n== 1. Đơn thường: đăng nhập → mua 2 gói → bill → đăng xuất ==")
     g = FakeGame(accounts())
@@ -943,12 +943,12 @@ def run_all(gw, rigs):
     # lớp chặn thứ hai (ngay trong lúc làm đơn): game đang đăng nhập sẵn → không gõ tài khoản, báo failed + dừng máy
     pool_cfg = Gateway(gw.url, gw.tool_key).pool("game-test")
     def direct(game, login_steps=None):
-        st = apimode.order_steps(dict(BASE_STEPS, login=login_steps) if login_steps else BASE_STEPS)
+        st = jobflow.order_steps(dict(BASE_STEPS, login=login_steps) if login_steps else BASE_STEPS)
         class NoGw:                                # không gọi mạng: chỉ xét quyết định của luồng xử lý đơn
             def progress(self, *a, **k): return {"ok": True}
             def upload_image(self, *a, **k): return {"ok": True}
         job = {"id": "JDIRECT", "login": {"username": "otp@test.vn", "password": "PassB#2"}, "items": [{"code": "coin_1050", "name": "1050 Coins", "qty": 1, "ocr_text": "1050|1,050"}]}
-        return apimode.JobFlow(FakeNav(game), NoGw(), job, pool_cfg, st, opts={"login_wait": 2, "purchase_wait": 2, "clear_wait": 0.2}).run()
+        return jobflow.JobFlow(FakeNav(game), NoGw(), job, pool_cfg, st, opts={"login_wait": 2, "purchase_wait": 2, "clear_wait": 0.2}).run()
     gs = FakeGame(accounts()); gs.user = "a@test.vn"
     out = direct(gs)
     ok(out.result == "failed" and out.halt and out.session == "in" and "PassB#2" not in gs.keylog and gs.purchases == [],
@@ -1115,9 +1115,9 @@ def run_all(gw, rigs):
         def send(self, cmd, wait=0.5): return "OK home"
     def reader(texts, wait=3.0):
         class NoGw: pass
-        jf = apimode.JobFlow(Seq(texts), NoGw(), {"id": "J", "login": {}, "items": []}, pool_cfg, apimode.order_steps(BASE_STEPS),
+        jf = jobflow.JobFlow(Seq(texts), NoGw(), {"id": "J", "login": {}, "items": []}, pool_cfg, jobflow.order_steps(BASE_STEPS),
                              opts={"login_wait": 1, "purchase_wait": wait, "clear_wait": 0.2})
-        return jf._read_result(list(apimode.RESULT_RULES))[0]
+        return jf._read_result(list(jobflow.RESULT_RULES))[0]
     ok(reader(["Đang xử lý", "Thanh toán thất bại", "Mua thành công! Đóng"]) == "purchase_success", "thoáng thấy chữ «thất bại» rồi «thành công» hiện ra → tính là ĐÃ NẠP")
     ok(reader(["Đang xử lý", "Thanh toán thất bại. Đóng"]) == "purchase_fail", "chữ «thất bại» hiện ổn định (nhiều lần nhìn liền, đủ lâu) → mới kết luận thất bại")
     ok(reader(["Thanh toán thất bại", "Đang xử lý", "Đang xử lý", "Mua thành công!"]) == "purchase_success", "chữ báo lỗi chỉ lóe lên một lần (OCR nhầm) → không kết luận, chờ tiếp tới khi có kết quả thật")
@@ -1128,7 +1128,7 @@ def run_all(gw, rigs):
     import types
     class Clock:
         t = 0.0
-    real_time_mod, real_sleep_fn, real_grace = apimode.time, apimode._sleep, apimode.JobFlow.NEG_GRACE
+    real_time_mod, real_sleep_fn, real_grace = stepexec.time, stepexec._sleep, jobflow.JobFlow.NEG_GRACE      # (stepexec.time và jobflow.time là cùng một mô-đun time)
     prod_rules = [{"when": "logged_out", "value": "Konami ID"}, {"when": "login_success", "value": "Trang chủ"},
                   {"when": "purchase_success", "value": "Mua thành công"}, {"when": "purchase_fail", "value": "Thanh toán thất bại"},
                   {"when": "package_unavailable", "value": "Đã mua gói này"}]
@@ -1151,13 +1151,13 @@ def run_all(gw, rigs):
         Clock.t = 0.0
         nav = LagNav(t_label, t_ok_after, t_fail_after)
         steps = {"login": [], "finish": [], "otp": [], "nav": [], "after": [], "purchase": [{"type": "key", "name": "enter"}]}
-        flow = apimode.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": prod_rules}, steps,
+        flow = jobflow.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": prod_rules}, steps,
                                opts={"purchase_wait": 60, "clear_wait": 8}, log=lambda *a, **k: None)
         return flow._buy_one({"code": "c", "name": "1050 Coins", "qty": 1}, {})[0]
     try:
-        apimode.time = types.SimpleNamespace(time=lambda: Clock.t, sleep=lambda s: setattr(Clock, "t", Clock.t + s), strftime=time.strftime)
-        apimode._sleep = lambda sec, abort=None: setattr(Clock, "t", Clock.t + sec)
-        apimode.JobFlow.NEG_GRACE = PROD_NEG_GRACE
+        stepexec.time = jobflow.time = types.SimpleNamespace(time=lambda: Clock.t, sleep=lambda s: setattr(Clock, "t", Clock.t + s), strftime=time.strftime)
+        stepexec._sleep = lambda sec, abort=None: setattr(Clock, "t", Clock.t + sec)
+        jobflow.JobFlow.NEG_GRACE = PROD_NEG_GRACE
         wrong = [(tl, oa, lag_run(tl, oa)) for tl in (0.0, 6.0, 9.0, 20.0) for oa in (1.0, 5.0, 15.0, 25.0) if lag_run(tl, oa) != "ok"]
         ok(wrong == [], "hằng số THẬT: nhãn «Đã mua gói này» ở ô khác hiện muộn + hộp thoại «thành công» hiện chậm tới 25 s sau khi bấm → vẫn tính ĐÃ NẠP (trước đây báo «không mua được» dù đã trừ tiền)", wrong)
         ok(lag_run(0.0, None, 2.0) == "failed" and lag_run(0.0, None, None) in ("unavailable", "uncertain"),
@@ -1166,7 +1166,7 @@ def run_all(gw, rigs):
             Clock.t = 0.0
             nav = LagNav(t_label, t_ok_after)
             steps = {"login": [], "finish": [], "otp": [], "nav": [], "after": [], "purchase": [{"type": "key", "name": "enter"}]}
-            flow = apimode.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": prod_rules}, steps,
+            flow = jobflow.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": prod_rules}, steps,
                                    opts={"purchase_wait": wait, "clear_wait": 8}, log=lambda *a, **k: None)
             return flow._buy_one({"code": "c", "name": "1050 Coins", "qty": 1}, {})[0]
         wrong = [(w_, tl, oa, lag_run_wait(tl, oa, w_)) for w_ in (10, 20, 30, 45, 60, 120) for tl in (0.0, 6.0, 9.0) for oa in (1.0, 5.0, 9.0, 15.0, 20.0, 25.0, 30.0)
@@ -1183,7 +1183,7 @@ def run_all(gw, rigs):
                 Clock.t += 0.5
                 return "Cửa hàng 1050 Coins" + (" Quảng cáo Đóng" if self.ad else "")
             def find_text(self, needle, img=None, **kw):
-                return (600, 300) if (self.ad and "dong" in apimode.norm_text(needle)) else None
+                return (600, 300) if (self.ad and "dong" in stepexec.norm_text(needle)) else None
             def tap_at(self, x, y, click=True, verify=None):
                 self.taps.append((x, y)); self.ad = False; return True
             def send(self, cmd, wait=0.5):
@@ -1193,7 +1193,7 @@ def run_all(gw, rigs):
             nav = AdNav(ad)
             steps = {"login": [], "finish": [], "otp": [], "nav": [], "after": [],
                      "purchase": [{"type": "tap_if", "text": "Quảng cáo", "tap": "Đóng", "timeout": 0}, {"type": "tap_text", "text": "Gói không có trên màn hình"}]}
-            flow = apimode.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": prod_rules}, steps,
+            flow = jobflow.JobFlow(nav, None, {"id": "J", "items": [{"code": "c", "name": "1050 Coins", "qty": 1}]}, {"rules": prod_rules}, steps,
                                    opts={"purchase_wait": 20, "clear_wait": 8}, log=lambda *a, **k: None)
             return flow._buy_one({"code": "c", "name": "1050 Coins", "qty": 1}, {})[0], flow.risky, nav.taps, nav.sent
         clean_, dirty_ = ad_run(False), ad_run(True)
@@ -1204,7 +1204,8 @@ def run_all(gw, rigs):
         ok(lag_run(0.0, None, 55.0) == "uncertain" and lag_run(0.0, None, 40.0) == "uncertain" and lag_run(0.0, None, 15.0) == "failed",
            "hằng số THẬT: chữ báo lỗi chỉ mới hiện vài giây trước khi hết giờ (chưa ổn định đủ lâu, success có thể còn đang tới) → «không xác nhận được» (đối soát), KHÔNG kết luận thất bại")
     finally:
-        apimode.time, apimode._sleep, apimode.JobFlow.NEG_GRACE = real_time_mod, real_sleep_fn, real_grace
+        stepexec.time, stepexec._sleep, jobflow.JobFlow.NEG_GRACE = real_time_mod, real_sleep_fn, real_grace
+        jobflow.time = real_time_mod
     ok(PROD_NEG_GRACE >= 20, "hằng số NEG_GRACE thật đủ dài cho game chậm (≥ 20 s)", PROD_NEG_GRACE)
 
     # chụp màn hình trục trặc đúng MỘT lần ngay trước khi mua → thử lại, không bỏ đơn
@@ -1217,25 +1218,25 @@ def run_all(gw, rigs):
     rs1.stop()
     # màn hình đổi trong lúc con trỏ đang được đưa tới → KHÔNG bấm (kiểm lại chữ cần bấm ngay trước khi bấm)
     gc = FakeGame(accounts(), change_before_click=True); gc.screen = "main"
-    r = apimode.exec_step(FakeNav(gc), {"type": "tap_text", "text": "Cửa hàng"}, {})
+    r = stepexec.exec_step(FakeNav(gc), {"type": "tap_text", "text": "Cửa hàng"}, {})
     ok(r[0] is False and r[2] is False and gc.clicks == 0, "bấm chữ: màn hình đổi trước khi kịp bấm → không bấm, và chắc chắn chưa chạm", r)
     gc2 = FakeGame(accounts(), change_before_click=True); gc2.screen = "main"
-    r = apimode.exec_step(FakeNav(gc2), {"type": "hold_text", "text": "Cửa hàng", "seconds": 1}, {})
+    r = stepexec.exec_step(FakeNav(gc2), {"type": "hold_text", "text": "Cửa hàng", "seconds": 1}, {})
     ok(r[0] is False and gc2.gestures == [], "giữ chữ: màn hình đổi trước khi kịp nhấn → không nhấn", (r, gc2.gestures))
     # cử chỉ hỏng: đã nhấn nút hay chưa?
     class Press:                                           # board có đếm số lần nhấn nút (như Hands thật)
         presses = 0
     gg = FakeGame(accounts()); ng = FakeNav(gg); ng.h = Press(); ng._hid_sent = 7
-    r = apimode.gesture(ng, "vuốt", lambda: False)
+    r = stepexec.gesture(ng, "vuốt", lambda: False)
     ok(r[0] is False and r[2] is False and ng._hid_sent == 7 and "chưa chạm" in r[1], "cử chỉ hỏng mà nút CHƯA hề được nhấn (con trỏ không tới điểm đầu) → chắc chắn chưa chạm vào app", r)
     def half():
         ng.h.presses += 1; return False
-    r = apimode.gesture(ng, "vuốt", half)
+    r = stepexec.gesture(ng, "vuốt", half)
     ok(r[0] is False and r[2] is True and ng._hid_sent == 8, "cử chỉ hỏng SAU khi đã nhấn nút → «không chắc» (ở bước mua sẽ thành review)", r)
     def boom():
         ng.h.presses += 1; raise OSError("cổng chết")
     try:
-        apimode.gesture(ng, "vuốt", boom); raised = False
+        stepexec.gesture(ng, "vuốt", boom); raised = False
     except OSError:
         raised = True
     ok(raised and ng._hid_sent == 9, "cử chỉ NÉM LỖI giữa chừng → bộ đếm lệnh đã tăng từ trước (bên gọi biết có thể đã chạm)")
@@ -1323,7 +1324,7 @@ def run_all(gw, rigs):
     r30.stop()
 
     print("\n== 25. Vuốt / bấm giữ: đổi cấu hình thành bước, mô tả, chạy, báo lỗi ==")
-    conv = apimode.gw_step_to_engine
+    conv = jobflow.gw_step_to_engine
     ok(conv({"type": "swipe", "value": " LEFT "}) == {"type": "swipe", "dir": "left"}, "vuốt theo hướng")
     ok(conv({"type": "swipe", "value": "375,1000 > 375,400"}) == {"type": "swipe", "x1": 375, "y1": 1000, "x2": 375, "y2": 400}
        and conv({"type": "swipe", "value": "10 20 -> 30 40"})["x2"] == 30, "vuốt theo toạ độ «x1,y1 > x2,y2»")
@@ -1334,45 +1335,45 @@ def run_all(gw, rigs):
     bad = 0
     for v in ({"type": "swipe", "value": "cheo"}, {"type": "swipe", "value": "1,2"}, {"type": "hold", "value": "giua man hinh"}):
         try: conv(v)
-        except apimode.ConfigError: bad += 1
+        except stepexec.ConfigError: bad += 1
     ok(bad == 3, "giá trị sai dạng → báo lỗi cấu hình rõ ràng (không chạy bừa)", bad)
-    ok(apimode.describe({"type": "swipe", "dir": "left"}) and "trái" in apimode.describe({"type": "swipe", "dir": "left"})
-       and "giữ" in apimode.describe({"type": "hold", "x": 1, "y": 2, "seconds": 1.5}).lower(), "có mô tả tiếng Việt cho nhật ký")
+    ok(stepexec.describe({"type": "swipe", "dir": "left"}) and "trái" in stepexec.describe({"type": "swipe", "dir": "left"})
+       and "giữ" in stepexec.describe({"type": "hold", "x": 1, "y": 2, "seconds": 1.5}).lower(), "có mô tả tiếng Việt cho nhật ký")
     gq = FakeGame(accounts()); nq = FakeNav(gq)
-    ok(apimode.exec_step(nq, {"type": "swipe", "x1": 375, "y1": 1000, "x2": 375, "y2": 400}, {}) == (True, "", True) and gq.gestures == [("swipe", 375, 1000, 375, 400)], "chạy bước vuốt theo toạ độ", gq.gestures)
-    ok(apimode.exec_step(nq, {"type": "hold", "x": 636, "y": 468, "seconds": 1.3}, {})[0] is True and gq.gestures[-1] == ("hold", 636, 468, 1.3), "chạy bước bấm giữ", gq.gestures)
-    r = apimode.exec_step(nq, {"type": "hold_text", "text": "Chữ không có trên màn", "seconds": 1}, {})
+    ok(stepexec.exec_step(nq, {"type": "swipe", "x1": 375, "y1": 1000, "x2": 375, "y2": 400}, {}) == (True, "", True) and gq.gestures == [("swipe", 375, 1000, 375, 400)], "chạy bước vuốt theo toạ độ", gq.gestures)
+    ok(stepexec.exec_step(nq, {"type": "hold", "x": 636, "y": 468, "seconds": 1.3}, {})[0] is True and gq.gestures[-1] == ("hold", 636, 468, 1.3), "chạy bước bấm giữ", gq.gestures)
+    r = stepexec.exec_step(nq, {"type": "hold_text", "text": "Chữ không có trên màn", "seconds": 1}, {})
     ok(r[0] is False and r[2] is False and len(gq.gestures) == 2, "bấm giữ vào chữ KHÔNG có trên màn hình → lỗi, chắc chắn chưa chạm gì", r)
     gf = FakeGame(accounts(), pointer_fail=True); nf = FakeNav(gf)
-    r = apimode.exec_step(nf, {"type": "swipe", "dir": "up"}, {})
+    r = stepexec.exec_step(nf, {"type": "swipe", "dir": "up"}, {})
     ok(r[0] is False and r[2] is True and gf.gestures == [], "cử chỉ hỏng giữa chừng → coi là «không chắc đã chạm» (ở bước mua sẽ thành review, không phải failed)", r)
     try:
-        apimode.exec_step(nq, {"type": "swipe", "dir": "cheo"}, {}); raised = False
-    except apimode.ConfigError:
+        stepexec.exec_step(nq, {"type": "swipe", "dir": "cheo"}, {}); raised = False
+    except stepexec.ConfigError:
         raised = True
-    ok(raised and set(("swipe", "hold", "hold_text")) <= set(apimode.INPUT_TYPES), "hướng lạ → lỗi cấu hình; vuốt/bấm giữ được tính là «thao tác vào máy»")
+    ok(raised and set(("swipe", "hold", "hold_text")) <= set(stepexec.INPUT_TYPES), "hướng lạ → lỗi cấu hình; vuốt/bấm giữ được tính là «thao tác vào máy»")
 
     print("\n== 26. Đoạn «mở game» + điểm chặn trước khi gõ tài khoản ==")
     L = lambda *steps: [dict(s) for s in steps]
     std = L({"type": "launch", "app": "efootball"}, {"type": "wait_text", "text": "Konami ID", "timeout": 3}, {"type": "tap_text", "text": "Đăng nhập"},
             {"type": "type", "text": "{{username}}"}, {"type": "key", "name": "tab"}, {"type": "type", "text": "{{password}}"}, {"type": "key", "name": "enter"})
-    ok([s["type"] for s in apimode.open_prefix(std)] == ["launch", "wait_text"] and apimode.credential_gate(std) == 3,
+    ok([s["type"] for s in jobflow.open_prefix(std)] == ["launch", "wait_text"] and jobflow.credential_gate(std) == 3,
        "danh sách thường: đoạn mở game dừng TRƯỚC cú bấm đầu tiên; chặn ngay trước bước gõ {{username}}")
     fixed = L({"type": "launch", "app": "efootball"}, {"type": "type", "text": "vn"}, {"type": "key", "name": "enter"}, {"type": "type", "text": "{{username}}"})
-    ok(len(apimode.open_prefix(fixed)) == 3 and apimode.credential_gate(fixed) == 3, "gõ chữ CỐ ĐỊNH (không phải của khách) vẫn thuộc đoạn mở game")
+    ok(len(jobflow.open_prefix(fixed)) == 3 and jobflow.credential_gate(fixed) == 3, "gõ chữ CỐ ĐỊNH (không phải của khách) vẫn thuộc đoạn mở game")
     tapin = L({"type": "launch", "app": "efootball"}, {"type": "tap_text", "text": "Vào bằng Game Center"})
-    ok(apimode.credential_gate(tapin) == 1 and apimode.credential_gate([]) == 0 and apimode.open_prefix(None) == [],
+    ok(jobflow.credential_gate(tapin) == 1 and jobflow.credential_gate([]) == 0 and jobflow.open_prefix(None) == [],
        "đăng nhập bằng cách BẤM (không gõ tài khoản): chặn ngay sau đoạn mở game, trước cú bấm")
     for odd in ("hold", "hold_text", "swipe", "tap"):
-        ok(apimode.open_prefix(L({"type": "launch", "app": "x"}, {"type": odd}, {"type": "wait", "seconds": 1})) == [{"type": "launch", "app": "x"}],
+        ok(jobflow.open_prefix(L({"type": "launch", "app": "x"}, {"type": odd}, {"type": "wait", "seconds": 1})) == [{"type": "launch", "app": "x"}],
            "bước «%s» (có chạm vào app) không bao giờ nằm trong đoạn mở game" % odd)
     gp = FakeGame(accounts()); gp.user = "a@test.vn"                    # game còn phiên của khách trước
     rules = pool_cfg.get("rules") or []
-    state = apimode.session_probe(FakeNav(gp), {"login": std}, rules, 2)
+    state = jobflow.session_probe(FakeNav(gp), {"login": std}, rules, 2)
     ok(state == "in" and gp.clicks == 0 and gp.keylog == ["efootball"], "dò phiên: chỉ mở game rồi ĐỌC màn hình — không bấm, không gõ gì của khách", (state, gp.clicks, gp.keylog))
-    ok(apimode.session_probe(FakeNav(FakeGame(accounts())), {"login": std}, rules, 2) == "out", "game chưa ai đăng nhập → «out»")
+    ok(jobflow.session_probe(FakeNav(FakeGame(accounts())), {"login": std}, rules, 2) == "out", "game chưa ai đăng nhập → «out»")
     gu = FakeGame(accounts())
-    ok(apimode.session_probe(FakeNav(gu), {"login": L({"type": "launch", "app": "app-khong-co"})}, rules, 1) == "unknown", "không nhận ra màn hình → «unknown» (máy sẽ không nhận đơn)")
+    ok(jobflow.session_probe(FakeNav(gu), {"login": L({"type": "launch", "app": "app-khong-co"})}, rules, 1) == "unknown", "không nhận ra màn hình → «unknown» (máy sẽ không nhận đơn)")
 
     print("\n== 27. Máy đang giữ đơn của pool KHÁC với pool của nhóm → đối soát, không chạy bằng cấu hình sai ==")
     g29 = FakeGame(accounts())
@@ -1447,9 +1448,9 @@ def run_all(gw, rigs):
             return "\n".join((img or self.cur)[0])
 
         def find_text(self, needle, img=None, **kw):
-            want = apimode.norm_text(needle).replace(" ", "")
+            want = stepexec.norm_text(needle).replace(" ", "")
             for k, pos in (img or self.cur)[1].items():
-                if want in apimode.norm_text(k).replace(" ", ""):
+                if want in stepexec.norm_text(k).replace(" ", ""):
                     return pos
             return None
 
@@ -1466,90 +1467,90 @@ def run_all(gw, rigs):
             return "OK"
     gc = (["Hủy", "Chào mừng đến", "Game Center", "ID Apple"], {"Hủy": (73, 33), "Game Center": (668, 308)})
     title = (["FOOTBALL", "2027", "Konami Digital Entertainment"], {"FOOTBALL": (666, 435)})
-    real_settle, real_sleep = apimode.LOOK_SETTLE, apimode._sleep
-    apimode.LOOK_SETTLE = 0
-    apimode._sleep = lambda sec, abort=None: None
+    real_settle, real_sleep = stepexec.LOOK_SETTLE, stepexec._sleep
+    stepexec.LOOK_SETTLE = 0
+    stepexec._sleep = lambda sec, abort=None: None
     try:
         ti = {"type": "tap_if", "text": "Game Center", "tap": "Hủy", "timeout": 8}
         n1 = Popup([gc, title])
-        r1 = apimode.exec_step(n1, ti, {})
+        r1 = stepexec.exec_step(n1, ti, {})
         ok(r1[0] is True and r1[2] is True and n1.taps == [(73, 33)] and n1.sent == ["click"] and "đã bấm «Hủy»" in r1[1],
            "thấy hộp thoại → bấm đúng chữ cần bấm (một lần), báo «đã bấm»", (r1, n1.taps, n1.sent))
         n2 = Popup([title])
-        r2 = apimode.exec_step(n2, dict(ti, timeout=0), {})
+        r2 = stepexec.exec_step(n2, dict(ti, timeout=0), {})
         ok(r2 == (True, "không thấy «Game Center» — bỏ qua", False) and n2.taps == [] and n2.sent == [] and n2.n == 1,
            "không có hộp thoại (timeout 0: chỉ xem một lần) → bước XONG, không bấm gì", (r2, n2.n))
         n3 = Popup([title, title, gc, title])
-        r3 = apimode.exec_step(n3, ti, {})
+        r3 = stepexec.exec_step(n3, ti, {})
         ok(r3[0] is True and n3.taps == [(73, 33)] and n3.n == 4, "hộp thoại hiện CHẬM (lần chụp thứ 3) → vẫn bắt được trong thời gian chờ rồi bấm", (r3, n3.n))
         n4 = Popup([(["Game Center", "ID Apple"], {"Game Center": (668, 308)})])
-        r4 = apimode.exec_step(n4, dict(ti, timeout=0), {})
+        r4 = stepexec.exec_step(n4, dict(ti, timeout=0), {})
         ok(r4[0] is False and r4[2] is False and n4.taps == [] and "không thấy chữ «Hủy» để bấm" in r4[1],
            "hết thời gian chờ mà vẫn thấy hộp thoại nhưng KHÔNG thấy chữ cần bấm → bước hỏng (màn hình đang bị chắn — không đi tiếp bấm nhầm)", r4)
         slide = (["Game Center"], {})                  # hộp thoại đang trượt vào: tiêu đề đã hiện, nút «Hủy» chưa
         n4b = Popup([slide, slide, gc, title])
-        r4b = apimode.exec_step(n4b, ti, {})
+        r4b = stepexec.exec_step(n4b, ti, {})
         ok(r4b[0] is True and n4b.taps == [(73, 33)] and n4b.n == 4, "nút cần bấm hiện CHẬM hơn chữ (hộp thoại đang trượt vào) → nhìn lại rồi bấm, không báo hỏng vội", (r4b, n4b.n))
         # đo thật trên iPhone 8: trước trang «Chào mừng đến Game Center» (có «Hủy») còn trang «Tính năng mới trong Game Center» (chỉ có «Tiếp tục»)
         news = (["Tính năng mới trong", "Game Center", "Tiếp tục"], {"Tiếp tục": (668, 694), "Game Center": (324, 405)})
         real = {"type": "tap_if", "timeout": 0, "cases": [{"text": "Game Center", "tap": "Hủy"}, {"text": "Tính năng mới", "tap": "Tiếp tục"}]}
         n4c = Popup([news, gc, title])
-        r4c = apimode.exec_step(n4c, real, {})
+        r4c = stepexec.exec_step(n4c, real, {})
         ok(r4c[0] is True and n4c.taps == [(668, 694), (73, 33)],
            "hai màn hình cùng có chữ «Game Center»: màn nào không có nút của trường hợp thứ nhất thì xét trường hợp kế (bấm «Tiếp tục»), màn sau mới bấm «Hủy»", (r4c, n4c.taps))
         n5 = Popup([gc, title])
-        r5 = apimode.exec_step(n5, {"type": "tap_if", "text": "Game Center|Trung tâm trò chơi"}, {})
+        r5 = stepexec.exec_step(n5, {"type": "tap_if", "text": "Game Center|Trung tâm trò chơi"}, {})
         ok(r5[0] is True and n5.taps == [(668, 308)], "không ghi «bấm vào đâu» → bấm chính chữ vừa thấy; nhiều cách viết ngăn bằng «|»", (r5, n5.taps))
 
         # NHIỀU trường hợp trong một bước: hỏi mật khẩu → Hủy; Game Center → Hủy; không thấy gì → bỏ qua
         pw = (["Đăng nhập bằng ID Apple", "Nhập mật khẩu cho tài khoản", "Hủy", "OK"], {"Hủy": (300, 500), "OK": (520, 500)})
         multi = {"type": "tap_if", "timeout": 0, "cases": [{"text": "mật khẩu", "tap": "Hủy"}, {"text": "Game Center", "tap": "Hủy"}]}
         m1 = Popup([pw, gc, title])
-        q1 = apimode.exec_step(m1, multi, {})
+        q1 = stepexec.exec_step(m1, multi, {})
         ok(q1[0] is True and q1[2] is True and m1.taps == [(300, 500), (73, 33)] and m1.sent == ["click", "click"] and "thấy «mật khẩu»" in q1[1] and "thấy «Game Center»" in q1[1],
            "hai hộp thoại nối nhau (hỏi mật khẩu rồi Game Center) → bấm «Hủy» của TỪNG cái, đúng chỗ, rồi xong", (q1, m1.taps))
         m2 = Popup([gc, pw, title])
-        q2 = apimode.exec_step(m2, multi, {})
+        q2 = stepexec.exec_step(m2, multi, {})
         ok(q2[0] is True and m2.taps == [(73, 33), (300, 500)], "hộp thoại hiện theo thứ tự NGƯỢC lại → vẫn xử lý đủ (không phụ thuộc thứ tự ghi trong bước)", (q2, m2.taps))
         m3 = Popup([title])
-        q3 = apimode.exec_step(m3, multi, {})
+        q3 = stepexec.exec_step(m3, multi, {})
         ok(q3 == (True, "không thấy «mật khẩu» / «Game Center» — bỏ qua", False) and m3.taps == [], "không có hộp thoại nào → bỏ qua, không bấm gì", q3)
         m4 = Popup([gc, title])
-        q4 = apimode.exec_step(m4, multi, {})
+        q4 = stepexec.exec_step(m4, multi, {})
         ok(q4[0] is True and m4.taps == [(73, 33)], "chỉ một trong các trường hợp xảy ra → chỉ bấm cái đó")
         m5 = Popup([gc])                               # bấm «Hủy» rồi mà hộp thoại vẫn còn mãi
-        q5 = apimode.exec_step(m5, multi, {})
-        ok(q5[0] is False and q5[2] is True and len(m5.taps) == apimode.IF_REPEAT and "hộp thoại không đóng" in q5[1],
-           "bấm rồi mà hộp thoại KHÔNG đóng → dừng sau %d lần, báo hỏng (không bấm mãi)" % apimode.IF_REPEAT, (q5, m5.taps))
+        q5 = stepexec.exec_step(m5, multi, {})
+        ok(q5[0] is False and q5[2] is True and len(m5.taps) == stepexec.IF_REPEAT and "hộp thoại không đóng" in q5[1],
+           "bấm rồi mà hộp thoại KHÔNG đóng → dừng sau %d lần, báo hỏng (không bấm mãi)" % stepexec.IF_REPEAT, (q5, m5.taps))
         m6 = Popup([(["Nhập mật khẩu"], {})])
-        q6 = apimode.exec_step(m6, multi, {})
+        q6 = stepexec.exec_step(m6, multi, {})
         ok(q6[0] is False and m6.taps == [] and "không thấy chữ «Hủy» để bấm" in q6[1], "thấy hộp thoại nhưng không thấy nút cần bấm → hỏng, không bấm bừa", q6)
         for bad in ({"type": "tap_if", "cases": ["rác"]}, {"type": "tap_if", "cases": [{"text": "a"}, {"text": ""}]}):
             try:
-                apimode.exec_step(Popup([gc]), bad, {}); raised = False
-            except apimode.ConfigError:
+                stepexec.exec_step(Popup([gc]), bad, {}); raised = False
+            except stepexec.ConfigError:
                 raised = True
             ok(raised, "danh sách trường hợp sai dạng → báo lỗi cấu hình")
-        ok(apimode.describe(multi) == "Nếu thấy chữ «mật khẩu» thì bấm «Hủy»; Nếu thấy chữ «Game Center» thì bấm «Hủy»", "mô tả bước nhiều trường hợp", apimode.describe(multi))
+        ok(stepexec.describe(multi) == "Nếu thấy chữ «mật khẩu» thì bấm «Hủy»; Nếu thấy chữ «Game Center» thì bấm «Hủy»", "mô tả bước nhiều trường hợp", stepexec.describe(multi))
 
         class Moved(Popup):                          # chữ cần bấm biến mất trước khi con trỏ tới nơi
             def tap_at(self, x, y, click=True, verify=None):
                 self.cur = title
                 return super().tap_at(x, y, click, verify)
         n6 = Moved([gc])
-        r6 = apimode.exec_step(n6, ti, {})
+        r6 = stepexec.exec_step(n6, ti, {})
         ok(r6[0] is False and n6.taps == [] and n6.sent == [], "hộp thoại tự biến mất trước khi kịp bấm → KHÔNG bấm vào chỗ cũ", r6)
         for bad in ({"type": "tap_if", "text": ""}, {"type": "tap_if", "text": "x", "timeout": "abc"}):
             try:
-                apimode.exec_step(Popup([gc]), bad, {}); raised = False
-            except apimode.ConfigError:
+                stepexec.exec_step(Popup([gc]), bad, {}); raised = False
+            except stepexec.ConfigError:
                 raised = True
             ok(raised, "bước có điều kiện cấu hình sai (%s) → báo lỗi cấu hình, không chạy bừa" % ("thiếu chữ cần thấy" if not bad["text"] else "thời gian chờ không phải số"))
-        ok(apimode.describe(ti) == "Nếu thấy chữ «Game Center» thì bấm «Hủy»" and apimode.describe({"type": "tap_if", "text": "{{otp}}", "optional": True}, {"otp": "123"}) == "Nếu thấy chữ «{{otp}}» thì bấm «{{otp}}» (bỏ qua nếu lỗi)",
-           "mô tả bước có điều kiện; biến bí mật vẫn chỉ hiện TÊN biến", apimode.describe(ti))
-        ok("tap_if" in apimode.INPUT_TYPES, "bước có điều kiện được tính là bước CÓ THỂ chạm vào máy (trong giai đoạn mua: trục trặc sau nó là «không chắc», không phải «chưa nạp»)")
+        ok(stepexec.describe(ti) == "Nếu thấy chữ «Game Center» thì bấm «Hủy»" and stepexec.describe({"type": "tap_if", "text": "{{otp}}", "optional": True}, {"otp": "123"}) == "Nếu thấy chữ «{{otp}}» thì bấm «{{otp}}» (bỏ qua nếu lỗi)",
+           "mô tả bước có điều kiện; biến bí mật vẫn chỉ hiện TÊN biến", stepexec.describe(ti))
+        ok("tap_if" in stepexec.INPUT_TYPES, "bước có điều kiện được tính là bước CÓ THỂ chạm vào máy (trong giai đoạn mua: trục trặc sau nó là «không chắc», không phải «chưa nạp»)")
         login = [{"type": "launch", "app": "efootball"}, ti, {"type": "wait_text", "text": "Konami ID"}, {"type": "tap_text", "text": "Đăng nhập"}, {"type": "type", "text": "{{username}}"}]
-        ok([x["type"] for x in apimode.open_prefix(login)] == ["launch", "tap_if", "wait_text"] and apimode.credential_gate(login) == 4,
+        ok([x["type"] for x in jobflow.open_prefix(login)] == ["launch", "tap_if", "wait_text"] and jobflow.credential_gate(login) == 4,
            "trong các bước đăng nhập, bước dọn hộp thoại thuộc «đoạn mở game» (chạy cả khi kiểm «game chưa đăng nhập» trước lúc nhận đơn); chốt chặn vẫn ở bước gõ tài khoản")
         # bộ chạy kịch bản thường dùng CÙNG cách làm
         import engine
@@ -1557,7 +1558,7 @@ def run_all(gw, rigs):
         ok7, msg7 = engine.run_step(n7, ti)
         n8 = Popup([title])
         ok8, msg8 = engine.run_step(n8, dict(ti, timeout=0))
-        ok(ok7 is True and n7.taps == [(73, 33)] and "đã bấm" in msg7 and ok8 is True and n8.taps == [] and "bỏ qua" in msg8 and "tap_if" in apimode.STEP_TYPES,
+        ok(ok7 is True and n7.taps == [(73, 33)] and "đã bấm" in msg7 and ok8 is True and n8.taps == [] and "bỏ qua" in msg8 and "tap_if" in stepexec.STEP_TYPES,
            "kịch bản thường / thử một bước: cùng kết quả (bấm khi thấy, bỏ qua khi không thấy) và nói rõ đã làm gì", (msg7, msg8))
 
         class Slow(Popup):                           # đưa con trỏ tới nơi tốn thời gian THẬT (trên máy thật: vài giây tới hơn chục giây)
@@ -1566,7 +1567,7 @@ def run_all(gw, rigs):
                 return super().tap_at(x, y, click, verify)
         loading = (["đang tải"], {})
         m7 = Slow([pw, loading, gc, title])
-        q7 = apimode.exec_step(m7, dict(multi, timeout=0.2), {})
+        q7 = stepexec.exec_step(m7, dict(multi, timeout=0.2), {})
         ok(q7[0] is True and m7.taps == [(300, 500), (73, 33)],
            "bấm xong một hộp thoại thì thời gian chờ được tính LẠI từ lúc đó (đưa con trỏ tới nơi đã ngốn hết thời gian chờ ban đầu) → hộp thoại kế hiện sau một nhịp vẫn được xử lý",
            (q7, m7.taps))
@@ -1577,10 +1578,10 @@ def run_all(gw, rigs):
         # Cú bấm lên hộp thoại hệ thống có lúc KHÔNG «ăn» (đo trên iPhone 8: bước báo đã bấm mà hộp thoại vẫn còn) → bước một trường hợp
         # cũng phải nhìn lại: còn thì bấm lần nữa, hết mới báo xong; bấm đủ số lần vẫn còn thì HỎNG (không báo ✓ để các bước sau trượt khó hiểu).
         k1 = Popup([gc, gc, gc, title])
-        j1 = apimode.exec_step(k1, ti, {})
+        j1 = stepexec.exec_step(k1, ti, {})
         ok(j1[0] is True and k1.taps == [(73, 33), (73, 33)] and "đã bấm «Hủy» (2 lần)" in j1[1], "bấm lần đầu không ăn (nhìn lại rồi kiểm thêm lần nữa vẫn còn hộp thoại) → bấm lần nữa, báo rõ đã bấm 2 lần", (j1, k1.taps))
         k1b = Popup([gc, gc, title])
-        j1b = apimode.exec_step(k1b, ti, {})
+        j1b = stepexec.exec_step(k1b, ti, {})
         ok(j1b[0] is True and k1b.taps == [(73, 33)] and "2 lần" not in j1b[1], "hộp thoại ĐÓNG CHẬM (lần nhìn lại còn, kiểm thêm thì đã hết) → KHÔNG bấm lần hai, bước xong", (j1b, k1b.taps))
 
         class LateClose(Popup):                      # hộp thoại tự đóng đúng lúc con trỏ đang đi tới để bấm lần hai
@@ -1591,39 +1592,39 @@ def run_all(gw, rigs):
                     return False
                 return super().tap_at(x, y, click, verify)
         k1c = LateClose([gc, gc, gc, gc])
-        j1c = apimode.exec_step(k1c, ti, {})
+        j1c = stepexec.exec_step(k1c, ti, {})
         ok(j1c[0] is True and k1c.taps == [(73, 33)], "lần bấm lặp bị chặn vì hộp thoại vừa đóng trong lúc con trỏ đang đi → nhìn lại thấy đã hết → bước XONG (không báo «con trỏ không tới nơi»)", (j1c, k1c.taps))
         flick = [gc, gc] + [title, gc] * 40          # sau lần bấm đầu: lần nhìn thấy hộp thoại, lần kiểm lại thì không, cứ thế mãi
         k1e = Popup(flick)
-        j1e = apimode.exec_step(k1e, ti, {})
-        ok(j1e[0] is False and j1e[2] is True and k1e.taps == [(73, 33)] and "lúc thấy lúc không" in j1e[1] and k1e.n <= 4 + 2 * (apimode.IF_FLIPS_MAX + 2),
-           "hộp thoại lúc thấy lúc không (chữ nhấp nháy / đọc lúc được lúc không) → bước DỪNG sau %d lần nhìn lại, không nhìn mãi và không bấm thêm" % apimode.IF_FLIPS_MAX, (j1e, k1e.n))
+        j1e = stepexec.exec_step(k1e, ti, {})
+        ok(j1e[0] is False and j1e[2] is True and k1e.taps == [(73, 33)] and "lúc thấy lúc không" in j1e[1] and k1e.n <= 4 + 2 * (stepexec.IF_FLIPS_MAX + 2),
+           "hộp thoại lúc thấy lúc không (chữ nhấp nháy / đọc lúc được lúc không) → bước DỪNG sau %d lần nhìn lại, không nhìn mãi và không bấm thêm" % stepexec.IF_FLIPS_MAX, (j1e, k1e.n))
         k1f = Popup([sp, sp] + [title, sp] * 40)
-        j1f = apimode.exec_step(k1f, {"type": "tap_if", "text": "lưu mật khẩu này", "key": "esc", "timeout": 0}, {})
+        j1f = stepexec.exec_step(k1f, {"type": "tap_if", "text": "lưu mật khẩu này", "key": "esc", "timeout": 0}, {})
         ok(j1f[0] is False and k1f.sent == ["key esc"] and "lúc thấy lúc không" in j1f[1], "…trường hợp «nhấn phím» cũng có chốt dừng đó (và không nhấn phím thêm)", (j1f, k1f.sent))
         # «xong khi thấy chữ» (until): chờ lâu được (hộp thoại hiện muộn sau khi game tải) mà màn hình đã sạch thì xong ngay
         home = (["Home", "Shop", "Academy", "Extras", "Match"], {"Shop": (514, 110)})
         bonus = (["Login Bonus", "Continue", "10,000"], {"Continue": (668, 587)})
         loading = (["KONAMI"], {})
         pops = {"type": "tap_if", "timeout": 60, "until": "Shop", "cases": [{"text": "Login Bonus", "tap": "Continue"}, {"text": "Sign Players", "tap": "OK"}]}
-        real_stable = apimode.UNTIL_STABLE
-        apimode.UNTIL_STABLE = 0.3                     # (bài thử: «sạch liên tục» rút còn 0,3 giây cho nhanh)
+        real_stable = stepexec.UNTIL_STABLE
+        stepexec.UNTIL_STABLE = 0.3                     # (bài thử: «sạch liên tục» rút còn 0,3 giây cho nhanh)
         u1 = Popup([loading, loading, loading, bonus, home])
         t0 = time.time()
-        v1 = apimode.exec_step(u1, pops, {})
+        v1 = stepexec.exec_step(u1, pops, {})
         ok(v1[0] is True and u1.taps == [(668, 587)] and time.time() - t0 < 5 and "Continue" in v1[1],
            "hộp thoại hiện MUỘN (sau 3 lần nhìn) → vẫn bắt được; xử lý xong, thấy «Shop» là xong NGAY (không chờ hết 60 giây)", (v1, u1.taps))
         u2 = Popup([home])
-        v2 = apimode.exec_step(u2, pops, {})
+        v2 = stepexec.exec_step(u2, pops, {})
         ok(v2 == (True, "thấy «Shop» — không có gì phải xử lý", False) and u2.taps == [] and u2.n >= 2,
            "màn hình đã sạch ngay từ đầu → xong ngay khi «sạch» đủ lâu (không chờ hết 60 giây), không bấm gì", (v2, u2.n))
         covered = (["Home", "Shop", "Sign Players", "OK"], {"OK": (667, 571)})     # chữ «until» lộ ra nhưng hộp thoại vẫn đang che
         u3 = Popup([covered, home])
-        v3 = apimode.exec_step(u3, pops, {})
+        v3 = stepexec.exec_step(u3, pops, {})
         ok(v3[0] is True and u3.taps == [(667, 571)], "chữ «until» có trên màn hình nhưng vẫn còn hộp thoại → xử lý hộp thoại trước (trường hợp được xét trước «until»)", (v3, u3.taps))
         slid = (["Home", "Shop", "Sign Players"], {})                         # thấy chữ hộp thoại mà chưa thấy nút → không được coi là sạch
         u4 = Popup([slid, covered, home])
-        v4 = apimode.exec_step(u4, pops, {})
+        v4 = stepexec.exec_step(u4, pops, {})
         ok(v4[0] is True and u4.taps == [(667, 571)], "hộp thoại đang trượt vào (chưa thấy nút) mà «until» đã lộ → KHÔNG kết thúc sớm, chờ nút rồi bấm", (v4, u4.taps))
 
         class Slow(Popup):                           # mỗi lần chụp mất 0,1 giây thật: hộp thoại «trượt vào» kéo dài LÂU HƠN thời gian «sạch liên tục»
@@ -1631,17 +1632,17 @@ def run_all(gw, rigs):
                 time.sleep(0.1)
                 return super().screenshot()
         u4b = Slow([slid] * 6 + [covered, home])
-        v4b = apimode.exec_step(u4b, pops, {})
+        v4b = stepexec.exec_step(u4b, pops, {})
         ok(v4b[0] is True and u4b.taps == [(667, 571)], "…kể cả khi chữ của hộp thoại (chưa có nút) cùng «until» kéo dài quá thời gian «sạch» → vẫn chờ nút, không kết thúc sớm / không báo hỏng sớm", (v4b, u4b.taps))
-        ok(apimode.describe(pops).endswith(" (xong khi thấy «Shop»)"), "mô tả bước nói rõ điều kiện xong sớm", apimode.describe(pops))
+        ok(stepexec.describe(pops).endswith(" (xong khi thấy «Shop»)"), "mô tả bước nói rõ điều kiện xong sớm", stepexec.describe(pops))
         u5 = Popup([home, bonus, home])                # đo thật: tab «Shop» hiện THOÁNG QUA trước khi «Login Bonus» trượt vào
-        v5 = apimode.exec_step(u5, pops, {})
+        v5 = stepexec.exec_step(u5, pops, {})
         ok(v5[0] is True and u5.taps == [(668, 587)], "«Shop» chỉ thoáng qua (chưa đủ thời gian «sạch liên tục») → KHÔNG kết thúc sớm; hộp thoại hiện sau đó vẫn được xử lý", (v5, u5.taps))
         # nút không đọc được chữ (đo thật: chữ «OK» xanh nhạt của hộp «Sign Players» không có trong kết quả đọc chữ) → «bấm tại toạ độ»
         sign = (["Home", "Extras", "Sign Players", "Sign players to create your ideal team."], {})
         atc = {"type": "tap_if", "timeout": 60, "until": "Shop", "cases": [{"text": "Sign Players", "at": [667, 571]}]}
         u6 = Popup([sign, home])
-        v6 = apimode.exec_step(u6, atc, {})
+        v6 = stepexec.exec_step(u6, atc, {})
         ok(v6[0] is True and u6.taps == [(667, 571)] and "bấm tại (667, 571)" in v6[1], "trường hợp «bấm tại toạ độ»: thấy chữ của hộp thoại → bấm đúng toạ độ đó, kiểm hộp thoại đã đóng", (v6, u6.taps))
 
         class GoneAt(Popup):                         # hộp thoại tự đóng trong lúc con trỏ đang đi tới toạ độ
@@ -1649,103 +1650,103 @@ def run_all(gw, rigs):
                 self.cur = home
                 return super().tap_at(x, y, click, verify)
         u7 = GoneAt([sign, home])
-        v7 = apimode.exec_step(u7, dict(atc, until=""), {})
+        v7 = stepexec.exec_step(u7, dict(atc, until=""), {})
         ok(u7.taps == [] and u7.sent == [], "hộp thoại đã đóng ngay trước cú bấm → KHÔNG bấm vào toạ độ đó (không bấm mù)", (v7, u7.taps))
         u8 = Popup([home])
-        v8 = apimode.exec_step(u8, dict(atc, timeout=0, until=""), {})
+        v8 = stepexec.exec_step(u8, dict(atc, timeout=0, until=""), {})
         ok(v8[0] is True and u8.taps == [], "không thấy chữ của hộp thoại → không bấm toạ độ", v8)
         for bad in ([667], ["x", 1], [-1, 5], "667,571"):
             try:
-                apimode.exec_step(Popup([sign]), dict(atc, cases=[{"text": "Sign Players", "at": bad}]), {}); raised = False
-            except apimode.ConfigError:
+                stepexec.exec_step(Popup([sign]), dict(atc, cases=[{"text": "Sign Players", "at": bad}]), {}); raised = False
+            except stepexec.ConfigError:
                 raised = True
             ok(raised, "toạ độ sai dạng (%r) → báo lỗi cấu hình" % (bad,))
-        ok(apimode.describe(atc) == "Nếu thấy chữ «Sign Players» thì bấm tại (667, 571) (xong khi thấy «Shop»)", "mô tả trường hợp «bấm tại»", apimode.describe(atc))
-        apimode.UNTIL_STABLE = real_stable
+        ok(stepexec.describe(atc) == "Nếu thấy chữ «Sign Players» thì bấm tại (667, 571) (xong khi thấy «Shop»)", "mô tả trường hợp «bấm tại»", stepexec.describe(atc))
+        stepexec.UNTIL_STABLE = real_stable
         # đã bấm xong, hộp thoại đóng, nhưng CHỮ của nó vẫn còn ở chỗ khác (đo thật: «konami.net» trên thanh địa chỉ của trang vừa mở)
         knet = (["\"eFootball\" muốn sử dụng", "\"konami.net\" để đăng nhập", "Hủy", "Tiếp tục"], {"Tiếp tục": (802, 500), "Hủy": (533, 501)})
         page = (["Hủy", "my.konami.net", "KONAMI ID", "Login"], {"Hủy": (71, 47), "Login": (669, 529)})
         k1g = Popup([knet, page])
-        j1g = apimode.exec_step(k1g, {"type": "tap_if", "text": "konami.net", "tap": "Tiếp tục", "timeout": 10}, {})
+        j1g = stepexec.exec_step(k1g, {"type": "tap_if", "text": "konami.net", "tap": "Tiếp tục", "timeout": 10}, {})
         ok(j1g[0] is True and k1g.taps == [(802, 500)], "đã bấm rồi, nút biến mất, chữ còn ở chỗ khác (thanh địa chỉ) → hộp thoại ĐÃ ĐÓNG, bước xong (không báo «bị chắn»)", (j1g, k1g.taps))
         k1h = Popup([page])
-        j1h = apimode.exec_step(k1h, {"type": "tap_if", "text": "konami.net", "tap": "Tiếp tục", "timeout": 0}, {})
+        j1h = stepexec.exec_step(k1h, {"type": "tap_if", "text": "konami.net", "tap": "Tiếp tục", "timeout": 0}, {})
         ok(j1h[0] is False and "không thấy chữ «Tiếp tục» để bấm" in j1h[1] and k1h.taps == [],
            "…còn CHƯA bấm lần nào mà thấy chữ không có nút → vẫn là «bị chắn» như trước (không bấm bừa)", j1h)
-        real_reappear = apimode.IF_REAPPEAR_WAIT
-        apimode.IF_REAPPEAR_WAIT = 0.2
+        real_reappear = stepexec.IF_REAPPEAR_WAIT
+        stepexec.IF_REAPPEAR_WAIT = 0.2
         try:
             knetP = (knet[0], dict(knet[1], **{"\"konami.net\" để đăng nhập": (640, 300)}))
             pageP = (page[0], dict(page[1], **{"my.konami.net": (300, 20)}))
             k1i = Popup([knetP, pageP])
-            j1i = apimode.exec_step(k1i, {"type": "tap_if", "text": "konami.net", "tap": "Tiếp tục", "timeout": 10}, {})
+            j1i = stepexec.exec_step(k1i, {"type": "tap_if", "text": "konami.net", "tap": "Tiếp tục", "timeout": 10}, {})
             ok(j1i[0] is True and k1i.taps == [(802, 500)], "đo được chỗ chữ: lúc bấm ở giữa màn hình, sau đó ở thanh địa chỉ (CHỖ KHÁC) → hộp thoại đã đóng", (j1i, k1i.taps))
             nobtn = (gc[0], {"Game Center": (668, 308)})            # hộp thoại HIỆN LẠI (chữ ở đúng chỗ cũ) mà nút «Hủy» chưa thấy
             k1j = Popup([gc, nobtn])
-            j1j = apimode.exec_step(k1j, {"type": "tap_if", "text": "Game Center", "tap": "Hủy", "timeout": 0}, {})
+            j1j = stepexec.exec_step(k1j, {"type": "tap_if", "text": "Game Center", "tap": "Hủy", "timeout": 0}, {})
             ok(j1j[0] is False and "không thấy chữ «Hủy» để bấm" in j1j[1] and k1j.taps == [(73, 33)],
                "đã bấm, hộp thoại hiện lại ĐÚNG CHỖ cũ mà không có nút (chờ thêm vẫn không có) → «bị chắn», KHÔNG báo ✓", (j1j, k1j.taps))
             k1k = Popup([gc, nobtn, gc, gc, title])
-            j1k = apimode.exec_step(k1k, {"type": "tap_if", "text": "Game Center", "tap": "Hủy", "timeout": 0}, {})
+            j1k = stepexec.exec_step(k1k, {"type": "tap_if", "text": "Game Center", "tap": "Hủy", "timeout": 0}, {})
             ok(j1k[0] is True and k1k.taps == [(73, 33), (73, 33)], "…nút hiện muộn trong lúc chờ thêm → bấm lại, hộp thoại đóng → xong", (j1k, k1k.taps))
             k1l = Popup([gc, title, nobtn])
-            j1l = apimode.exec_step(k1l, {"type": "tap_if", "text": "Game Center", "tap": "Hủy", "timeout": 0, "until": "FOOTBALL"}, {})
+            j1l = stepexec.exec_step(k1l, {"type": "tap_if", "text": "Game Center", "tap": "Hủy", "timeout": 0, "until": "FOOTBALL"}, {})
             gcU = (gc[0], {"Hủy": (73, 33)})                        # không đo được chỗ chữ → «đã mất rồi hiện lại» = hiện lại
             k1m = Popup([gcU, title, (gc[0], {}), (gc[0], {})])
-            j1m = apimode.exec_step(k1m, {"type": "tap_if", "timeout": 1, "cases": [{"text": "Game Center", "tap": "Hủy"}, {"text": "Login Bonus", "tap": "Continue"}]}, {})
+            j1m = stepexec.exec_step(k1m, {"type": "tap_if", "timeout": 1, "cases": [{"text": "Game Center", "tap": "Hủy"}, {"text": "Login Bonus", "tap": "Continue"}]}, {})
             ok(j1m[0] is False and "không thấy chữ «Hủy» để bấm" in j1m[1], "không đo được chỗ chữ: chữ đã MẤT rồi HIỆN LẠI không có nút → «bị chắn»", (j1m, k1m.taps))
             ok(j1l[0] is True, "hộp thoại đã đóng (màn hình sạch) thì bước xong như trước", j1l)
         finally:
-            apimode.IF_REAPPEAR_WAIT = real_reappear
+            stepexec.IF_REAPPEAR_WAIT = real_reappear
         k1d = Popup([sp, sp, title])
-        j1d = apimode.exec_step(k1d, {"type": "tap_if", "text": "lưu mật khẩu này", "key": "esc", "timeout": 0}, {})
+        j1d = stepexec.exec_step(k1d, {"type": "tap_if", "text": "lưu mật khẩu này", "key": "esc", "timeout": 0}, {})
         ok(j1d[0] is True and k1d.sent == ["key esc"], "trường hợp «nhấn phím» mà hộp thoại đóng chậm → chỉ nhấn phím MỘT lần (phím esc thứ hai sẽ rơi vào màn hình bên dưới)", (j1d, k1d.sent))
         k2 = Popup([gc])
-        j2 = apimode.exec_step(k2, ti, {})
-        ok(j2[0] is False and j2[2] is True and len(k2.taps) == apimode.IF_REPEAT and "đã bấm «Hủy» %d lần mà vẫn còn thấy «Game Center»" % apimode.IF_REPEAT in j2[1],
-           "bước MỘT trường hợp: bấm %d lần mà hộp thoại vẫn còn → HỎNG (trước đây báo ✓ ngay sau lần bấm đầu)" % apimode.IF_REPEAT, (j2, k2.taps))
+        j2 = stepexec.exec_step(k2, ti, {})
+        ok(j2[0] is False and j2[2] is True and len(k2.taps) == stepexec.IF_REPEAT and "đã bấm «Hủy» %d lần mà vẫn còn thấy «Game Center»" % stepexec.IF_REPEAT in j2[1],
+           "bước MỘT trường hợp: bấm %d lần mà hộp thoại vẫn còn → HỎNG (trước đây báo ✓ ngay sau lần bấm đầu)" % stepexec.IF_REPEAT, (j2, k2.taps))
         ke = {"type": "tap_if", "text": "lưu mật khẩu này", "key": "esc", "timeout": 0}
         k3 = Popup([sp, title])
-        j3 = apimode.exec_step(k3, ke, {})
+        j3 = stepexec.exec_step(k3, ke, {})
         ok(j3 == (True, "thấy «lưu mật khẩu này» → đã nhấn phím esc", True) and k3.sent == ["key esc"] and k3.taps == [], "trường hợp «nhấn phím»: thấy chữ → nhấn đúng phím đó (không bấm vào đâu), kiểm lại đã đóng", (j3, k3.sent))
         k4 = Popup([title])
-        j4 = apimode.exec_step(k4, ke, {})
+        j4 = stepexec.exec_step(k4, ke, {})
         ok(j4 == (True, "không thấy «lưu mật khẩu này» — bỏ qua", False) and k4.sent == [], "…không thấy hộp thoại → KHÔNG nhấn phím nào (phím esc lúc không có hộp thoại có thể đóng nhầm thứ khác)", (j4, k4.sent))
         k5 = Popup([sp])
-        j5 = apimode.exec_step(k5, ke, {})
-        ok(j5[0] is False and k5.sent == ["key esc"] * apimode.IF_REPEAT and "đã nhấn phím esc %d lần mà vẫn còn thấy" % apimode.IF_REPEAT in j5[1], "…nhấn đủ số lần mà hộp thoại vẫn còn → hỏng", (j5, k5.sent))
+        j5 = stepexec.exec_step(k5, ke, {})
+        ok(j5[0] is False and k5.sent == ["key esc"] * stepexec.IF_REPEAT and "đã nhấn phím esc %d lần mà vẫn còn thấy" % stepexec.IF_REPEAT in j5[1], "…nhấn đủ số lần mà hộp thoại vẫn còn → hỏng", (j5, k5.sent))
         mixed = {"type": "tap_if", "timeout": 0, "cases": [{"text": "lưu mật khẩu này", "key": "esc"}, {"text": "Game Center", "tap": "Hủy"}]}
         k6 = Popup([sp, gc, title])
-        j6 = apimode.exec_step(k6, mixed, {})
+        j6 = stepexec.exec_step(k6, mixed, {})
         ok(j6[0] is True and k6.sent == ["key esc", "click"] and k6.taps == [(73, 33)] and "nhấn phím esc (thấy «lưu mật khẩu này»)" in j6[1] and "bấm «Hủy» (thấy «Game Center»)" in j6[1],
            "một bước lẫn cả hai kiểu: hộp thoại nào nhấn phím thì nhấn phím, hộp thoại nào bấm chữ thì bấm chữ", (j6, k6.sent, k6.taps))
         for badk in ("f13", "ctrl a", "esc\nclick"):
             try:
-                apimode.exec_step(Popup([sp]), dict(ke, key=badk), {}); raised = False
-            except apimode.ConfigError:
+                stepexec.exec_step(Popup([sp]), dict(ke, key=badk), {}); raised = False
+            except stepexec.ConfigError:
                 raised = True
             ok(raised, "phím lạ ở trường hợp «nhấn phím» (%r) → báo lỗi cấu hình, không gửi gì xuống board" % badk)
-        ok(apimode.describe(ke) == "Nếu thấy chữ «lưu mật khẩu này» thì nhấn phím esc" and apimode.describe(mixed) == "Nếu thấy chữ «lưu mật khẩu này» thì nhấn phím esc; Nếu thấy chữ «Game Center» thì bấm «Hủy»",
-           "mô tả bước có trường hợp «nhấn phím»", apimode.describe(mixed))
+        ok(stepexec.describe(ke) == "Nếu thấy chữ «lưu mật khẩu này» thì nhấn phím esc" and stepexec.describe(mixed) == "Nếu thấy chữ «lưu mật khẩu này» thì nhấn phím esc; Nếu thấy chữ «Game Center» thì bấm «Hủy»",
+           "mô tả bước có trường hợp «nhấn phím»", stepexec.describe(mixed))
         # một bước xử lý tối đa IF_MAX_TAPS hộp thoại: quá số đó thì dừng với đúng lý do (không phải «bấm rồi vẫn còn»)
-        chain = [([("Hop thoai %d" % i), "Dong %d" % i], {"Dong %d" % i: (100 + i, 200)}) for i in range(apimode.IF_MAX_TAPS + 1)]
-        many = {"type": "tap_if", "timeout": 0, "cases": [{"text": "Hop thoai %d" % i, "tap": "Dong %d" % i} for i in range(apimode.IF_MAX_TAPS + 1)]}
+        chain = [([("Hop thoai %d" % i), "Dong %d" % i], {"Dong %d" % i: (100 + i, 200)}) for i in range(stepexec.IF_MAX_TAPS + 1)]
+        many = {"type": "tap_if", "timeout": 0, "cases": [{"text": "Hop thoai %d" % i, "tap": "Dong %d" % i} for i in range(stepexec.IF_MAX_TAPS + 1)]}
         k7 = Popup(chain + [title])
-        j7 = apimode.exec_step(k7, many, {})
-        ok(j7[0] is False and len(k7.taps) == apimode.IF_MAX_TAPS and "đã xử lý %d hộp thoại liên tiếp" % apimode.IF_MAX_TAPS in j7[1] and "Hop thoai %d" % apimode.IF_MAX_TAPS in j7[1],
-           "hộp thoại hiện nối nhau quá %d cái trong một bước → dừng, nói đúng lý do" % apimode.IF_MAX_TAPS, (j7, len(k7.taps)))
+        j7 = stepexec.exec_step(k7, many, {})
+        ok(j7[0] is False and len(k7.taps) == stepexec.IF_MAX_TAPS and "đã xử lý %d hộp thoại liên tiếp" % stepexec.IF_MAX_TAPS in j7[1] and "Hop thoai %d" % stepexec.IF_MAX_TAPS in j7[1],
+           "hộp thoại hiện nối nhau quá %d cái trong một bước → dừng, nói đúng lý do" % stepexec.IF_MAX_TAPS, (j7, len(k7.taps)))
 
         print("\n== 30b. «Gõ chữ» từng ký tự; «Mở app» tắt hẳn rồi mở mới ==")
         t1, t2, t3 = Popup([title]), Popup([title]), Popup([title])
-        g1_ = apimode.exec_step(t1, {"type": "type", "text": "{{otp}}", "gap": 0.4}, {"otp": "135790"})
-        g2_ = apimode.exec_step(t2, {"type": "type", "text": "{{otp}}"}, {"otp": "135790"})
-        g3_ = apimode.exec_step(t3, {"type": "type", "text": "a b", "gap": 5}, {})
+        g1_ = stepexec.exec_step(t1, {"type": "type", "text": "{{otp}}", "gap": 0.4}, {"otp": "135790"})
+        g2_ = stepexec.exec_step(t2, {"type": "type", "text": "{{otp}}"}, {"otp": "135790"})
+        g3_ = stepexec.exec_step(t3, {"type": "type", "text": "a b", "gap": 5}, {})
         ok(g1_ == (True, "", True) and t1.sent == ["type 1", "type 3", "type 5", "type 7", "type 9", "type 0"] and t2.sent == ["type 135790"] and t3.sent == ["type a", "key space", "type b"],
            "có ghi quãng nghỉ → gõ TỪNG ký tự (ô mã mỗi số một ô không bị rơi phím); không ghi → gõ liền một mạch như trước; dấu cách đi bằng phím space", (t1.sent, t2.sent, t3.sent))
         for badg in ("nhanh", [1]):
             try:
-                apimode.exec_step(Popup([title]), {"type": "type", "text": "x", "gap": badg}, {}); raised = False
-            except apimode.ConfigError:
+                stepexec.exec_step(Popup([title]), {"type": "type", "text": "x", "gap": badg}, {}); raised = False
+            except stepexec.ConfigError:
                 raised = True
             ok(raised, "quãng nghỉ giữa các ký tự không phải số (%r) → báo lỗi cấu hình" % (badg,))
 
@@ -1754,7 +1755,7 @@ def run_all(gw, rigs):
                 self.sent.append(cmd)
                 return "OK" if len(self.sent) < 3 else ""
         t4 = Stop([title])
-        g4_ = apimode.exec_step(t4, {"type": "type", "text": "123456", "gap": 0.4}, {})
+        g4_ = stepexec.exec_step(t4, {"type": "type", "text": "123456", "gap": 0.4}, {})
         ok(g4_[0] is False and g4_[2] is True and len(t4.sent) == 3, "đang gõ từng ký tự mà board không trả lời → DỪNG ngay (không gõ tiếp các ký tự sau), báo là đã có gõ dở", (g4_, t4.sent))
 
         import iosapp
@@ -1769,21 +1770,21 @@ def run_all(gw, rigs):
                 self.opened.append(name); return "jp.vi.du"
         fr = {"type": "launch", "app": "efootball", "fresh": True}
         u1, u2, u3 = Usb([title]), Usb([title], fail=iosapp.AppNotFound("máy không có app nào tên «efootball»")), Usb([title])
-        f1_ = apimode.exec_step(u1, fr, {})
-        f2_ = apimode.exec_step(u2, fr, {})
-        f3_ = apimode.exec_step(u3, {"type": "launch", "app": "efootball"}, {})
+        f1_ = stepexec.exec_step(u1, fr, {})
+        f2_ = stepexec.exec_step(u2, fr, {})
+        f3_ = stepexec.exec_step(u3, {"type": "launch", "app": "efootball"}, {})
         ok(f1_ == (True, "đã tắt hẳn rồi mở mới", True) and u1.opened == ["efootball"] and u1.sent == [], "«tắt hẳn rồi mở mới»: đi qua USB, KHÔNG gõ phím nào", (f1_, u1.opened, u1.sent))
         ok(f2_[0] is False and f2_[2] is False and "không tắt hẳn / mở mới được app «efootball»: máy không có app nào tên" in f2_[1] and u2.sent == [],
            "…không làm được → bước HỎNG kèm lý do, KHÔNG lặng lẽ quay về cách mở cũ (app sẽ ở màn hình dở dang)", f2_)
         ok(f3_[0] is True and u3.opened == [] and any(c.startswith("type efootball") for c in u3.sent) and "combo gui space" in u3.sent, "không chọn «mở mới» → vẫn mở bằng ô tìm kiếm như trước", u3.sent)
         u5, u6, u7 = Usb([title], fail="hết giờ"), Usb([title]), Usb([title])
-        f5_ = apimode.exec_step(u5, fr, {})
-        f6_ = apimode.exec_step(u6, {"type": "launch", "app": "Cài đặt", "fresh": True}, {})
-        f7_ = apimode.exec_step(u7, {"type": "launch", "app": "efootball", "fresh": "false"}, {})
+        f5_ = stepexec.exec_step(u5, fr, {})
+        f6_ = stepexec.exec_step(u6, {"type": "launch", "app": "Cài đặt", "fresh": True}, {})
+        f7_ = stepexec.exec_step(u7, {"type": "launch", "app": "efootball", "fresh": "false"}, {})
         ok(f5_[0] is False and f5_[2] is True and "hết giờ" in f5_[1], "mở mới hỏng GIỮA CHỪNG (hết giờ, rút cáp…) → app có thể đã bị tắt → báo là «đã đụng vào máy»; chỉ «không chọn được app» mới chắc chắn chưa đụng", f5_)
         ok(f6_[0] is True and u6.opened == ["Cài đặt"] and u6.sent == [], "mở mới không gõ phím nên tên app CÓ DẤU vẫn dùng được", (f6_, u6.opened))
         ok(f7_[0] is True and u7.opened == [] and "combo gui space" in u7.sent, "cờ «mở mới» ghi sai kiểu (chuỗi \"false\") không bị hiểu thành bật", u7.sent)
-        ok(apimode.describe(fr) == "Mở app efootball (tắt hẳn rồi mở mới)" and [x["type"] for x in apimode.open_prefix([fr, ti, {"type": "tap_text", "text": "x"}])] == ["launch", "tap_if"],
+        ok(stepexec.describe(fr) == "Mở app efootball (tắt hẳn rồi mở mới)" and [x["type"] for x in jobflow.open_prefix([fr, ti, {"type": "tap_text", "text": "x"}])] == ["launch", "tap_if"],
            "mô tả nói rõ kiểu mở; bước mở mới vẫn thuộc «đoạn mở game»")
         u4, t5 = Usb([title]), Popup([title])
         ok16, msg16 = engine.run_step(u4, fr)
@@ -1818,37 +1819,37 @@ def run_all(gw, rigs):
         menu = (["Legal and Privacy", "General Contact", "Data Transfer", "Graphics"], {"Data Transfer": (951, 378)})
         tt = {"type": "tap_text", "text": "Data Transfer"}
         w1 = Popup([title, title, menu])
-        s1 = apimode.exec_step(w1, tt, {})
+        s1 = stepexec.exec_step(w1, tt, {})
         ok(s1 == (False, "không thấy chữ «Data Transfer» trên màn hình", False) and w1.n == 1 and w1.taps == [],
            "không ghi thời gian chờ → nhìn đúng MỘT lần như trước giờ (bước đã có không tự đổi hành vi)", (s1, w1.n))
         w2 = Popup([title, title, menu])
-        s2 = apimode.exec_step(w2, dict(tt, timeout=5), {})
+        s2 = stepexec.exec_step(w2, dict(tt, timeout=5), {})
         ok(s2[0] is True and s2[2] is True and w2.taps == [(951, 378)] and w2.sent == ["click"], "có ghi thời gian chờ: chữ hiện CHẬM (lần nhìn thứ 3) → vẫn thấy rồi bấm, đúng một lần", (s2, w2.taps, w2.n))
         sliding = (["Data Transfer"], {"Data Transfer": (951, 640)})          # danh sách đang trượt vào: chữ đã đọc được nhưng chưa nằm đúng chỗ
         w3 = Popup([title, sliding, menu])
-        s3 = apimode.exec_step(w3, dict(tt, timeout=5), {})
+        s3 = stepexec.exec_step(w3, dict(tt, timeout=5), {})
         ok(s3[0] is True and w3.taps == [(951, 378)], "thấy chữ ở lần nhìn LẠI (màn hình có thể còn đang trượt) → chờ đứng yên rồi lấy lại vị trí, bấm vào chỗ đã đứng yên", (s3, w3.taps))
         w4 = Popup([menu])
-        s4 = apimode.exec_step(w4, dict(tt, timeout=5), {})
+        s4 = stepexec.exec_step(w4, dict(tt, timeout=5), {})
         ok(s4[0] is True and w4.taps == [(951, 378)] and w4.n == 1, "chữ có sẵn ngay lần nhìn đầu → bấm luôn, không tốn thêm lần nhìn nào", (s4, w4.n))
         w5 = Popup([title])
         t0 = time.time()
-        s5 = apimode.exec_step(w5, dict(tt, timeout=0.3), {})
+        s5 = stepexec.exec_step(w5, dict(tt, timeout=0.3), {})
         ok(s5 == (False, "chờ 0.3s không thấy chữ «Data Transfer» trên màn hình", False) and w5.taps == [] and w5.sent == [] and w5.n > 1 and 0.25 <= time.time() - t0 < 3,
            "hết thời gian chờ vẫn không thấy → báo hỏng kèm số giây đã chờ, không bấm gì", (s5, w5.n))
         w6 = Popup([title, menu, title])               # chữ loé lên rồi mất (màn hình lướt qua) → không bấm vào chỗ đã mất
-        s6 = apimode.exec_step(w6, dict(tt, timeout=0.2), {})
+        s6 = stepexec.exec_step(w6, dict(tt, timeout=0.2), {})
         ok(s6[0] is False and w6.taps == [] and w6.sent == [], "chữ vừa thấy đã mất khi màn hình đứng yên → không bấm", (s6, w6.taps))
         for bad in ("abc", [5]):
             try:
-                apimode.exec_step(Popup([menu]), dict(tt, timeout=bad), {}); raised = False
-            except apimode.ConfigError:
+                stepexec.exec_step(Popup([menu]), dict(tt, timeout=bad), {}); raised = False
+            except stepexec.ConfigError:
                 raised = True
             ok(raised, "thời gian chờ chữ không phải số (%r) → báo lỗi cấu hình, không bấm" % (bad,))
         w7 = Popup([menu])
-        apimode.exec_step(w7, dict(tt, timeout=10 ** 6), {})
-        ok(apimode._text_wait({"timeout": 10 ** 6}, "x") == apimode.TEXT_WAIT_MAX and apimode._text_wait({}, "x") == 0 and apimode._text_wait({"timeout": -4}, "x") == 0 and w7.taps == [(951, 378)],
-           "thời gian chờ bị chặn trong khoảng 0 … %d giây" % apimode.TEXT_WAIT_MAX)
+        stepexec.exec_step(w7, dict(tt, timeout=10 ** 6), {})
+        ok(stepexec._text_wait({"timeout": 10 ** 6}, "x") == stepexec.TEXT_WAIT_MAX and stepexec._text_wait({}, "x") == 0 and stepexec._text_wait({"timeout": -4}, "x") == 0 and w7.taps == [(951, 378)],
+           "thời gian chờ bị chặn trong khoảng 0 … %d giây" % stepexec.TEXT_WAIT_MAX)
 
         class Holder(Popup):
             def __init__(self, shots):
@@ -1860,9 +1861,9 @@ def run_all(gw, rigs):
                 self.holds.append((x, y, sec)); return True
         ht = {"type": "hold_text", "text": "Data Transfer", "seconds": 1.2}
         h1 = Holder([title, sliding, menu])
-        g1 = apimode.exec_step(h1, dict(ht, timeout=5), {})
+        g1 = stepexec.exec_step(h1, dict(ht, timeout=5), {})
         h2 = Holder([title, menu])
-        g2 = apimode.exec_step(h2, ht, {})
+        g2 = stepexec.exec_step(h2, ht, {})
         ok(g1[0] is True and h1.holds == [(951, 378, 1.2)] and g2 == (False, "không thấy chữ «Data Transfer» trên màn hình", False) and h2.holds == [] and h2.n == 1,
            "«bấm giữ vào chữ» cũng vậy: có ghi thời gian chờ thì chờ chữ hiện ra (giữ ở chỗ đã đứng yên); không ghi thì nhìn một lần", (g1, h1.holds, g2))
 
@@ -1940,38 +1941,38 @@ def run_all(gw, rigs):
         crop = title_scr[MENU[1] - 45:MENU[1] + 45, MENU[0] - 45:MENU[0] + 45]
         ti_ = {"type": "tap_image", "image": b64png(crop), "x": MENU[0] - 45, "y": MENU[1] - 45, "w": 90, "h": 90}
         p1 = Pic([title_scr])
-        i1 = apimode.exec_step(p1, ti_, {})
+        i1 = stepexec.exec_step(p1, ti_, {})
         ok(i1 == (True, "", True) and p1.taps == [MENU] and p1.sent == ["home", "click"] and p1.n == 1,
            "thấy đúng hình → bấm vào GIỮA hình, đúng một lần (trước khi tìm, con trỏ được cất về góc để không che hình)", (i1, p1.taps, p1.sent))
         p2 = Pic([scene(btn=(1000, 300))])
-        i2 = apimode.exec_step(p2, ti_, {})
+        i2 = stepexec.exec_step(p2, ti_, {})
         ok(i2[0] is True and p2.taps == [(1000, 300)], "nút nằm ở chỗ KHÁC với lúc cắt hình → vẫn tìm ra và bấm đúng chỗ mới (không bấm theo toạ độ cũ)", (i2, p2.taps))
         p3 = Pic([scene(btn=None)])
-        i3 = apimode.exec_step(p3, ti_, {})
+        i3 = stepexec.exec_step(p3, ti_, {})
         ok(i3[0] is False and i3[2] is False and p3.taps == [] and p3.sent == ["home"] and p3.n == 1 and i3[1].startswith("không thấy vùng ảnh cần bấm trên màn hình (chỗ giống nhất ") and "cần 90%" in i3[1],
            "màn hình KHÔNG có hình đó → không bấm gì, báo rõ chỗ giống nhất được bao nhiêu %", i3)
         p4 = Pic([scene(btn=None), scene(btn=None), title_scr])
-        i4 = apimode.exec_step(p4, dict(ti_, timeout=5), {})
+        i4 = stepexec.exec_step(p4, dict(ti_, timeout=5), {})
         ok(i4[0] is True and p4.taps == [MENU] and p4.n == 4, "hình hiện CHẬM (game đang tải) + có ghi thời gian chờ → nhìn lại tới khi thấy, chờ đứng yên rồi bấm", (i4, p4.n))
         p5 = Pic([scene(btn=None)])
-        i5 = apimode.exec_step(p5, dict(ti_, timeout=0.3), {})
+        i5 = stepexec.exec_step(p5, dict(ti_, timeout=0.3), {})
         ok(i5[0] is False and i5[1].startswith("chờ 0.3s không thấy vùng ảnh") and p5.taps == [] and p5.n > 1, "hết thời gian chờ vẫn không có → hỏng, kèm số giây đã chờ", i5)
         for label, shot in (("màn hình bị PHỦ MỜ (hộp thoại che lên)", scene(dim=0.6)), ("hình cùng dạng nhưng MẤT MÀU (nút xám «chưa bấm được»)", scene(gray=True)),
                             ("màn hình khác cỡ, nhỏ hơn cả hình mẫu", title_scr[:60, :60])):
             pz = Pic([shot])
-            iz = apimode.exec_step(pz, ti_, {})
+            iz = stepexec.exec_step(pz, ti_, {})
             ok(iz[0] is False and pz.taps == [] and "click" not in pz.sent, "%s → không coi là «giống», không bấm" % label, iz)
         two = title_scr.copy()                         # HAI chỗ giống hệt nhau: chép nguyên vùng nút sang một chỗ khác
         two[200 - 45:200 + 45, 300 - 45:300 + 45] = crop
-        p6 = Pic([two]); apimode.exec_step(p6, ti_, {})
-        p7 = Pic([two]); apimode.exec_step(p7, dict(ti_, x=300 - 45, y=200 - 45), {})
+        p6 = Pic([two]); stepexec.exec_step(p6, ti_, {})
+        p7 = Pic([two]); stepexec.exec_step(p7, dict(ti_, x=300 - 45, y=200 - 45), {})
         ok(p6.taps == [MENU] and p7.taps == [(300, 200)], "hai chỗ giống hệt nhau → bấm chỗ GẦN nơi hình được cắt ra nhất", (p6.taps, p7.taps))
         soft = scene(blur=7)                           # hình hơi nhoè (nền sau nút đổi nhẹ)
         s_soft = eyes_mod.locate_image(soft, crop, 0.5)[1]
         p8, p9, p10 = Pic([soft]), Pic([soft]), Pic([soft])
-        i8 = apimode.exec_step(p8, dict(ti_, min=0.99), {})
-        i9 = apimode.exec_step(p9, dict(ti_, min=round(s_soft - 0.03, 3)), {})
-        i10 = apimode.exec_step(p10, dict(ti_, min=int(round((s_soft - 0.03) * 100))), {})
+        i8 = stepexec.exec_step(p8, dict(ti_, min=0.99), {})
+        i9 = stepexec.exec_step(p9, dict(ti_, min=round(s_soft - 0.03, 3)), {})
+        i10 = stepexec.exec_step(p10, dict(ti_, min=int(round((s_soft - 0.03) * 100))), {})
         ok(0.6 < s_soft < 0.97 and i8[0] is False and p8.taps == [] and i9[0] is True and p9.taps == [MENU] and i10[0] is True,
            "«độ giống tối thiểu»: đòi 99%% thì hình hơi nhoè (%.0f%%) không đạt; hạ ngưỡng thì bấm; ghi theo phần trăm (vd 90) cũng nhận" % (s_soft * 100), (s_soft, i8, i9, i10))
 
@@ -1980,7 +1981,7 @@ def run_all(gw, rigs):
                 self.cur = scene(btn=None)
                 return super().tap_at(x, y, click, verify)
         p11 = Gone([title_scr])
-        i11 = apimode.exec_step(p11, ti_, {})
+        i11 = stepexec.exec_step(p11, ti_, {})
         ok(i11[0] is False and p11.taps == [] and "click" not in p11.sent, "hình biến mất trước khi con trỏ tới nơi → KHÔNG bấm vào chỗ cũ", i11)
         # NHIỀU chỗ giống hệt nhau (dãy nút mua không chữ): phải xét HẾT rồi mới chọn chỗ gần nơi cắt hình — trước đây chỉ xét 4 chỗ đầu
         row = title_scr.copy()
@@ -1989,12 +1990,12 @@ def run_all(gw, rigs):
             row[cy - 45:cy + 45, cx - 45:cx + 45] = crop
         hit_ = []
         for cx, cy in spots:
-            pr = Pic([row]); apimode.exec_step(pr, dict(ti_, x=cx - 45, y=cy - 45), {})
+            pr = Pic([row]); stepexec.exec_step(pr, dict(ti_, x=cx - 45, y=cy - 45), {})
             hit_.append(pr.taps)
         ok(hit_ == [[s_] for s_ in spots], "7 nút giống hệt nhau xếp hàng (+ nút gốc): khoanh nút nào thì bấm ĐÚNG nút đó, kể cả nút thứ 5, 6, 7", hit_)
         hit2_ = []
         for cx, cy in spots:                           # nút đã xê dịch chút ít so với lúc cắt (chỗ cắt không còn trùng khít bản sao nào)
-            pr = Pic([row]); apimode.exec_step(pr, dict(ti_, x=cx - 45 + 30, y=cy - 45 + 20), {})
+            pr = Pic([row]); stepexec.exec_step(pr, dict(ti_, x=cx - 45 + 30, y=cy - 45 + 20), {})
             hit2_.append(pr.taps)
         ok(hit2_ == [[s_] for s_ in spots], "…nút xê dịch chút ít so với lúc cắt → vẫn chọn đúng bản sao GẦN nhất trong cả 8 chỗ giống nhau", hit2_)
         # ảnh mẫu TRÙM nhiều chu kỳ của một nội dung lặp (khoanh trùm 2,4 hàng giống hệt nhau): hình còn đúng chỗ cũ thì phải ra đúng chỗ đó
@@ -2018,8 +2019,8 @@ def run_all(gw, rigs):
             for gx in range(9):
                 wall[40 + gy * 80:70 + gy * 80, 40 + gx * 120:70 + gx * 120] = small
         pw_, pw2_ = Pic([wall]), Pic([wall])
-        iw_ = apimode.exec_step(pw_, {"type": "tap_image", "image": b64png(small), "x": 445, "y": 395, "w": 30, "h": 30}, {})      # chỗ cắt nằm GIỮA các bản sao
-        iw2_ = apimode.exec_step(pw2_, {"type": "tap_image", "image": b64png(small), "x": 400, "y": 360, "w": 30, "h": 30}, {})    # chỗ cắt vẫn còn đúng hình đó
+        iw_ = stepexec.exec_step(pw_, {"type": "tap_image", "image": b64png(small), "x": 445, "y": 395, "w": 30, "h": 30}, {})      # chỗ cắt nằm GIỮA các bản sao
+        iw2_ = stepexec.exec_step(pw2_, {"type": "tap_image", "image": b64png(small), "x": 400, "y": 360, "w": 30, "h": 30}, {})    # chỗ cắt vẫn còn đúng hình đó
         ok(iw_[0] is False and pw_.taps == [] and "quá nhiều chỗ giống hệt" in iw_[1] and eyes_mod.locate_image(wall, small, 0.9, (460, 410)) == (None, eyes_mod.IMAGE_TOO_MANY)
            and eyes_mod.locate_image(wall, small, 0.9)[0] is None,
            "hình lặp lại quá nhiều chỗ (72 chỗ, quá %d) mà chỗ cắt không còn hình đó → không phân xử được → KHÔNG bấm, báo đúng lý do" % eyes_mod.IMAGE_PEAKS_MAX, iw_)
@@ -2032,24 +2033,24 @@ def run_all(gw, rigs):
         for why, bad in bads.items():
             pb = Pic([title_scr])
             try:
-                apimode.exec_step(pb, bad, {}); raised = False
-            except apimode.ConfigError:
+                stepexec.exec_step(pb, bad, {}); raised = False
+            except stepexec.ConfigError:
                 raised = True
             ok(raised and pb.taps == [], "bước cấu hình sai (%s) → báo lỗi cấu hình, không bấm" % why)
-        pic_, need_, near_ = apimode.step_image(dict(ti_, image="data:image/png;base64," + ti_["image"], min=5))
-        ok(pic_.shape == (90, 90, 3) and need_ == 0.5 and near_ == MENU and apimode.step_image({"image": ti_["image"]})[1:] == (apimode.IMAGE_MIN, None)
-           and apimode.step_image(dict(ti_, min=100))[1] == 0.99 and apimode.step_image(dict(ti_, min=-3))[1] == apimode.IMAGE_MIN
-           and apimode.step_image(dict(ti_, min=float("nan")))[1] == apimode.IMAGE_MIN and apimode.describe(dict(ti_, w="<b>", h=None)) == "Bấm vào vùng ảnh"
-           and apimode.describe(dict(ti_, w=float("inf"))) == "Bấm vào vùng ảnh" and apimode.step_image(dict(ti_, x=float("inf")))[2] is None,
+        pic_, need_, near_ = stepexec.step_image(dict(ti_, image="data:image/png;base64," + ti_["image"], min=5))
+        ok(pic_.shape == (90, 90, 3) and need_ == 0.5 and near_ == MENU and stepexec.step_image({"image": ti_["image"]})[1:] == (stepexec.IMAGE_MIN, None)
+           and stepexec.step_image(dict(ti_, min=100))[1] == 0.99 and stepexec.step_image(dict(ti_, min=-3))[1] == stepexec.IMAGE_MIN
+           and stepexec.step_image(dict(ti_, min=float("nan")))[1] == stepexec.IMAGE_MIN and stepexec.describe(dict(ti_, w="<b>", h=None)) == "Bấm vào vùng ảnh"
+           and stepexec.describe(dict(ti_, w=float("inf"))) == "Bấm vào vùng ảnh" and stepexec.step_image(dict(ti_, x=float("inf")))[2] is None,
            "đọc bước: nhận cả ảnh có tiền tố «data:»; độ giống bị chặn trong 50…99%; không ghi chỗ cắt thì không ưu tiên chỗ nào")
         login2 = [{"type": "launch", "app": "efootball"}, {"type": "wait_text", "text": "Konami"}, ti_, {"type": "type", "text": "{{username}}"}]
-        ok("tap_image" in apimode.INPUT_TYPES and [x["type"] for x in apimode.open_prefix(login2)] == ["launch", "wait_text"] and apimode.describe(ti_) == "Bấm vào vùng ảnh 90×90"
-           and apimode.describe({"type": "tap_image"}) == "Bấm vào vùng ảnh",
+        ok("tap_image" in stepexec.INPUT_TYPES and [x["type"] for x in jobflow.open_prefix(login2)] == ["launch", "wait_text"] and stepexec.describe(ti_) == "Bấm vào vùng ảnh 90×90"
+           and stepexec.describe({"type": "tap_image"}) == "Bấm vào vùng ảnh",
            "bước bấm vào vùng ảnh là bước CHẠM vào máy: đoạn mở game dừng trước nó; mô tả không chứa dữ liệu ảnh")
         p12, p13 = Pic([title_scr]), Pic([scene(btn=None)])
         ok14, msg14 = engine.run_step(p12, ti_)
         ok15, msg15 = engine.run_step(p13, ti_)
-        ok(ok14 is True and p12.taps == [MENU] and msg14 == "Bấm vào vùng ảnh 90×90" and ok15 is False and p13.taps == [] and "không thấy vùng ảnh" in msg15 and "tap_image" in apimode.STEP_TYPES,
+        ok(ok14 is True and p12.taps == [MENU] and msg14 == "Bấm vào vùng ảnh 90×90" and ok15 is False and p13.taps == [] and "không thấy vùng ảnh" in msg15 and "tap_image" in stepexec.STEP_TYPES,
            "kịch bản thường / «thử một bước» dùng chung cách làm", (msg14, msg15))
         ok(eyes_mod.locate_image(None, crop) == (None, 0.0) and eyes_mod.locate_image(title_scr, None) == (None, 0.0) and eyes_mod.locate_image(title_scr[:, :, 0], crop) == (None, 0.0)
            and eyes_mod.locate_image(np.dstack([title_scr, title_scr[:, :, :1]]), crop) == (None, 0.0) and eyes_mod.locate_image(title_scr.astype(np.float32), crop) == (None, 0.0),
@@ -2080,7 +2081,7 @@ def run_all(gw, rigs):
 
         print("\n== 33. «Bấm vào ô có chữ … và …» (danh sách gói: khớp số coin + giá trong CÙNG MỘT ô) ==")
         WH = (1334, 750)
-        pc = lambda k, coin, price: apimode.pick_card(SHOP[k], apimode.alternatives(coin), apimode.alternatives(price), WH)
+        pc = lambda k, coin, price: stepexec.pick_card(SHOP[k], stepexec.alternatives(coin), stepexec.alternatives(price), WH)
         ok(pc(0, "500", "CHF 2.30") == (201, 407) and pc(3, "500", "CHF 3.80") == (789, 137) and pc(3, "500", "CHF 2.30") is None and pc(0, "500", "CHF 3.80") is None,
            "hai gói cùng 500 coin: chọn đúng gói theo GIÁ cùng ô (gói sale 2.30 ≠ gói thường 3.80); giá không nằm cùng ô thì không chọn")
         ok(pc(3, "300", "CHF 2.30") == (201, 422) and pc(0, "300", "CHF 2.30") is None,
@@ -2097,12 +2098,12 @@ def run_all(gw, rigs):
            "các gói lớn: đúng ô, kể cả khi hai trang lật chồng lên nhau (5,000 / 10,000 nằm ở cả hai trang nhưng ở chỗ khác)")
         ok(pc(1, "10", "CHF 0.60") == (776, 407) and pc(2, "50", "CHF 0.60") == (191, 406) and pc(1, "50", "CHF 0.60") is None,
            "Starter Set 10 coin và 50 coin cùng giá 0.60: số coin quyết định; «10» không khớp vào «Paid: 10» khi có ô ghi đúng «10»")
-        ok(apimode.pick_card(SHOP[3], ["100"], [], WH) == (198, 137) and apimode.pick_card([], ["100"], ["CHF 0.80"], WH) is None,
+        ok(stepexec.pick_card(SHOP[3], ["100"], [], WH) == (198, 137) and stepexec.pick_card([], ["100"], ["CHF 0.80"], WH) is None,
            "không ghi chữ đi kèm → chỉ chọn khi có ĐÚNG MỘT dòng khớp nguyên dòng; màn hình trống → không thấy")
         side = [{"text": "Mua", "x": 900, "y": 300, "w": 60, "h": 30}, {"text": "1050 Coins", "x": 600, "y": 300, "w": 160, "h": 30},
                 {"text": "Mua", "x": 900, "y": 450, "w": 60, "h": 30}, {"text": "2150 Coins", "x": 600, "y": 452, "w": 160, "h": 30}]
-        ok(apimode.pick_card(side, ["Mua"], ["2150 Coins"], WH, "left") == (900, 450) and apimode.pick_card(side, ["2150 Coins"], ["Mua"], WH, "right") == (600, 452)
-           and apimode.pick_card(side, ["Mua"], ["2150 Coins"], WH, "below") is None and apimode.pick_card(side, ["Mua"], ["2150"], WH, "left") is None,
+        ok(stepexec.pick_card(side, ["Mua"], ["2150 Coins"], WH, "left") == (900, 450) and stepexec.pick_card(side, ["2150 Coins"], ["Mua"], WH, "right") == (600, 452)
+           and stepexec.pick_card(side, ["Mua"], ["2150 Coins"], WH, "below") is None and stepexec.pick_card(side, ["Mua"], ["2150"], WH, "left") is None,
            "chữ đi kèm nằm BÊN TRÁI / PHẢI (danh sách dạng hàng ngang: «1050 Coins … Mua»): chọn đúng nút «Mua» của hàng có gói cần mua")
 
         class Shop(Popup):                         # danh sách gói lật được: mỗi lần lướt sang trái là sang trang kế (hết danh sách thì đứng yên)
@@ -2133,68 +2134,68 @@ def run_all(gw, rigs):
         tc = {"type": "tap_text", "text": "{{package.ocr_text}}", "near": "{{package.price_text}}", "scroll": "left"}
         pv = {"package.ocr_text": "10,000|10000", "package.price_text": "CHF 63.00"}
         s1 = Shop(0)
-        q1 = apimode.exec_step(s1, tc, pv)
+        q1 = stepexec.exec_step(s1, tc, pv)
         ok(q1[0] is True and q1[2] is True and s1.taps == [(812, 427, 4)] and s1.swipes == ["left"] * 4 and s1.sent[-1] == "click",
            "gói chưa có trên màn hình → lướt sang trái tới trang có gói đó rồi bấm đúng ô (10,000 — CHF 63.00)", (q1, s1.taps, s1.swipes))
         s2 = Shop(5)
-        q2 = apimode.exec_step(s2, dict(tc), {"package.ocr_text": "500", "package.price_text": "CHF 2.30"})
+        q2 = stepexec.exec_step(s2, dict(tc), {"package.ocr_text": "500", "package.price_text": "CHF 2.30"})
         ok(q2[0] is True and s2.taps == [(201, 407, 0)] and s2.swipes[:1] == ["left"] and s2.swipes.count("right") == 5,
            "máy đang đứng CUỐI danh sách: lướt sang trái không đổi gì (hết danh sách) → tự lướt ngược lại tìm, bấm đúng gói sale 500", (s2.taps, s2.swipes))
         s3 = Shop(2)
-        q3 = apimode.exec_step(s3, dict(tc, scrolls=2), {"package.ocr_text": "7,777", "package.price_text": "CHF 1.00"})
+        q3 = stepexec.exec_step(s3, dict(tc, scrolls=2), {"package.ocr_text": "7,777", "package.price_text": "CHF 1.00"})
         ok(q3[0] is False and q3[2] is False and s3.taps == [] and "không thấy ô «7,777» có «CHF 1.00» ngay dưới" in q3[1] and len(s3.swipes) <= 2 + 4,
            "gói không có trong danh sách → lướt hết số lần cho phép theo cả hai chiều rồi báo hỏng, KHÔNG bấm gì; lướt xong xuôi không tính là «đã chạm» "
            "(gói hết hạn = «chưa mua», không thành đối soát)", (q3, s3.swipes))
         s3b = Shop(2)
-        q3b = apimode.exec_step(s3b, {"type": "tap_text", "text": "{{otp}}", "near": "{{password}}", "scroll": "left", "scrolls": 1}, {"otp": "135790", "password": "MatKhau-Bi-Mat"})
+        q3b = stepexec.exec_step(s3b, {"type": "tap_text", "text": "{{otp}}", "near": "{{password}}", "scroll": "left", "scrolls": 1}, {"otp": "135790", "password": "MatKhau-Bi-Mat"})
         ok(q3b[0] is False and "135790" not in q3b[1] and "MatKhau-Bi-Mat" not in q3b[1] and "{{otp}}" in q3b[1] and "{{password}}" in q3b[1],
            "lời báo của bước tìm ô chỉ ghi TÊN biến bí mật, không ghi giá trị", q3b)
         # ghép nhầm giữa các ô / nhập nhằng / ô bị cắt ở mép → không chọn
         grid = [{"text": "300", "x": 200, "y": 140, "w": 60, "h": 26}, {"text": "CHF 2.30", "x": 195, "y": 285, "w": 134, "h": 30},
                 {"text": "500", "x": 200, "y": 425, "w": 60, "h": 26}, {"text": "CHF 3.80", "x": 195, "y": 570, "w": 134, "h": 30}]
-        ok(apimode.pick_card(grid, ["500"], ["CHF 2.30"], WH) is None and apimode.pick_card(grid, ["300"], ["CHF 2.30"], WH) == (200, 140)
-           and apimode.pick_card(grid, ["500"], ["CHF 3.80"], WH) == (200, 425) and apimode.pick_card(grid, ["300"], ["CHF 3.80"], WH) is None,
+        ok(stepexec.pick_card(grid, ["500"], ["CHF 2.30"], WH) is None and stepexec.pick_card(grid, ["300"], ["CHF 2.30"], WH) == (200, 140)
+           and stepexec.pick_card(grid, ["500"], ["CHF 3.80"], WH) == (200, 425) and stepexec.pick_card(grid, ["300"], ["CHF 3.80"], WH) is None,
            "giá của ô KHÁC (hàng trên / hàng dưới) không ghép được vào số coin của ô này")
         try:
-            apimode.exec_step(Shop(0), {"type": "tap_text", "text": "500", "near": "CHF 2.30", "near_dir": "above"}, {}); raised = False
-        except apimode.ConfigError:
+            stepexec.exec_step(Shop(0), {"type": "tap_text", "text": "500", "near": "CHF 2.30", "near_dir": "above"}, {}); raised = False
+        except stepexec.ConfigError:
             raised = True
         ok(raised, "chế độ «ngay trên» đã bỏ (giá của ô hàng trên nằm gần số coin hơn giá của chính ô đó) → báo lỗi cấu hình")
         tight = [{"text": "300", "x": 200, "y": 100, "w": 60, "h": 26}, {"text": "Paid: 291", "x": 190, "y": 130, "w": 110, "h": 26},
                  {"text": "CHF 2.30", "x": 195, "y": 160, "w": 134, "h": 30}, {"text": "500", "x": 200, "y": 220, "w": 60, "h": 26},
                  {"text": "Paid: 477", "x": 190, "y": 250, "w": 110, "h": 26}, {"text": "CHF 3.80", "x": 195, "y": 280, "w": 134, "h": 30}]
-        ok(apimode.pick_card(tight, ["300"], ["CHF 3.80"], WH) is None and apimode.pick_card(tight, ["300"], ["CHF 2.30"], WH) == (200, 100)
-           and apimode.pick_card(tight, ["500"], ["CHF 3.80"], WH) == (200, 220),
+        ok(stepexec.pick_card(tight, ["300"], ["CHF 3.80"], WH) is None and stepexec.pick_card(tight, ["300"], ["CHF 2.30"], WH) == (200, 100)
+           and stepexec.pick_card(tight, ["500"], ["CHF 3.80"], WH) == (200, 220),
            "hàng ô SÁT nhau (giá của ô hàng dưới lọt vào tầm): giữa số coin và giá có một số coin khác = đã sang ô khác → không ghép; dòng «Paid: …» thì không chặn")
         twins = grid + [{"text": "500", "x": 800, "y": 425, "w": 60, "h": 26}, {"text": "CHF 3.80", "x": 795, "y": 570, "w": 134, "h": 30}]
-        ok(apimode.pick_card(twins, ["500"], ["CHF 3.80"], WH) is None, "HAI ô cùng đủ điều kiện → không chọn (nhập nhằng: không đoán ô nào)")
+        ok(stepexec.pick_card(twins, ["500"], ["CHF 3.80"], WH) is None, "HAI ô cùng đủ điều kiện → không chọn (nhập nhằng: không đoán ô nào)")
         edge = [{"text": "500", "x": 1310, "y": 425, "w": 60, "h": 26}, {"text": "CHF 2.30", "x": 1300, "y": 570, "w": 80, "h": 30}]
-        ok(apimode.pick_card(edge, ["500"], ["CHF 2.30"], WH) is None, "ô bị CẮT ở mép màn hình (chữ chạm mép: «1,500» cắt còn «500») → không chọn")
+        ok(stepexec.pick_card(edge, ["500"], ["CHF 2.30"], WH) is None, "ô bị CẮT ở mép màn hình (chữ chạm mép: «1,500» cắt còn «500») → không chọn")
         vnd = [{"text": "130", "x": 200, "y": 140, "w": 60, "h": 26}, {"text": "126.000đ", "x": 195, "y": 285, "w": 134, "h": 30}]
-        ok(apimode.pick_card(vnd, ["130"], ["26.000đ"], WH) is None and apimode.pick_card(vnd, ["130"], ["126.000đ"], WH) == (200, 140),
+        ok(stepexec.pick_card(vnd, ["130"], ["26.000đ"], WH) is None and stepexec.pick_card(vnd, ["130"], ["126.000đ"], WH) == (200, 140),
            "giá phải khớp NGUYÊN DÒNG: «26.000đ» không khớp vào «126.000đ»")
         far = [{"text": "Mua", "x": 900, "y": 300, "w": 60, "h": 30}, {"text": "2150", "x": 310, "y": 300, "w": 80, "h": 30}]
-        ok(apimode.pick_card(far, ["Mua"], ["2150"], WH, "left") is None, "«bên trái / phải»: chữ ở ô bên cạnh (cách ~590 px) không tính là cùng ô")
+        ok(stepexec.pick_card(far, ["Mua"], ["2150"], WH, "left") is None, "«bên trái / phải»: chữ ở ô bên cạnh (cách ~590 px) không tính là cùng ô")
         PW = (750, 1334)                            # màn DỌC, ô sát nhau, số coin có chữ đi kèm («500 Coins»)
         coins = [{"text": "500 Coins", "x": 200, "y": 100, "w": 160, "h": 30}, {"text": "1,500 Coins", "x": 200, "y": 220, "w": 180, "h": 30},
                  {"text": "CHF 7.50", "x": 200, "y": 280, "w": 134, "h": 30}]
-        ok(apimode.pick_card(coins, ["500 Coins"], ["CHF 7.50"], PW) is None and apimode.pick_card(coins, ["1,500 Coins"], ["CHF 7.50"], PW) == (200, 220),
+        ok(stepexec.pick_card(coins, ["500 Coins"], ["CHF 7.50"], PW) is None and stepexec.pick_card(coins, ["1,500 Coins"], ["CHF 7.50"], PW) == (200, 220),
            "«500 Coins» và «1,500 Coins» là CÙNG LOẠI (mọi cụm số coi như nhau) → giá của ô 1,500 không ghép nhầm vào ô 500")
         split = [{"text": "1,", "x": 180, "y": 425, "w": 24, "h": 26}, {"text": "500", "x": 215, "y": 425, "w": 46, "h": 26},
                  {"text": "CHF 7.50", "x": 200, "y": 570, "w": 134, "h": 30},
                  {"text": "500", "x": 800, "y": 425, "w": 60, "h": 26}, {"text": "CHF 3.80", "x": 800, "y": 570, "w": 134, "h": 30}]
-        ok(apimode.pick_card(split, ["500"], ["CHF 3.80"], WH) == (800, 425) and apimode.pick_card(split, ["500"], ["CHF 7.50"], WH) is None
-           and apimode.pick_card(split, ["500"], [], WH) == (800, 425),
+        ok(stepexec.pick_card(split, ["500"], ["CHF 3.80"], WH) == (800, 425) and stepexec.pick_card(split, ["500"], ["CHF 7.50"], WH) is None
+           and stepexec.pick_card(split, ["500"], [], WH) == (800, 425),
            "đọc chữ TÁCH «1,500» thành «1,» + «500»: mảnh «500» dính sát một mảnh số khác cùng hàng = một phần của số lớn hơn → không khớp")
         try:
-            apimode.exec_step(Shop(0), {"type": "tap_text", "text": "500", "near": "x", "near_dir": "any"}, {}); raised = False
-        except apimode.ConfigError:
+            stepexec.exec_step(Shop(0), {"type": "tap_text", "text": "500", "near": "x", "near_dir": "any"}, {}); raised = False
+        except stepexec.ConfigError:
             raised = True
         ok(raised, "chế độ «ở gần» (không rõ hướng) đã bỏ — dễ ghép nhầm sang ô khác → báo lỗi cấu hình")
         s4 = Shop(3)
-        q4 = apimode.exec_step(s4, {"type": "assert_text", "text": "500", "near": "CHF 3.80"}, {})
+        q4 = stepexec.exec_step(s4, {"type": "assert_text", "text": "500", "near": "CHF 3.80"}, {})
         s5 = Shop(0)
-        q5 = apimode.exec_step(s5, {"type": "assert_text", "text": "500", "near": "CHF 3.80"}, {})
+        q5 = stepexec.exec_step(s5, {"type": "assert_text", "text": "500", "near": "CHF 3.80"}, {})
         ok(q4 == (True, "", False) and s4.taps == [] and s4.sent == ["home"] and q5[0] is False and s5.swipes == [] and s5.taps == [],
            "«Kiểm có chữ» + chữ đi kèm: chỉ KIỂM (không bấm gì) — dùng để chạy thử việc tìm gói mà không mua; không ghi hướng lướt thì không lướt", (q4, q5))
 
@@ -2203,17 +2204,17 @@ def run_all(gw, rigs):
                 self.page = 5
                 return super().tap_at(x, y, click, verify)
         s6 = Shift(4)
-        q6 = apimode.exec_step(s6, dict(tc), {"package.ocr_text": "3,000", "package.price_text": "CHF 21.00"})
+        q6 = stepexec.exec_step(s6, dict(tc), {"package.ocr_text": "3,000", "package.price_text": "CHF 21.00"})
         ok(q6[0] is False and s6.taps == [], "danh sách trôi đi trước khi con trỏ tới nơi (ô không còn ở chỗ cũ) → KHÔNG bấm", q6)
         for bad in ({"near": "x", "near_dir": "cheo"}, {"scroll": "cheo"}, {"near": "x", "scrolls": "nhieu"}, {"near": "  |  "}):
             try:
-                apimode.exec_step(Shop(0), dict({"type": "tap_text", "text": "500"}, **bad), {}); raised = False
-            except apimode.ConfigError:
+                stepexec.exec_step(Shop(0), dict({"type": "tap_text", "text": "500"}, **bad), {}); raised = False
+            except stepexec.ConfigError:
                 raised = True
             ok(raised, "tuỳ chọn «trong cùng ô» sai (%s) → báo lỗi cấu hình, không bấm" % bad)
-        ok(apimode.describe(tc, pv) == "Tap chữ «10,000|10000» có «CHF 63.00» ngay dưới (chưa thấy thì lướt trái)"
-           and apimode.describe({"type": "assert_text", "text": "Mua", "near": "{{password}}", "near_dir": "left"}, {"password": "bi-mat"}) == "Kiểm chữ «Mua» có «{{password}}» bên trái",
-           "mô tả bước: hiện giá trị của gói, giữ TÊN biến bí mật", apimode.describe(tc, pv))
+        ok(stepexec.describe(tc, pv) == "Tap chữ «10,000|10000» có «CHF 63.00» ngay dưới (chưa thấy thì lướt trái)"
+           and stepexec.describe({"type": "assert_text", "text": "Mua", "near": "{{password}}", "near_dir": "left"}, {"password": "bi-mat"}) == "Kiểm chữ «Mua» có «{{password}}» bên trái",
+           "mô tả bước: hiện giá trị của gói, giữ TÊN biến bí mật", stepexec.describe(tc, pv))
         e7 = Shop(4)
         ok7, msg7 = engine.run_step(e7, dict(tc), )
         ok(ok7 is False and "package.ocr_text" in msg7, "kịch bản thường (không có dữ liệu đơn) dùng chung cách làm: thiếu {{biến}} → báo rõ", msg7)
@@ -2222,7 +2223,7 @@ def run_all(gw, rigs):
         ok(ok8 is True and e8.taps == [(216, 426, 4)], "kịch bản thường: bước có chữ đi kèm đi qua cùng bộ chạy, bấm đúng ô", e8.taps)
 
     finally:
-        apimode.LOOK_SETTLE, apimode._sleep = real_settle, real_sleep
+        stepexec.LOOK_SETTLE, stepexec._sleep = real_settle, real_sleep
 
     print("\n== 29. KỊCH BẢN NHẬN ĐƠN: một đơn đi qua kịch bản có cách chạy «nhận đơn» (cùng bộ máy, cùng các chốt) ==")
     for x in rigs:                                   # không rig nào khác còn hỏi đơn của pool này
@@ -2258,7 +2259,7 @@ def run_all(gw, rigs):
     ok(rk.text().count("Đã chép 8 bước cũ từ gateway") == 1 and so["gw_steps_copied"] is True and so["steps"]["login"] == kb_login
        and {p: so["steps"][p] for p in rest} == {p: BASE_STEPS[p] for p in rest} and so["steps"]["otp"] == [],
        "lần chạy đầu: 4 giai đoạn kịch bản còn trống được CHÉP từ pool đời cũ vào kịch bản ĐÃ LƯU (đăng nhập của kịch bản giữ nguyên), đánh dấu đã chép",
-       ({p: len(so["steps"][p]) for p in apimode.PHASES}, so["gw_steps_copied"]))
+       ({p: len(so["steps"][p]) for p in jobflow.PHASES}, so["gw_steps_copied"]))
     wait_until(lambda: rk.status().get("status") == "Chờ đơn", 8)       # máy báo «trống» cho gateway SAU khi đăng xuất xong → chờ nó về «Chờ đơn» rồi mới đọc
     wait_until(lambda: gw.sql("SELECT state FROM devices WHERE name=?", (rk.name,)) == [("free",)], 5)
     devk = gw.sql("SELECT state, pool_code FROM devices WHERE name=?", (rk.name,))
@@ -2346,8 +2347,8 @@ def run_all(gw, rigs):
     everything = " ".join(x.text() for x in rigs)
     leaked = [s for s in ("PassA#1", "PassB#2", "PassC#3", "SaiMatKhau", "654321", "111111") if s in everything]
     ok(not leaked, "mật khẩu / OTP không xuất hiện trong nhật ký tool", leaked)
-    shown = apimode.describe({"type": "type", "text": "{{password}}"}, {"password": "PassA#1"})
-    ok(shown == "Gõ «{{password}}»" and apimode.describe({"type": "tap_text", "text": "{{package.ocr_text}}"}, {"package.ocr_text": "1050"}) == "Tap chữ «1050»",
+    shown = stepexec.describe({"type": "type", "text": "{{password}}"}, {"password": "PassA#1"})
+    ok(shown == "Gõ «{{password}}»" and stepexec.describe({"type": "tap_text", "text": "{{package.ocr_text}}"}, {"package.ocr_text": "1050"}) == "Tap chữ «1050»",
        "mô tả bước chỉ ghi TÊN biến bí mật, riêng thông tin gói thì hiện giá trị", shown)
     jl = open(os.path.join(rigs[0].jdir, "api_journal.jsonl"), encoding="utf-8").read()
     ok("T-001" in jl and "PassA#1" not in jl, "sổ lịch sử đơn có ghi đơn, không chứa mật khẩu")

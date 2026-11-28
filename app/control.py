@@ -15,7 +15,7 @@ import json, os, secrets, threading, time
 
 import cv2
 
-import apimode, ocr, store
+import stepexec, ocr, store
 from eyes import Eyes, norm_text
 from mcpserver import Remote, Result, Tool, ToolError, cancel_requested, image, text
 
@@ -273,7 +273,7 @@ class Control:
                     raise ToolError(str(e))
                 try:
                     return name, fn(nav)
-                except apimode.Aborted:
+                except stepexec.Aborted:
                     raise ToolError("Đã dừng theo yêu cầu huỷ (lệnh chưa chạy hết).")
                 finally:
                     self.host.done(name)
@@ -292,8 +292,8 @@ class Control:
 
         def run(nav):
             try:
-                ok, why, _ = apimode.exec_step(nav, step, {}, abort)
-            except (apimode.ConfigError, apimode.InputError, ValueError) as e:
+                ok, why, _ = stepexec.exec_step(nav, step, {}, abort)
+            except (stepexec.ConfigError, stepexec.InputError, ValueError) as e:
                 raise ToolError(str(e))
             self._need(ok, why, what)
         name, _ = self._act(device, run)
@@ -351,7 +351,7 @@ class Control:
 
     def find_text(self, text, device=None):
         name, eyes = self._eyes(device)
-        want = [norm_text(a).replace(" ", "") for a in apimode.alternatives(text)]
+        want = [norm_text(a).replace(" ", "") for a in stepexec.alternatives(text)]
         if not want:
             raise ToolError("Chưa nêu chữ cần tìm.")
         shot = eyes.screenshot()
@@ -363,13 +363,13 @@ class Control:
             return Result("Không thấy chữ «%s» trên màn hình máy %s." % (text, name), {"device": name, "matches": []})
         return Result("\n".join("(%d,%d) %s" % (r["x"], r["y"], r["text"]) for r in hits), {"device": name, "matches": hits})
 
-    def wait_for_text(self, text, device=None, timeout=apimode.WAIT_TEXT_TIMEOUT):
+    def wait_for_text(self, text, device=None, timeout=stepexec.WAIT_TEXT_TIMEOUT):
         name, eyes = self._eyes(device)
         try:
-            ok, why, _ = apimode.exec_step(_EyesOnly(eyes), {"type": "wait_text", "text": text, "timeout": timeout}, {}, self._abort())
-        except apimode.ConfigError as e:
+            ok, why, _ = stepexec.exec_step(_EyesOnly(eyes), {"type": "wait_text", "text": text, "timeout": timeout}, {}, self._abort())
+        except stepexec.ConfigError as e:
             raise ToolError(str(e))
-        except apimode.Aborted:
+        except stepexec.Aborted:
             raise ToolError("Đã dừng chờ theo yêu cầu huỷ.")
         self._need(ok, why, "Chờ chữ")
         return Result("Đã thấy chữ «%s» trên máy %s." % (text, name))
@@ -410,11 +410,11 @@ class Control:
         if text != text.rstrip():
             raise ToolError("Chuỗi kết thúc bằng khoảng trắng — board không gõ được.")
         def run(nav):
-            ok, why, _ = apimode.hid(nav, "type " + text, wait=0.8 + 0.08 * len(text))
+            ok, why, _ = stepexec.hid(nav, "type " + text, wait=0.8 + 0.08 * len(text))
             self._need(ok, why, "Gõ chữ")
-            time.sleep(apimode.KEY_SETTLE)
+            time.sleep(stepexec.KEY_SETTLE)
             if enter:
-                ok, why, _ = apimode.hid(nav, "key enter")
+                ok, why, _ = stepexec.hid(nav, "key enter")
                 self._need(ok, why, "Phím Enter")
         name, _ = self._act(device, run)
         return Result("Đã gõ %d ký tự%s trên máy %s." % (len(text), " rồi Enter" if enter else "", name))   # không lặp lại nội dung (có thể là mật khẩu)
@@ -425,8 +425,8 @@ class Control:
 
     def key_combo(self, keys, device=None):
         try:
-            combo = apimode.combo_keys(keys)
-        except apimode.ConfigError as e:
+            combo = stepexec.combo_keys(keys)
+        except stepexec.ConfigError as e:
             raise ToolError(str(e))
         name = self._step(device, {"type": "combo", "keys": combo}, "Tổ hợp phím")
         return Result("Đã nhấn tổ hợp «%s» trên máy %s." % (combo, name))
@@ -467,8 +467,8 @@ class Control:
             raise ToolError("steps phải là một danh sách bước, vd [{\"type\":\"tap_text\",\"text\":\"Cài đặt\"}].")
         plan = []
         for i, s in enumerate(steps):
-            if not isinstance(s, dict) or s.get("type") not in apimode.STEP_TYPES:
-                raise ToolError("Bước %d không hợp lệ: «type» phải là một trong %s." % (i + 1, ", ".join(apimode.STEP_TYPES)))
+            if not isinstance(s, dict) or s.get("type") not in stepexec.STEP_TYPES:
+                raise ToolError("Bước %d không hợp lệ: «type» phải là một trong %s." % (i + 1, ", ".join(stepexec.STEP_TYPES)))
             if "value" in s:                      # dạng {type, value} của gateway đời cũ không còn được nhận: chạy nó như bước thiếu tham số là bấm / gõ sai chỗ
                 raise ToolError("Bước %d: không có trường «value» — ghi tham số theo từng loại bước (vd tap {x,y}, tap_text {text}, type {text}, wait {seconds})." % (i + 1))
             plan.append(dict(s))
@@ -479,14 +479,14 @@ class Control:
         def what(st):                      # mô tả bước để trả về: KHÔNG lặp lại chữ được gõ (có thể là mật khẩu)
             if st.get("type") == "type":
                 return "Gõ %d ký tự" % len(str(st.get("text") or ""))
-            return apimode.describe(st, values)
+            return stepexec.describe(st, values)
 
         def run(nav):
             out = []
             obs = getattr(nav, "observer", None)          # lịch sử của máy (history.Tracker): cả chuỗi bước là MỘT lượt chạy, bước đánh số 1…N
             if obs is not None:
                 obs.run_begin("AI / dòng lệnh: %d bước" % len(plan))
-            apimode.watch_phase(nav, None, len(plan))
+            stepexec.watch_phase(nav, None, len(plan))
             try:
                 return run_plan(nav, out)
             finally:
@@ -499,16 +499,16 @@ class Control:
                     out.append({"step": i + 1, "ok": False, "what": what(st), "why": "đã dừng theo yêu cầu huỷ"})
                     break
                 try:
-                    ok, why, _ = apimode.exec_step(nav, st, values, abort)
-                except (apimode.ConfigError, apimode.InputError, ValueError) as e:
+                    ok, why, _ = stepexec.exec_step(nav, st, values, abort)
+                except (stepexec.ConfigError, stepexec.InputError, ValueError) as e:
                     ok, why = False, str(e)
-                except apimode.Aborted:
+                except stepexec.Aborted:
                     ok, why = False, "đã dừng theo yêu cầu huỷ"
                 # bước có điều kiện xong theo HAI kiểu (đã bấm / không thấy nên bỏ qua) → người gọi phải biết kiểu nào; các bước khác xong thì không kèm lời
                 out.append({"step": i + 1, "ok": bool(ok), "what": what(st), "why": why if (not ok or st.get("type") == "tap_if") else ""})
                 if not ok and not st.get("optional"):
                     break
-                time.sleep(apimode.STEP_GAP)
+                time.sleep(stepexec.STEP_GAP)
             return out
         name, results = self._act(device, run)
         done = all(r["ok"] or plan[r["step"] - 1].get("optional") for r in results) and len(results) == len(plan)
@@ -632,7 +632,7 @@ def build_tools(c: Control) -> list:
         Tool("wait_for_text", "Wait for text",
              "Wait until a text appears on the phone screen (polls with OCR). Fails after the timeout.",
              {"text": {"type": "string", "description": "Text to wait for («a|b» = any of them)."}, "device": _DEV,
-              "timeout": {"type": "integer", "minimum": 1, "maximum": 300, "description": "Seconds to wait (default %d)." % apimode.WAIT_TEXT_TIMEOUT}}, ("text",),
+              "timeout": {"type": "integer", "minimum": 1, "maximum": 300, "description": "Seconds to wait (default %d)." % stepexec.WAIT_TEXT_TIMEOUT}}, ("text",),
              fn=c.wait_for_text, read_only=True, idempotent=True, cli="wait", positional=("device", "text"), help="Chờ tới khi thấy chữ trên màn hình"),
         Tool("tap", "Tap",
              "Tap the phone screen either at pixel coordinates (x,y) or on a visible text. The pointer is moved in a closed loop and "
@@ -659,7 +659,7 @@ def build_tools(c: Control) -> list:
               "enter": {"type": "boolean", "description": "Press Enter after typing (default false)."}}, ("text",),
              fn=c.type_text, destructive=True, cli="type", positional=("device", "text"), help="Gõ chữ (chỉ ASCII) vào ô đang được chọn"),
         Tool("press_key", "Press a key", "Press one key: enter, tab, esc, back (backspace) or space.",
-             {"key": {"type": "string", "enum": list(apimode.KEYS), "description": "Key name."}, "device": _DEV}, ("key",),
+             {"key": {"type": "string", "enum": list(stepexec.KEYS), "description": "Key name."}, "device": _DEV}, ("key",),
              fn=c.press_key, destructive=True, cli="key", positional=("device", "key"), help="Nhấn một phím: enter, tab, esc, back, space"),
         Tool("key_combo", "Key combination",
              "Press a keyboard shortcut: modifiers (gui/cmd, ctrl, alt, shift) followed by one key, e.g. «gui h» (Home), "

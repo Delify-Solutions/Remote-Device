@@ -149,6 +149,60 @@ def main():
         ocr._load_vision, ocr._load_rapid = real
         ocr._state.clear(); ocr._state.update(saved)
 
+    print("== 7. Không biến cục bộ nào che tên một module của app rồi lại gọi hàm của chính module đó ==")
+    # vd trong một hàm có tham số `steps` (danh sách bước) mà lại gọi `steps.exec_step(…)` của module cùng tên: Python lấy biến cục bộ →
+    # AttributeError lúc CHẠY, biên dịch không báo. Bắt ngay từ mã nguồn.
+    import ast
+
+    def shadowed_calls(sources):
+        """sources = {tên module: mã nguồn}. Trả các chỗ «<module>.<tên cấp module>» nằm trong một hàm (def / async def / lambda) mà ở đó
+        <module> là tham số hoặc biến cục bộ (không tính hàm tự `import <module>` ở bên trong)."""
+        trees = {m: ast.parse(src) for m, src in sources.items()}
+        tops = {m: {n.name for n in t.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+                   | {x.id for n in t.body if isinstance(n, ast.Assign) for x in n.targets if isinstance(x, ast.Name)} for m, t in trees.items()}
+        fn_types = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+
+        def local_names(fn):
+            a = fn.args
+            out = {x.arg for x in a.args + a.kwonlyargs + a.posonlyargs} | ({a.vararg.arg} if a.vararg else set()) | ({a.kwarg.arg} if a.kwarg else set())
+            for x in ast.walk(fn):
+                if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store):
+                    out.add(x.id)
+                elif isinstance(x, ast.ExceptHandler) and x.name:
+                    out.add(x.name)
+                elif isinstance(x, (ast.Import, ast.ImportFrom)):               # `import x as jobflow`: tên cục bộ khác module thật
+                    out |= {a2.asname for a2 in x.names if a2.asname}
+            return out
+        found = []
+        for m, t in trees.items():
+            for fn in ast.walk(t):
+                if not isinstance(fn, fn_types):
+                    continue
+                same_import = {a2.name for x in ast.walk(fn) if isinstance(x, ast.Import) for a2 in x.names if not a2.asname}
+                hidden = (local_names(fn) & set(sources)) - same_import
+                for x in ast.walk(fn):
+                    if isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id in hidden and x.attr in tops[x.value.id]:
+                        found.append("%s.py:%d %s(): %s.%s" % (m, x.lineno, getattr(fn, "name", "lambda"), x.value.id, x.attr))
+        return sorted(set(found))
+    mods = {os.path.basename(f)[:-3]: open(f, encoding="utf-8").read() for f in glob.glob(os.path.join(APP, "*.py"))}
+    hits = shadowed_calls(mods)
+    ok(len(mods) > 25 and {"stepexec", "jobflow", "runner", "gui"} <= set(mods) and hits == [],
+       "trong %d module của app: không hàm nào có biến cục bộ / tham số trùng tên module mà lại dùng hàm cấp module của module đó" % len(mods), hits[:5])
+    lib = "def exec_step(n): return n\nSTEP_GAP = 1\n"
+    sample = shadowed_calls({"stepexec": lib, "user": (
+        "import stepexec\n"
+        "def by_param(stepexec): return stepexec.exec_step(1)\n"                    # tham số che module
+        "def by_local(x):\n    stepexec = x\n    return stepexec.STEP_GAP\n"        # biến cục bộ che module
+        "async def by_async(stepexec): return stepexec.exec_step(2)\n"
+        "by_lambda = lambda stepexec: stepexec.exec_step(3)\n"
+        "def by_alias():\n    import json as stepexec\n    return stepexec.exec_step(4)\n"
+        "def fine_local_import():\n    import stepexec\n    return stepexec.exec_step(5)\n"     # tự import module thật → không phải che
+        "def fine_other_attr(stepexec): return stepexec.append(1)\n"                 # gọi thứ KHÔNG phải tên cấp module → không báo
+        "def fine_plain(): return stepexec.exec_step(6)\n")})
+    ok(sorted(h.split(" ", 1)[1] for h in sample) == ["by_alias(): stepexec.exec_step", "by_async(): stepexec.exec_step", "by_local(): stepexec.STEP_GAP",
+                                                "by_param(): stepexec.exec_step", "lambda(): stepexec.exec_step"],
+       "phép kiểm bắt đúng 5 kiểu che tên trên mã mẫu (tham số, biến cục bộ, async, lambda, import … as) và không báo nhầm 3 kiểu hợp lệ", sample)
+
     print("\n%s" % ("✅ TẤT CẢ %d kiểm tra đều đạt." % PASS if not FAIL else "❌ %d lỗi / %d kiểm tra." % (FAIL, PASS + FAIL)))
     return 1 if FAIL else 0
 

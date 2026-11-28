@@ -28,13 +28,13 @@ import numpy as np
 
 import hands as handsmod
 import nav as navmod
-import apimode
+import stepexec
 from eyes import Eyes
 from hands import Hands
 from nav import Nav
 
 navmod.time.sleep = lambda s: None          # bỏ các quãng nghỉ dành cho máy thật
-apimode.time.sleep = lambda s: None
+stepexec.time.sleep = lambda s: None
 
 PASS = FAIL = 0
 def ok(cond, name, ctx=None):
@@ -134,8 +134,8 @@ class World:
 
 
 def tap_text(n, needle):
-    """Bấm vào chữ bằng ĐÚNG bộ chạy bước của app (apimode.exec_step): nhìn một lần, đưa con trỏ tới, kiểm chữ còn đó rồi mới bấm."""
-    return apimode.exec_step(n, {"type": "tap_text", "text": needle}, {})[0]
+    """Bấm vào chữ bằng ĐÚNG bộ chạy bước của app (stepexec.exec_step): nhìn một lần, đưa con trỏ tới, kiểm chữ còn đó rồi mới bấm."""
+    return stepexec.exec_step(n, {"type": "tap_text", "text": needle}, {})[0]
 
 
 class FakeHands:
@@ -496,7 +496,7 @@ def main():
     log = open(os.path.join(Nav.MISS_DIR, kept[0], "trace.txt"), encoding="utf-8").read() if "trace.txt" in files else ""
     ok("không còn ở đó" in (n.miss or "") and files == ["img.png", "ref.png", "trace.txt"] and "(186, 831)" in log and "phép thử đi–về" in log,
        "lần KHÔNG bấm: có lý do (nav.miss) + lưu nhật ký từng nhịp, ảnh nền, ảnh chụp cuối để tìm nguyên nhân", (n.miss, kept, files))
-    msg = apimode._tap(n, 186, 831, verify=lambda img: False)
+    msg = stepexec._tap(n, 186, 831, verify=lambda img: False)
     ok(msg[0] is False and msg[1].endswith("— " + n.miss), "thông báo lỗi của bước nêu lý do cụ thể", msg)
     ok(n.tap_at(186, 831) is True and n.miss is None, "lần bấm sau được → không còn lý do cũ", n.miss)
     real_keep = Nav.MISS_KEEP
@@ -1394,25 +1394,25 @@ def main():
         ok("đang được chương trình khác điều khiển" in second, "cổng đang có bên điều khiển → bên mở sau bị TỪ CHỐI rõ ràng (không còn cảnh hai bên đọc lẫn phản hồi)", second)
         ok(True, "bên trước đóng cổng → mở lại được")
 
-    class BurstNav:                                  # board trả lời theo kịch bản cho apimode.click()
+    class BurstNav:                                  # board trả lời theo kịch bản cho stepexec.click()
         def __init__(self, scripts): self.h = self; self.scripts, self.calls = list(scripts), 0; self.WAKE = Hands.WAKE
         def burst(self, cmds, wait=1.0): self.calls += 1; return self.scripts.pop(0) if self.scripts else []
         def wait_connected(self, t): return True
     full = ["OK move", "OK move", "OK click", "OK move", "OK move"]
-    b = BurstNav([full]); ok(apimode.click(b) == (True, "", True) and b.calls == 1, "apimode.click: bấm được → đúng một lần gửi")
+    b = BurstNav([full]); ok(stepexec.click(b) == (True, "", True) and b.calls == 1, "stepexec.click: bấm được → đúng một lần gửi")
     b = BurstNav([["ERR not-connected"] * 5] * 3)
-    r = apimode.click(b); ok(r[0] is False and r[2] is False and b.calls == 3, "Bluetooth chưa nối (board từ chối CHÍNH lệnh bấm) → thử lại, báo chắc chắn chưa bấm", (r, b.calls))
+    r = stepexec.click(b); ok(r[0] is False and r[2] is False and b.calls == 3, "Bluetooth chưa nối (board từ chối CHÍNH lệnh bấm) → thử lại, báo chắc chắn chưa bấm", (r, b.calls))
     b = BurstNav([["ERR not-connected", "OK move"], full])
-    r = apimode.click(b); ok(r[0] is False and r[2] is True and b.calls == 1, "Bluetooth vừa nối lại giữa chừng, mất phản hồi của lệnh bấm → KHÔNG gửi lại (tránh bấm đôi), báo «không chắc»", (r, b.calls))
+    r = stepexec.click(b); ok(r[0] is False and r[2] is True and b.calls == 1, "Bluetooth vừa nối lại giữa chừng, mất phản hồi của lệnh bấm → KHÔNG gửi lại (tránh bấm đôi), báo «không chắc»", (r, b.calls))
 
     class OneReply:
         def __init__(self, reply): self.h = self; self.reply = reply
         def send(self, cmd, wait=0.5): return self.reply
         def wait_connected(self, t): return True
-    ok(apimode.hid(OneReply("OK key enter"), "key enter") == (True, "", True), "phản hồi OK → đã chạy")
-    r = apimode.hid(OneReply("ERR key?"), "key f13"); ok(r[0] is False and r[2] is False, "board TỪ CHỐI lệnh (ERR…) → chắc chắn chưa chạy", r)
-    r = apimode.hid(OneReply("[D][BLE] notify queued"), "key enter"); ok(r[0] is False and r[2] is True, "board in ra dòng lạ thay cho phản hồi → KHÔNG được coi là chưa chạy", r)
-    r = apimode.hid(OneReply(""), "key enter"); ok(r[0] is False and r[2] is True, "board im lặng → không chắc", r)
+    ok(stepexec.hid(OneReply("OK key enter"), "key enter") == (True, "", True), "phản hồi OK → đã chạy")
+    r = stepexec.hid(OneReply("ERR key?"), "key f13"); ok(r[0] is False and r[2] is False, "board TỪ CHỐI lệnh (ERR…) → chắc chắn chưa chạy", r)
+    r = stepexec.hid(OneReply("[D][BLE] notify queued"), "key enter"); ok(r[0] is False and r[2] is True, "board in ra dòng lạ thay cho phản hồi → KHÔNG được coi là chưa chạy", r)
+    r = stepexec.hid(OneReply(""), "key enter"); ok(r[0] is False and r[2] is True, "board im lặng → không chắc", r)
 
     print("\n== 4. Kiểm bàn phím: bộ gõ tiếng Việt (Telex / VNI) phải bị phát hiện ==")
     tx, vn = Nav.KB_PROBES[0][1], Nav.KB_PROBES[1][1]

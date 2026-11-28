@@ -14,7 +14,7 @@ import json, os, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-import apimode, engine, history
+import stepexec, engine, history
 
 PASS = FAIL = 0
 
@@ -45,8 +45,8 @@ def lines(path):
 
 
 def main():
-    real_sleep = apimode._sleep
-    apimode._sleep = lambda s, a=None: None
+    real_sleep = stepexec._sleep
+    stepexec._sleep = lambda s, a=None: None
     tmp = tempfile.mkdtemp(prefix="ipf-hist-")
     try:
         print("== 1. Một đơn đi qua: trạng thái trực tiếp + lịch sử của máy + sổ đơn ==")
@@ -58,8 +58,8 @@ def main():
         job = {"id": 77, "ref": "T-77", "items": [{"code": "coin_1050", "name": "1050 Coins", "qty": 2, "ocr_text": "1050"}],
                "login": {"username": "khach-bi-mat@vidu.vn", "password": "MatKhau#Bi-Mat"}, "otp": {"code": "246810"}}
         tr.order_begin(job)
-        apimode.watch_phase(n, "Đăng nhập", 3)
-        r1 = apimode.exec_step(n, {"type": "type", "text": "{{username}}"}, job["login"])
+        stepexec.watch_phase(n, "Đăng nhập", 3)
+        r1 = stepexec.exec_step(n, {"type": "type", "text": "{{username}}"}, job["login"])
         mid = H.live()["iPhoneFarm-01"]
         ok(r1[0] is True and mid["kind"] == "nhận đơn" and mid["group"] == "Efootball ip8" and mid["script"] == "nạp Efootball" and mid["order"]["ref"] == "T-77"
            and mid["phase"] == "Đăng nhập" and mid["last"]["what"] == "Gõ «{{username}}»" and mid["last"]["i"] == 1 and mid["last"]["n"] == 3 and "step" not in mid,
@@ -71,13 +71,13 @@ def main():
                 seen["live"] = H.live()["iPhoneFarm-01"]
                 return super().send(cmd, wait)
         p = Peek(tr)
-        apimode.exec_step(p, {"type": "type", "text": "{{password}}"}, job["login"])
+        stepexec.exec_step(p, {"type": "type", "text": "{{password}}"}, job["login"])
         st = seen["live"].get("step") or {}
         ok(st.get("what") == "Gõ «{{password}}»" and st.get("i") == 2 and st.get("n") == 3 and st.get("phase") == "Đăng nhập" and st.get("since"),
            "ĐANG chạy một bước: thấy đúng bước đó, thứ 2/3, kèm lúc bắt đầu", seen["live"])
-        r3 = apimode.exec_step(n, {"type": "tap_text", "text": "Nút không có"}, {})
-        apimode.watch_phase(n, "Mua một gói", 1)
-        apimode.exec_step(n, {"type": "wait_text", "text": "{{package.ocr_text}}|Trang chu", "timeout": 0}, {"package.ocr_text": "1050"})
+        r3 = stepexec.exec_step(n, {"type": "tap_text", "text": "Nút không có"}, {})
+        stepexec.watch_phase(n, "Mua một gói", 1)
+        stepexec.exec_step(n, {"type": "wait_text", "text": "{{package.ocr_text}}|Trang chu", "timeout": 0}, {"package.ocr_text": "1050"})
         tr.note("Đang mua 1050 Coins (1/2)")
         tr.order_end("done", "đã nạp 2 gói")
         after = H.live()["iPhoneFarm-01"]
@@ -109,29 +109,29 @@ def main():
 
         tlit = H.tracker("may-go-tay")
         fl = Fake(tlit)
-        apimode.exec_step(fl, {"type": "type", "text": "MatKhauGoTay123"}, {})
+        stepexec.exec_step(fl, {"type": "type", "text": "MatKhauGoTay123"}, {})
         engine.run_step(fl, {"type": "type", "text": "MatKhauGoTay456"})
         raw2 = open(H._path("may-go-tay"), encoding="utf-8").read()
         ok("MatKhauGoTay" not in raw2 and raw2.count("Gõ 15 ký tự") == 2, "chữ gõ TRỰC TIẾP (có thể là mật khẩu gõ tay) không lưu nguyên văn — chỉ ghi số ký tự", raw2[:200])
         for bad in ({"type": "type", "text": "MậtKhẩuGõTay"}, {"type": "type", "text": "MatKhauCach ", "gap": 0.1}):
             try:
-                engine.run_step(fl, bad) if bad.get("gap") else apimode.exec_step(fl, bad, {})
-            except apimode.InputError:
+                engine.run_step(fl, bad) if bad.get("gap") else stepexec.exec_step(fl, bad, {})
+            except stepexec.InputError:
                 pass
         raw3 = open(H._path("may-go-tay"), encoding="utf-8").read()
         ok("MậtKhẩu" not in raw3 and "MatKhauCach" not in raw3 and "không gõ được" in raw3,
            "chữ gõ trực tiếp mà tool KHÔNG gõ được (có dấu / khoảng trắng cuối): lời báo lỗi ghi vào lịch sử vẫn không chứa chữ đó", raw3[-400:])
-        ok(apimode.observed_why({"type": "type", "text": "abc123"}, "Gõ «abc123» — lỗi") == "Gõ «(6 ký tự)» — lỗi"
-           and apimode.observed_why({"type": "type", "text": "{{password}}"}, "Gõ «{{password}}»") == "Gõ «{{password}}»"
-           and apimode.observed_why({"type": "tap_text", "text": "Login"}, "không thấy «Login»") == "không thấy «Login»",
+        ok(stepexec.observed_why({"type": "type", "text": "abc123"}, "Gõ «abc123» — lỗi") == "Gõ «(6 ký tự)» — lỗi"
+           and stepexec.observed_why({"type": "type", "text": "{{password}}"}, "Gõ «{{password}}»") == "Gõ «{{password}}»"
+           and stepexec.observed_why({"type": "tap_text", "text": "Login"}, "không thấy «Login»") == "không thấy «Login»",
            "observed_why: chỉ bỏ chữ gõ TRỰC TIẾP; tên biến và lời của bước khác giữ nguyên")
 
         class Err(Fake):                          # board báo lỗi → bước gõ HỎNG
             def send(self, cmd, wait=0.5): return "ERR busy"
-        rs = apimode.run_steps(Err(), [{"type": "type", "text": "HandTypedPw9"}], {})
+        rs = stepexec.run_steps(Err(), [{"type": "type", "text": "HandTypedPw9"}], {})
         try:
-            apimode.run_steps(Fake(), [{"type": "type", "text": "MậtKhẩuGõTay"}], {}); rs2 = None
-        except apimode.InputError as e:
+            stepexec.run_steps(Fake(), [{"type": "type", "text": "MậtKhẩuGõTay"}], {}); rs2 = None
+        except stepexec.InputError as e:
             rs2 = str(e)
         ok(rs[0] is False and "HandTypedPw9" not in rs[1] and "12 ký tự" in rs[1] and rs2 and "MậtKhẩu" not in rs2 and "12 ký tự" in rs2,
            "lời báo HỎNG của cả giai đoạn (đi vào lời nhắn / kết quả của đơn → lịch sử) cũng không chứa chữ gõ trực tiếp", (rs, rs2))
@@ -156,7 +156,7 @@ def main():
         ev2 = [e for e in H.machine("iPhoneFarm-002") if e["ev"] == "step"]
         ok(len(res) == 3 and [(e["i"], e["n"], e["type"], e["ok"]) for e in ev2] == [(1, 3, "key", True), (2, 3, "tap_if", True), (3, 3, "wait", True)]
            and ev2[1]["what"].startswith("Nếu thấy chữ «Không có hộp thoại»"),
-           "kịch bản thường: bước đếm 1…N; bước chạy qua HAI lớp (engine → apimode) chỉ ghi MỘT dòng", ev2)
+           "kịch bản thường: bước đếm 1…N; bước chạy qua HAI lớp (engine → stepexec) chỉ ghi MỘT dòng", ev2)
         t2.run_begin("kịch bản")
         seen = []
         res = engine.run_flow(m, [{"type": "key", "name": "enter"}, {"type": "key", "name": "tab"}, {"type": "wait", "seconds": 0}],
@@ -180,8 +180,8 @@ def main():
             def step_end(self, *a): raise RuntimeError("hỏng")
             def phase(self, *a): raise RuntimeError("hỏng")
         b = Fake(Broken())
-        apimode.watch_phase(b, "x", 1)
-        rb = apimode.exec_step(b, {"type": "key", "name": "enter"}, {})
+        stepexec.watch_phase(b, "x", 1)
+        rb = stepexec.exec_step(b, {"type": "key", "name": "enter"}, {})
         rb2 = engine.run_step(b, {"type": "wait", "seconds": 0})
         ok(rb[0] is True and b.sent == ["key enter"] and rb2[0] is True, "bộ theo dõi ném lỗi lúc bắt đầu bước → bước vẫn chạy bình thường, đúng một lần", (rb, b.sent))
         bad_root = os.path.join(tmp, "may-iPhoneFarm-01.jsonl", "khong-the-tao")        # thư mục nằm DƯỚI một tệp → không tạo được
@@ -197,8 +197,8 @@ def main():
         raised = []
         for bad in ({"type": "type", "text": "{{thieu}}"}, {"type": "tap_text", "text": ""}):
             try:
-                apimode.exec_step(e3, bad, {})
-            except apimode.ConfigError as err:
+                stepexec.exec_step(e3, bad, {})
+            except stepexec.ConfigError as err:
                 raised.append(str(err))
         ev3 = [e for e in H.machine("iPhoneFarm-03") if e["ev"] == "step"]
         ok(len(raised) == 2 and len(ev3) == 2 and all(e["ok"] is False and e["msg"] for e in ev3) and t3.step is None and t3.depth == 0,
@@ -208,7 +208,7 @@ def main():
             def send(self, cmd, wait=0.5): raise OSError("cổng serial rớt — %s" % "du-lieu-rieng")
         e4 = Boom(t3)
         try:
-            apimode.exec_step(e4, {"type": "key", "name": "enter"}, {}); crashed = False
+            stepexec.exec_step(e4, {"type": "key", "name": "enter"}, {}); crashed = False
         except OSError:
             crashed = True
         last = [e for e in H.machine("iPhoneFarm-03") if e["ev"] == "step"][-1]
@@ -240,7 +240,7 @@ def main():
         got = H.orders(3)
         ok([o["ref"] for o in got] == ["R-4", "R-3", "R-2"] and len(H.orders()) == 6, "sổ đơn trả đơn MỚI NHẤT trước, giới hạn theo yêu cầu", [o["ref"] for o in got])
     finally:
-        apimode._sleep = real_sleep
+        stepexec._sleep = real_sleep
 
     print("\n%s" % ("✅ TẤT CẢ %d kiểm tra đều đạt." % PASS if not FAIL else "❌ %d lỗi / %d kiểm tra." % (FAIL, PASS + FAIL)))
     return 1 if FAIL else 0
