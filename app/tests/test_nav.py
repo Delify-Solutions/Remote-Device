@@ -274,6 +274,43 @@ def main():
     ok(e.pointer_blobs(base, draw_pointer(base, 8, 8), ignore=[(0, 0, 26, 26)]) == [], "phần tư con trỏ ghim ở góc bị bỏ qua")
     ok(e.pointer_blobs(base, np.zeros((100, 100, 3), np.uint8)) == [], "ảnh nền khác cỡ → bỏ, không lỗi")
 
+    print("\n== 1a. Con trỏ trên một DÒNG CHỮ LINK đổi màu khi rê tới (:hover của trang web) ==")
+    # Đo thật (my.konami.net, iPhone 8 xoay ngang): con trỏ vào link «Log In with Another KONAMI ID» thì cả dòng chữ đổi xanh → xám,
+    # con trỏ vẫn vẽ ở giữa. Trước đây vệt «chữ đổi màu + con trỏ» không tách được (bấm hỏng hết 34 lần nhìn) và mẩu chữ «Log» ở đầu
+    # link còn bị nhận nhầm là một con trỏ đứng yên.
+    lk = np.full((1334, 750, 3), 255, np.uint8)
+    txt = np.full((60, 760, 3), 255, np.uint8)
+    cv2.putText(txt, "Log In with Another KONAMI ID", (5, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.25, (243, 150, 66), 1, cv2.LINE_AA)  # xanh (BGR), nét ~2–3px như chữ thật
+    lk[300:1060, 230:290] = cv2.rotate(txt, cv2.ROTATE_90_CLOCKWISE)
+    hov = lk.copy()
+    blue = (np.abs(hov.astype(int) - (243, 150, 66)).sum(axis=2) < 120)
+    hov[blue] = (110, 110, 110)                                                                   # chữ đổi sang xám khi :hover
+    for (px, py) in ((262, 668), (262, 420), (262, 900)):
+        blobs = e.pointer_blobs(lk, draw_pointer(hov, px, py))
+        ok(len(blobs) == 1 and abs(blobs[0][0] - px) <= 6 and abs(blobs[0][1] - py) <= 6,
+           "link :hover đổi màu cả dòng, con trỏ ở (%d,%d) → tách được đúng MỘT con trỏ (nét chữ bị bỏ)" % (px, py), blobs)
+    ok(e.pointer_blobs(lk, hov) == [], "chỉ có chữ đổi màu (không có con trỏ) → không thấy con trỏ nào (mẩu chữ không bị nhận nhầm)",
+       e.pointer_blobs(lk, hov))
+    bold = np.full((60, 760, 3), 255, np.uint8)
+    cv2.putText(bold, "Log In with Another KONAMI ID", (5, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.25, (243, 150, 66), 2, cv2.LINE_AA)
+    lb = np.full((1334, 750, 3), 255, np.uint8); lb[300:1060, 230:290] = cv2.rotate(bold, cv2.ROTATE_90_CLOCKWISE)
+    hb = lb.copy(); hb[(np.abs(hb.astype(int) - (243, 150, 66)).sum(axis=2) < 120)] = (110, 110, 110)
+    got_b = e.pointer_blobs(lb, draw_pointer(hb, 262, 668))
+    ok(len(got_b) <= 1 and all(abs(b[0] - 262) <= 6 and abs(b[1] - 668) <= 6 for b in got_b),
+       "chữ đậm hơn: không bao giờ báo SAI chỗ (tách được thì đúng chỗ, không chắc thì không báo)", got_b)
+
+    found_bar, wrong_bar = [], []
+    for th in (3, 6, 9, 11, 14):                     # con trỏ chạm một THANH đổi màu (nét dày / mảnh)
+        bb = np.full((1334, 750, 3), 255, np.uint8)
+        cb = bb.copy(); cv2.rectangle(cb, (300, 600), (300 + 55, 600 + th), (200, 120, 40), -1)
+        got = e.pointer_blobs(bb, draw_pointer(cb, 330, 600 + th + 14))
+        near = [b for b in got if abs(b[0] - 330) <= 6 and abs(b[1] - (600 + th + 14)) <= 6]
+        if len(got) == 1 and near: found_bar.append(th)
+        if len(got) == 1 and not near: wrong_bar.append((th, got))
+    # trước bản sửa: tách được ở 3/6/9px, 11/14px thì không báo (không sai chỗ) — bản mới không được lùi
+    ok({3, 6, 9} <= set(found_bar), "con trỏ chạm một thanh đổi màu dày 3/6/9px → vẫn tách được như trước", found_bar)
+    ok(not wrong_bar, "thanh đổi màu dày 3–14px: không bao giờ báo con trỏ SAI chỗ", wrong_bar)
+
     print("\n== 1b. Con trỏ nằm LẪN trong một vệt thay đổi to hơn nó (ảnh chụp từ iPhone thật + dựng lại) ==")
     fx = lambda n: cv2.imread(os.path.join(HERE, "fixtures", n + ".png"))
     aref = fx("alert_ref")                          # hàng nút «Để sau | Cài đặt» của hộp thoại hệ thống, iPhone 8 / iOS 16

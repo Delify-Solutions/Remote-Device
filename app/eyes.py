@@ -360,10 +360,16 @@ class Eyes:
         n, lab, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
         out = []
 
-        def take(x, y, w, h, area) -> bool:
+        ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (int(0.45 * D) | 1,) * 2)
+
+        def take(x, y, w, h, area, comp=None) -> bool:
             if not (0.6 * D <= w <= 1.5 * D and 0.6 * D <= h <= 1.5 * D):
                 return False                                # đồng hồ đổi phút, chữ nhấp nháy… không đúng cỡ
             if not (0.4 * disc <= area <= 1.5 * disc):
+                return False
+            if comp is not None and cv2.countNonZero(cv2.morphologyEx(comp, cv2.MORPH_OPEN, ker)) < 0.4 * disc:
+                # đúng cỡ nhưng là NÉT MẢNH (mẩu chữ đổi màu — vd chữ «Log» ở đầu một link đang :hover): con trỏ là khối tròn ĐẶC,
+                # bào bằng một hình tròn ~nửa con trỏ vẫn còn gần nguyên; nét chữ thì mất hết → không phải con trỏ
                 return False
             cx, cy = x + w / 2.0, y + h / 2.0
             if not any(x0 <= cx <= x1 and y0 <= cy <= y1 for (x0, y0, x1, y1) in ignore):
@@ -372,7 +378,7 @@ class Eyes:
 
         for i in range(1, n):
             x, y, w, h, area = (int(v) for v in stats[i])
-            if take(x, y, w, h, area):
+            if take(x, y, w, h, area, (lab[y:y + h, x:x + w] == i).astype(np.uint8) * 255):
                 continue
             if w < 0.6 * D or h < 0.6 * D or area < 0.4 * disc:
                 continue                                    # nhỏ hơn con trỏ → không thể chứa con trỏ
@@ -403,6 +409,22 @@ class Eyes:
         x, y, w, h, area = box
         comp = lab[y:y + h, x:x + w] == i
         k = int(0.45 * D) | 1
+        sparse = (w > 1.5 * D or h > 1.5 * D) and area <= Eyes.BLOCK_MAX * disc and area < 0.75 * w * h
+        if sparse:
+            # VỆT THƯA: con trỏ nằm trên một DÒNG CHỮ đổi màu khi rê tới (link của trang web :hover — đo trên my.konami.net, iPhone 8:
+            # cả dòng «Log In with Another KONAMI ID» đổi từ xanh sang xám, con trỏ vẫn vẽ ở giữa). Vệt gồm các nét chữ mảnh + chấm tròn
+            # → bào nét mảnh trên mask THÔ (chưa lấp khe), còn lại chấm tròn.
+            m0 = (comp & (raw[y:y + h, x:x + w] > 0)).astype(np.uint8) * 255
+            k2 = int(0.5 * D) | 1
+            m = cv2.morphologyEx(m0, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k2, k2)))
+            # Chỉ khi phần bị bào là NÉT MẢNH như nét chữ (≤ ~0,24·D bề dày). Khung / vạch dày (vd viền rỗng 14px của một ô) không phải
+            # chữ đổi màu → không đoán con trỏ trong đó.
+            rest = cv2.bitwise_and(m0, cv2.bitwise_not(cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))))
+            if not (rest.any() and float(cv2.distanceTransform(rest, cv2.DIST_L2, 3).max()) > 0.12 * D):
+                n, _, stats, _ = cv2.connectedComponentsWithStats(m, 8)
+                return [tuple(int(v) for v in stats[j]) for j in range(1, n)]
+            # phần bị bào là nét DÀY (không phải chữ): không dùng cách này — để các cách cũ bên dưới xét như trước (vd con trỏ chạm một
+            # thanh đổi màu dày 9–14px: cách cũ vẫn tách được), không bỏ cuộc ở đây
         if area >= 2 * disc:
             if area > Eyes.BLOCK_MAX * disc or area < 0.75 * w * h:
                 return []                                   # không phải một khối đặc cỡ cái nút
