@@ -11,3 +11,4 @@ onnxruntime>=1.19,<1.23            # rapidocr KHÔNG tự kéo theo gói này �
 pytesseract==0.3.13                # tuỳ chọn: chỉ dùng khi có cài thêm chương trình tesseract
 anthropic>=0.125,<2                # AI xem màn hình lạ (aiscreen.py) — Claude
 openai>=1.50,<3                    # AI xem màn hình lạ — OpenAI / máy chủ tương thích OpenAI
+cryptography>=41,<47               # mã hoá mật khẩu Apple ID của từng máy (app/wallets.py) — pymobiledevice3 cũng kéo theo gói này

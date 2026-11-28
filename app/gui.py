@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import cv2
 import webview
 
-import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth, presence, history, notify, aiscreen
+import store, engine, fleet, esp, ios, iosdev, sysinfo, prober, apimode, control, boardhealth, presence, history, notify, aiscreen, wallets
 from nav import Nav
 from hands import Hands
 from eyes import Eyes
@@ -178,6 +178,7 @@ WEB_SAFE_WITH_CUSTOMERS = frozenset((
     "group_run", "group_stop", "machine_run", "machine_pause", "machine_resume", "machine_stop", "machine_ack", "stop_all",
     "run_status", "run_log", "history_live", "history_machine", "history_orders", "history_order", "gateway_get", "gateway_test", "gateway_pools", "gateway_pool", "gateway_sync", "ai_info",
     "telegram_get", "ai_screen_get",                                                   # chỉ đọc, không có mã bot / API key
+    "wallet_list", "wallet_ledger",                                                    # chỉ đọc ví (không bao giờ có mật khẩu Apple ID)
 ))
 
 
@@ -372,7 +373,7 @@ def _presence_tool():
 
 
 # Luồng tự báo cho gateway: máy nào rảnh ở kịch bản nào + danh mục kịch bản (chạy trong main()).
-PRESENCE = presence.Reporter(_gateway, _presence_facts, _presence_tool)
+PRESENCE = presence.Reporter(_gateway, _presence_facts, _presence_tool, wallets=wallets)     # kèm ví của các máy (tool quản lý)
 _PRESENCE_LOCK = None           # tệp khoá đang giữ: mỗi bản cài chỉ MỘT tiến trình được báo cho gateway
 
 
@@ -839,6 +840,10 @@ class Api:
                 store.rename_device(old_name, name)
                 store.rename_in_groups(old_name, name)      # máy đổi tên thì vẫn ở đủ các nhóm cũ
                 RUNNER.rename_parked(old_name, name)        # …và vẫn «đang dừng để xử lý tay» nếu đang dừng
+                try:
+                    wallets.rename(old_name, name)           # …và ví (tài khoản Apple + sổ) đi theo máy — không thì máy mất kiểm tiền
+                except Exception:
+                    pass
             except Exception:
                 pass
         with MGR.lock:                       # bỏ ánh xạ của riêng board này → lượt quét sau dò lại
@@ -1464,6 +1469,86 @@ class Api:
             return {"ok": False, "error": str(e)[:200]}
         return {"ok": True, "kind": d["kind"], "reason": d["reason"], "close": d["close_label"], "x": d["x"], "y": d["y"],
                 "secs": round(time.time() - t0, 1), "model": c["model"]}
+
+    # ---- VÍ của từng máy (tài khoản Apple + loại tiền + số dư) — TOOL quản lý, gateway chỉ giữ bản sao ----
+    _WCUR = {"at": 0.0, "list": [], "pools": {}}
+
+    def _wallet_currencies(self):
+        """Loại tiền dùng được = loại tiền các pool mà kịch bản NHẬN ĐƠN của tool đang phục vụ có bán (đọc pool trên gateway, nhớ 60 giây).
+        Kèm chữ giá mẫu của một gói theo từng loại tiền để người khai ví nhìn ra đúng vùng App Store. Gateway lỗi / chưa cấu hình → []."""
+        c = Api._WCUR
+        if time.time() - c["at"] < 60:
+            return c["list"], c["pools"]
+        codes = []
+        for g in store.get_groups():
+            for sc in g.get("scripts") or []:
+                pc = ((sc.get("orders") or {}).get("pool") or "") if sc.get("mode") == "orders" else ""
+                if g.get("mode") == "api":
+                    pc = (g.get("api") or {}).get("pool") or pc
+                if pc and pc not in codes:
+                    codes.append(pc)
+        out, pools = [], {}
+        try:
+            gw = _gateway()
+            for pc in codes[:10]:
+                p = gw.pool(pc)
+                cur = [x for x in (p.get("currencies") or []) if isinstance(x, str)]
+                sample = {}
+                for k in p.get("packages") or []:
+                    for cc, pr in (k.get("prices") or {}).items():
+                        if cc not in sample and isinstance(pr, dict) and pr.get("display"):
+                            sample[cc] = "%s = %s" % (k.get("name") or k.get("code"), pr["display"])
+                pools[pc] = {"name": p.get("name") or pc, "currencies": cur, "sample": sample}
+                out += [x for x in cur if x not in out]
+        except Exception:
+            pass
+        c.update(at=time.time(), list=out, pools=pools)
+        return out, pools
+
+    def wallet_list(self):
+        devs = [{"name": d["name"], "label": d.get("label") or d["name"]} for d in store.get_devices()]
+        known = {d["name"] for d in devs}
+        ws = wallets.all_wallets()
+        for w in ws:
+            if w["machine"] not in known:
+                devs.append({"name": w["machine"], "label": w["machine"], "gone": True})       # máy đã gỡ khỏi tool nhưng ví còn (để tra / bỏ ví)
+        cur, pools = self._wallet_currencies()
+        return {"ok": True, "devices": devs, "wallets": {w["machine"]: w for w in ws}, "currencies": cur, "pools": pools,
+                "sync": PRESENCE.state()}
+
+    def _wallet_do(self, fn):
+        if WEBDEV is not None:
+            # trang web có thể đang do AI điều khiển: tiền + mật khẩu Apple ID chỉ người vận hành sửa, ở app dạng cửa sổ
+            return {"ok": False, "error": "Ví (tài khoản Apple, mật khẩu, số dư) chỉ sửa được ở app dạng cửa sổ — bản web chỉ xem."}
+        try:
+            w = fn()
+        except wallets.WalletError as e:
+            return {"ok": False, "error": str(e)}
+        except OSError as e:                # tệp ví đang bị giữ / đĩa lỗi → báo rõ, không làm hỏng lệnh
+            return {"ok": False, "error": "Không ghi được ví (%s) — thử lại sau ít giây." % e}
+        PRESENCE.kick()                     # báo gateway bản sao mới ngay
+        return {"ok": True, "wallet": w}
+
+    def wallet_save(self, machine, data=None):
+        d = data if isinstance(data, dict) else {}
+        old = wallets.get(str(machine or ""))
+        if old and str(d.get("currency") or "").strip().upper() != old["currency"] and (RUNNER.is_running(str(machine)) or RUNNER.hold_reason(str(machine))):
+            # đơn đang chạy / chờ đối soát còn tính theo loại tiền cũ → tiền của đơn đó sẽ về sau, rơi vào loại tiền không còn ai thấy
+            return {"ok": False, "error": "Máy đang chạy / chờ đối soát — dừng máy (và chốt đơn chờ đối soát) rồi mới đổi loại tiền của ví."}
+        return self._wallet_do(lambda: wallets.save(str(machine or ""), d.get("apple_account"), d.get("currency"), d.get("note") or "",
+                                                     d.get("active", True) is not False, d.get("password") or None, bool(d.get("clear_password"))))
+
+    def wallet_topup(self, machine, amount, note=""):
+        return self._wallet_do(lambda: wallets.topup(str(machine or ""), amount, note or ""))
+
+    def wallet_adjust(self, machine, amount, note=""):
+        return self._wallet_do(lambda: wallets.adjust(str(machine or ""), amount, note or ""))
+
+    def wallet_remove(self, machine):
+        return self._wallet_do(lambda: wallets.remove(str(machine or "")))
+
+    def wallet_ledger(self, machine, limit=200):
+        return {"ok": True, "entries": wallets.ledger(str(machine or ""), int(limit or 200))}
 
     # ---- thông báo Telegram cho admin ----
     def telegram_get(self):

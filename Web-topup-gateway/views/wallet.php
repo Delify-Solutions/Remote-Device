@@ -1,7 +1,6 @@
 <?php
 $cur = (string) $w['currency'];
 $pages = max(1, (int) ceil($total / $per));
-$eg = Money::decimals($cur) === 0 ? '1500' : '63.50';
 ?>
 <div class="page-head">
   <div><h4 class="mb-1 d-flex align-items-center flex-wrap gap-2"><?= e($w['apple_account']) ?> <span class="badge bg-label-secondary mono"><?= e($cur) ?></span>
@@ -24,39 +23,7 @@ $eg = Money::decimals($cur) === 0 ? '1500' : '63.50';
   <?php endforeach; ?>
 </div>
 
-<div class="row g-6 mb-6">
-  <div class="col-lg-6">
-    <div class="card h-100" id="topup">
-      <h5 class="card-header">Nạp thêm tiền</h5>
-      <div class="card-body">
-        <form method="post" action="/admin/wallets/<?= (int) $w['id'] ?>/topup" class="row g-3 align-items-end"><?= Csrf::field() ?>
-          <div class="col-sm-5"><label class="form-label">Số tiền (<?= e($cur) ?>)</label>
-            <input class="form-control" type="text" name="amount" inputmode="decimal" placeholder="<?= e($eg) ?>" required></div>
-          <div class="col-sm-7"><label class="form-label">Ghi chú</label>
-            <input class="form-control" type="text" name="note" maxlength="300" placeholder="vd: thẻ quà tặng mã …1234"></div>
-          <div class="col-12"><button class="btn btn-primary"><i class="ti tabler-plus me-1"></i>Nạp thêm</button></div>
-        </form>
-      </div>
-    </div>
-  </div>
-  <div class="col-lg-6">
-    <div class="card h-100">
-      <h5 class="card-header">Chỉnh số dư</h5>
-      <div class="card-body">
-        <form method="post" action="/admin/wallets/<?= (int) $w['id'] ?>/adjust" class="row g-3 align-items-end" data-confirm="Chỉnh số dư của ví này?"><?= Csrf::field() ?>
-          <div class="col-sm-5"><label class="form-label">Số tiền (âm = bớt)</label>
-            <input class="form-control" type="text" name="amount" inputmode="decimal" placeholder="-<?= e($eg) ?>" required></div>
-          <div class="col-sm-7"><label class="form-label">Lý do (bắt buộc)</label>
-            <input class="form-control" type="text" name="note" maxlength="300" placeholder="vd: đối chiếu số dư trên máy" required></div>
-          <div class="col-12"><button class="btn btn-label-danger"><i class="ti tabler-adjustments me-1"></i>Chỉnh số dư</button></div>
-        </form>
-        <form method="post" action="/admin/wallets/<?= (int) $w['id'] ?>/toggle" class="mt-4 pt-4 border-top"<?= (int) $w['active'] ? ' data-confirm="Ngừng dùng ví này? Máy ' . e($w['device']) . ' sẽ nhận đơn mà không kiểm tiền."' : '' ?>><?= Csrf::field() ?>
-          <button class="btn btn-sm btn-label-secondary"><i class="ti <?= (int) $w['active'] ? 'tabler-player-pause' : 'tabler-player-play' ?> me-1"></i><?= (int) $w['active'] ? 'Ngừng dùng ví này' : 'Dùng lại ví này (các ví khác của máy thôi dùng)' ?></button>
-        </form>
-      </div>
-    </div>
-  </div>
-</div>
+<div class="alert alert-secondary mb-6">Ví cũ khai trên gateway (trước khi ví chuyển về tool) — chỉ để tra cứu sổ cái. Ví của máy giờ khai và nạp tiền ở app tool.</div>
 
 <div class="card">
   <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">

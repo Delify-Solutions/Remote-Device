@@ -532,6 +532,41 @@ def pick_card(lines: list, alts: list, near_alts: list, size, direction: str = "
     return int(good[0]["x"]), int(good[0]["y"])
 
 
+def _line_kind(t) -> str:
+    """«Loại» của một dòng (như trong pick_card): số thuần → «#», còn lại = khung chữ coi mọi cụm số như nhau («500 Coins» ~ «1,500 Coins»)."""
+    f = re.sub(r"[^0-9a-z]", "", _flat(t))
+    return "#" if f.isdigit() else re.sub(r"[0-9]+", "9", f)
+
+
+def once_left_in_card(lines: list, pos, left_flat: list, size) -> bool:
+    """Trong CÙNG ô với chữ của gói (dòng nằm ở `pos`) có dòng chứa chữ «còn 1 lượt» (`left_flat` đã chuẩn hoá)? «Cùng ô» = cách chữ của
+    gói trong khung ô (≤ 15% bề ngang, ≤ 35% bề cao) VÀ chữ của gói là dòng «cùng loại» GẦN NHẤT với nó (dòng số coin của ô bên cạnh
+    gần hơn = chữ đó thuộc ô bên cạnh)."""
+    W, H = size
+    if not lines or not left_flat:
+        return False
+    a = min(lines, key=lambda ln: (float(ln["x"]) - pos[0]) ** 2 + (float(ln["y"]) - pos[1]) ** 2)
+    ka = _line_kind(a.get("text"))
+    if ka == "#":
+        # chữ của gói là số thuần (số coin): «cùng loại» = dòng chỉ có chữ số + dấu phân cách TRÊN CHỮ GỐC — giá «¥160» / «$9.99» sau khi
+        # chuẩn hoá cũng thành số thuần nhưng KHÔNG phải số coin của ô khác
+        peers = [ln for ln in lines if _NUMERIC.match(str(ln.get("text") or "").strip())]
+    else:
+        peers = [ln for ln in lines if _line_kind(ln.get("text")) == ka]
+    if a not in peers:
+        peers.append(a)
+    for ln in lines:
+        f = _flat(ln.get("text"))
+        if not any(x in f for x in left_flat):
+            continue
+        if abs(float(ln["x"]) - float(a["x"])) > 0.15 * W or abs(float(ln["y"]) - float(a["y"])) > 0.35 * H:
+            continue
+        near = min(peers, key=lambda p: (float(p["x"]) - float(ln["x"])) ** 2 + (float(p["y"]) - float(ln["y"])) ** 2)
+        if near is a:
+            return True
+    return False
+
+
 def _card_look(nav, alts, card):
     img = nav.e.screenshot()
     lines = nav.e.text_lines(img)
@@ -1319,8 +1354,9 @@ class JobFlow:
     """Chạy trọn 1 đơn. `run()` luôn trả Outcome, không ném lỗi ra ngoài."""
 
     def __init__(self, nav, gw, job: dict, pool: dict, steps: dict, opts: dict | None = None,
-                 status=None, log=None, abort=None, on_purchase_start=None):
+                 status=None, log=None, abort=None, on_purchase_start=None, apple=None):
         self.nav, self.gw, self.job, self.pool, self.steps = nav, gw, job, pool, steps
+        self.apple = dict(apple or {})        # tài khoản / mật khẩu Apple ID của MÁY (ví ở tool) — biến {{apple.account}} / {{apple.password}}
         opts = opts or {}
         self.login_wait = float(opts.get("login_wait", 45))
         self.purchase_wait = float(opts.get("purchase_wait", 60))
@@ -1442,7 +1478,19 @@ class JobFlow:
             return self._finalize("Lỗi tool: %s" % e, fault=True)
 
     def _flow(self) -> Outcome:
-        vars = {str(k): v for k, v in (self.job.get("login") or {}).items()}
+        vars = {str(k): v for k, v in (self.job.get("login") or {}).items() if not str(k).startswith("apple.")}
+        # tài khoản Apple của MÁY (gõ vào bảng mua của App Store) — trường đăng nhập của khách KHÔNG BAO GIỜ thay được (bỏ mọi khoá apple.*)
+        for k in ("account", "password"):
+            if self.apple.get(k):
+                vars["apple." + k] = str(self.apple[k])
+        # bước mua / sau mua dùng {{apple.*}} mà máy chưa lưu (hoặc tool không gõ được) → dừng NGAY, trước khi đăng nhập tài khoản khách
+        # (phát hiện ở bảng mua thì đơn đã chạm luồng mua → phải đối soát)
+        buy_steps = (self.steps.get("purchase") or []) + (self.steps.get("after") or [])
+        need = sorted({k for k in PLACEHOLDER.findall(json.dumps(buy_steps, ensure_ascii=False)) if k.startswith("apple.")})
+        miss = [k for k in need if not vars.get(k)]
+        if miss:
+            raise ConfigError("bước mua dùng %s nhưng ví của máy chưa lưu (trang «Ví & Apple» của tool)" % ", ".join("{{%s}}" % k for k in miss))
+        check_typable([st for st in buy_steps if "{{apple." in str(st.get("text") or "").replace(" ", "")], vars)
         missing = validate(self.pool, self.steps)
         if missing:
             raise ConfigError("pool chưa đủ cấu hình (%s)" % "; ".join(missing))
@@ -1521,6 +1569,17 @@ class JobFlow:
             pv.update({"package.ocr_text": item.get("ocr_text") or item.get("name") or "",
                        "package.price_text": item.get("price_text") or "",
                        "package.name": item.get("name") or "", "package.code": item.get("code") or ""})
+            if str(item.get("limit_type") or "multi") == "once":
+                # gói «1 lần»: ô gói phải CÒN trên cửa hàng và trong ô có chữ «Remaining: 1» — mua rồi thì game ẩn ô / hết lượt → báo luôn,
+                # không bấm gì (chưa mất tiền)
+                left, why_once = self._once_left(item, pv)
+                if left is None:                         # máy không ở cửa hàng → lỗi máy (không phải «đã mua»), chưa chạm luồng mua
+                    res["status"], res["message"] = "failed", why_once
+                    return self._finalize("%s: %s" % (name, why_once), fault=True)
+                if not left:
+                    res["status"], res["message"] = "unavailable", why_once
+                    self._say("%s: %s" % (name, why_once), "bad")
+                    return self._finalize("%s: %s" % (name, why_once))
             for n in range(qty):
                 # gateway còn coi đơn đang chạy thì mới được mua (409 → JobGone, dừng trước khi tốn tiền)
                 self._progress("purchasing", "Đang mua %s (%d/%d)" % (name, n + 1, qty))
@@ -1546,6 +1605,49 @@ class JobFlow:
                 # không mua được gói này (chắc chắn chưa tốn tiền) → dừng, không mò tiếp từ màn hình lạ
                 return self._finalize("%s: %s" % (name, why), fault=verdict in ("failed_tool", "stale"))
         return self._finalize()
+
+    # ---------- gói «1 lần»: còn mua được không ----------
+    ONCE_LEFT_DEFAULT = "Remaining: 1|Remaining:1|Remaining 1"
+
+    def _once_left(self, item: dict, pv: dict):
+        """(True, "") nếu ô của gói CÒN trên cửa hàng và trong CÙNG ô có chữ «còn 1 lượt» (luật «once_left» của pool; mặc định
+        «Remaining: 1»); (False, lý do) = gói đã mua / hết lượt; (None, lý do) = máy không ở cửa hàng (lỗi máy, không phải «đã mua»). Tìm ô theo đúng cách bước mua tìm (chữ của gói + chữ giá cùng ô, lướt nếu bước có lướt).
+        Không bấm gì; lướt danh sách không tính là đã chạm luồng mua."""
+        vals = [str(r.get("value")) for r in self.rules if r.get("when") == "once_left" and str(r.get("value") or "").strip()]
+        left_alts = [_flat(a) for a in alternatives("|".join(vals) if vals else self.ONCE_LEFT_DEFAULT) if _flat(a)]
+        tmpl = next((st for st in self.steps.get("purchase") or []
+                     if st.get("type") in ("tap_text", "assert_text") and "{{package.ocr_text}}" in str(st.get("text") or "")), None)
+        alts = alternatives(subst(str(tmpl.get("text")) if tmpl else "{{package.ocr_text}}", pv))
+        card = card_opts(tmpl, pv) if tmpl else None
+        if card is None:
+            price = alternatives(str(pv.get("package.price_text") or ""))
+            card = {"near_alts": price, "near_label": str(pv.get("package.price_text") or ""), "dir": "below", "scroll": None, "scrolls": 0}
+        card["label"] = item.get("name") or item.get("code")
+        name = item.get("name") or item.get("code")
+        # lỗi của MÁY (board / cổng serial / đọc chữ) không bắt ở đây: lên tới run() thành «Lỗi tool» (lỗi máy, máy tự dừng nếu lặp lại) —
+        # không được nói với khách là «đã mua»
+        pos, why, _ = _find_card(self.nav, alts, card, _text_wait(tmpl or {}, "Bấm vào chữ") if tmpl else 5.0, self.abort)
+        img = self.nav.e.screenshot()
+        lines = self.nav.e.text_lines(img)
+        if not pos:
+            # Không thấy ô của gói: chỉ kết luận «đã mua» khi ĐANG Ở cửa hàng (thấy ô của gói khác trong pool). Không thấy gói nào = máy đang
+            # ở màn hình khác → lỗi máy, KHÔNG báo khách «đã mua».
+            others = []
+            for k in self.pool.get("packages") or []:
+                if str(k.get("code")) != str(item.get("code")):
+                    others += alternatives(str(k.get("ocr_text") or ""))
+            W0 = img.shape[1] if hasattr(img, "shape") else None
+            if others and _line_hits(lines, others, (W0, 0) if W0 else None):
+                return False, "gói «1 lần» «%s» không còn trên cửa hàng — tài khoản này đã mua gói này rồi" % name
+            return None, "không thấy cửa hàng / ô gói nào trên màn hình khi kiểm gói «1 lần» «%s» (%s) — máy đang ở màn hình khác, chưa mua" % (name, why)
+        h, w = img.shape[:2] if hasattr(img, "shape") else (0, 0)
+        if not w and lines:
+            w = max(int(ln["x"]) + int(ln.get("w") or 0) for ln in lines) or 1
+            h = max(int(ln["y"]) + int(ln.get("h") or 0) for ln in lines) or 1
+        if once_left_in_card(lines, pos, left_alts, (w or 1, h or 1)):
+            return True, ""
+        # ô gói còn mà không có chữ «còn 1 lượt»
+        return False, "ô gói «1 lần» «%s» không có chữ «%s» — gói đã mua / hết lượt" % (name, (vals[0] if vals else "Remaining: 1"))
 
     # ---------- mua 1 gói ----------
     def _buy_one(self, item: dict, pv: dict):

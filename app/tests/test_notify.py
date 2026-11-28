@@ -299,7 +299,7 @@ def main():
         seq = [dict(ok=True, job=None, wallet_short=short)] * 3 + [dict(ok=True, job=None)] + [dict(ok=True, job=None, wallet_short=short)] * 2
 
         class GWw(GWp):
-            def claim(self, device, pool):
+            def claim(self, device, pool, wallet=None):
                 return seq.pop(0) if seq else {"ok": True, "job": None}
         got.clear()
         Rw = runmod.Runner(lambda n: Nn(["ok"]), gateway_factory=lambda: GWw())

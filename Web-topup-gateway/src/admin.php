@@ -93,7 +93,7 @@ final class Admin
                 $to = (string) Req::post('to', '');
                 $job = Jobs::byId($id);
                 $charge = null;
-                if ($job && $to === 'done' && Wallets::enabled() && !empty($job['wallet_id']) && trim((string) Req::post('charge', '')) !== '') {
+                if ($job && $to === 'done' && ((Wallets::enabled() && !empty($job['wallet_id'])) || ToolWallets::isToolJob($job)) && trim((string) Req::post('charge', '')) !== '') {
                     [$charge, $cerr] = Jobs::chargeInput($job, (string) Req::post('charge', ''));
                     if ($cerr !== null) {
                         Flash::set($cerr, 'bad');
@@ -497,68 +497,25 @@ final class Admin
             'hooks' => Db::all('SELECT * FROM webhooks WHERE job_id=? ORDER BY id', [$id]),
             'wallet' => !empty($job['wallet_id']) ? Wallets::find((int) $job['wallet_id']) : null,
             'ledger' => Wallets::forJob($id),
+            'toolEvents' => ToolWallets::forJob($id),
             'poolForm' => self::poolForms((int) $job['pool_id'])[0] ?? null,
             'testKeyId' => (int) Settings::get('admin_test_key_id', '0'),
         ]);
     }
 
-    /* ---------- ví tài khoản Apple ---------- */
+    /* ---------- ví tài khoản Apple: do TOOL quản lý — gateway chỉ hiện bản sao + tiền của từng đơn ---------- */
     private static function wallets(array $user, string $m, array $s, int $id, string $act): never
     {
         if (!Wallets::enabled()) {
             Flash::set('Gateway cần cập nhật CSDL để dùng ví: chạy php bin/setup.php', 'bad');
             Res::redirect('/admin');
         }
-        $actor = 'admin:' . $user['username'];
-        if ($m === 'POST' && ($s[1] ?? '') === 'create') {
-            $mk = array_pad(explode('|', (string) Req::post('machine', ''), 2), 2, '');     // «id khoá Tool|tên máy» chọn từ danh sách máy
-            $cur = Money::currency(Req::post('currency', ''));
-            $rawInit = trim((string) Req::post('balance', ''));
-            // loại tiền sai thì chưa đọc được số dư — Wallets::create báo lỗi loại tiền
-            $init = ($cur === null || $rawInit === '') ? 0 : Money::parse($rawInit, $cur);
-            $res = $init === null ? 'Số dư ban đầu không hợp lệ' . (Money::decimals((string) $cur) === 0 ? ' (' . $cur . ' không có phần lẻ).' : '.')
-                : Wallets::create((int) $mk[0], (string) $mk[1], (string) Req::post('apple_account', ''),
-                                  (string) Req::post('currency', ''), $init, (string) Req::post('note', ''), $actor);
-            if (is_string($res)) {
-                Flash::set($res, 'bad');
-                Res::redirect('/admin/wallets?machine=' . rawurlencode((string) Req::post('machine', '')));     // giữ máy đang chọn
-            }
-            Flash::set('Đã thêm ví — máy này từ giờ chỉ nhận đơn mà ví đủ tiền.');
-            Res::redirect('/admin/wallets/' . $res);
+        if ($m === 'POST') {
+            // ví (tài khoản Apple, loại tiền, số dư, nạp / chỉnh) khai và quản lý ở TOOL; gateway không sửa ví nữa
+            Flash::set('Ví giờ do TOOL quản lý — khai tài khoản Apple, loại tiền, nạp / chỉnh số dư ở trang «Ví & tài khoản Apple» của app tool.', 'bad');
+            Res::redirect('/admin/wallets');
         }
-        if ($m === 'POST' && $id) {
-            $w = Wallets::find($id);
-            if (!$w) {
-                Res::notFound();
-            }
-            $back = (string) Req::post('back', '') === 'list' ? '/admin/wallets' : '/admin/wallets/' . $id;
-            $err = null;
-            if ($act === 'topup' || $act === 'adjust') {
-                $amount = Money::parse((string) Req::post('amount', ''), (string) $w['currency'], $act === 'adjust');
-                if ($amount === null) {
-                    $err = 'Số tiền không hợp lệ' . (Money::decimals((string) $w['currency']) === 0 ? ' (' . $w['currency'] . ' không có phần lẻ).' : '.');
-                } else {
-                    $err = $act === 'topup' ? Wallets::topup($id, $amount, (string) Req::post('note', ''), $actor)
-                                            : Wallets::adjust($id, $amount, (string) Req::post('note', ''), $actor);
-                }
-                if ($err === null) {
-                    Flash::set(($act === 'topup' ? 'Đã nạp thêm ' : 'Đã chỉnh số dư ') . Money::fmt($amount, (string) $w['currency']) . '.');
-                }
-            } elseif ($act === 'toggle') {
-                $on = !(int) $w['active'];
-                $err = Wallets::setActive($id, $on);
-                if ($err === null) {
-                    Flash::set($on ? 'Đã dùng lại ví — các ví khác của máy ' . $w['device'] . ' thôi dùng.' : 'Đã ngừng dùng ví — máy ' . $w['device'] . ' nhận đơn như máy không có ví.');
-                }
-            } else {
-                Res::notFound();
-            }
-            if ($err !== null) {
-                Flash::set($err, 'bad');
-            }
-            Res::redirect($back);
-        }
-        if ($m === 'GET' && $id) {
+        if ($m === 'GET' && $id) {                       // ví cũ khai trên gateway: chỉ xem sổ cái
             $w = Wallets::find($id);
             if (!$w) {
                 Res::notFound();
@@ -568,12 +525,12 @@ final class Admin
             $per = 100;
             $total = (int) Db::val('SELECT COUNT(*) FROM wallet_entries WHERE wallet_id=?', [$id]);
             $page = max(1, min((int) (Req::q('page') ?? 1), max(1, (int) ceil($total / $per))));
-            view('wallet', ['user' => $user, 'nav' => 'wallets', 'title' => 'Ví ' . $w['device'], 'w' => $w,
+            view('wallet', ['user' => $user, 'nav' => 'wallets', 'title' => 'Ví cũ ' . $w['device'], 'w' => $w,
                             'entries' => Wallets::entries($id, $per, ($page - 1) * $per), 'total' => $total, 'page' => $page, 'per' => $per]);
         }
         if ($m === 'GET' && !isset($s[1])) {
-            view('wallets', ['user' => $user, 'nav' => 'wallets', 'title' => 'Ví & tài khoản Apple', 'wallets' => Wallets::all(),
-                             'machines' => Wallets::machines(), 'pools' => array_column(Pools::all(), null, 'code'), 'pick' => (string) (Req::q('machine') ?? '')]);
+            view('wallets', ['user' => $user, 'nav' => 'wallets', 'title' => 'Ví & tài khoản Apple', 'toolWallets' => ToolWallets::all(),
+                             'events' => ToolWallets::recent(60), 'legacy' => Wallets::all()]);
         }
         Res::notFound();
     }

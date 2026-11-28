@@ -138,9 +138,14 @@ class Gateway:
         Trả nguyên phản hồi: {scripts_rev, need_scripts, devices, scripts}."""
         return self._call("POST", "/api/tool/sync", body, timeout=timeout)
 
-    def claim(self, device: str, pool: str) -> dict:
-        """Máy trống xin việc. Trả nguyên phản hồi: {job|None, paused, resumed?}."""
-        return self._call("POST", "/api/tool/claim", {"device": device, "pool": pool})
+    def claim(self, device: str, pool: str, wallet: dict | None = None) -> dict:
+        """Máy trống xin việc. `wallet` = ví của máy ở tool {currency, available ×100} (None = máy không có ví, không kiểm tiền).
+        Trả nguyên phản hồi: {job|None, paused, resumed?, wallet_short?}."""
+        body = {"device": device, "pool": pool}
+        if wallet:
+            body["wallet"] = {"currency": str(wallet["currency"]), "available": int(wallet["available"]),
+                              "applied": [int(x) for x in (wallet.get("applied") or [])][-300:]}
+        return self._call("POST", "/api/tool/claim", body)
 
     def job(self, job_id: str) -> dict:
         return self._call("GET", f"/api/tool/jobs/{job_id}").get("job") or {}

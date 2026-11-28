@@ -247,11 +247,49 @@ final class Schema
                 'ALTER TABLE jobs ADD COLUMN account_key VARCHAR(64) NULL',
                 'CREATE INDEX jobs_account ON jobs (pool_id, account_key)',
             ],
+            // VÍ DO TOOL QUẢN LÝ: tool giữ tài khoản Apple + loại tiền + số dư + sổ của từng máy (nguồn gốc). Gateway chỉ giữ:
+            //  - tool_wallets: BẢN SAO tool báo lên qua /api/tool/sync (để admin xem; không sửa ở gateway)
+            //  - tool_wallet_events: tiền của từng ĐƠN do gateway tính (mua / tạm giữ / admin chốt / hoàn) — tool nhận qua sync, áp vào sổ của
+            //    nó rồi báo đã nhận (acked_at). d_balance = đổi số dư, d_held = đổi tiền tạm giữ (×100, theo loại tiền của ví lúc giao đơn)
+            6 => [
+                "CREATE TABLE tool_wallets (
+                    id $pk,
+                    tool_key_id $ref NOT NULL,
+                    device VARCHAR(80) NOT NULL,
+                    apple_account VARCHAR(160) NOT NULL DEFAULT '',
+                    currency VARCHAR(8) NOT NULL,
+                    balance BIGINT NOT NULL DEFAULT 0,
+                    held BIGINT NOT NULL DEFAULT 0,
+                    active INT NOT NULL DEFAULT 1,
+                    note VARCHAR(200) NOT NULL DEFAULT '',
+                    reported_at INT NOT NULL,
+                    UNIQUE (tool_key_id, device)
+                )$opt",
+                "CREATE TABLE tool_wallet_events (
+                    id $pk,
+                    tool_key_id $ref NOT NULL,
+                    device VARCHAR(80) NOT NULL,
+                    job_id $ref NULL,
+                    job_pid VARCHAR(24) NULL,
+                    kind VARCHAR(12) NOT NULL,
+                    currency VARCHAR(8) NOT NULL,
+                    d_balance BIGINT NOT NULL DEFAULT 0,
+                    d_held BIGINT NOT NULL DEFAULT 0,
+                    package_code VARCHAR(60) NULL,
+                    qty INT NULL,
+                    note VARCHAR(300) NOT NULL DEFAULT '',
+                    actor VARCHAR(40) NOT NULL,
+                    created_at INT NOT NULL,
+                    acked_at INT NULL
+                )$opt",
+                'CREATE INDEX tool_wallet_events_pending ON tool_wallet_events (tool_key_id, acked_at, id)',
+                'CREATE INDEX tool_wallet_events_job ON tool_wallet_events (job_id)',
+            ],
         ];
     }
 
     /** Phiên bản migration mới nhất mà mã này cần. */
-    public const LATEST = 5;
+    public const LATEST = 6;
 
     private static ?int $version = null;
 

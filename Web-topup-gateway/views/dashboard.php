@@ -48,12 +48,12 @@ $stats = [
     <table class="table mb-0"><thead><tr><th>Máy</th><th>Tài khoản Apple</th><th class="text-end">Còn dùng được</th><th class="text-end">Gói đắt nhất</th></tr></thead><tbody>
     <?php foreach ($lowWallets as $w): ?>
       <tr><td><span class="fw-medium text-heading"><?= e($w['device']) ?></span><div class="small text-body-secondary"><?= e($w['key_name'] ?? '') ?></div></td>
-        <td><a href="/admin/wallets/<?= (int) $w['id'] ?>"><?= e($w['apple_account']) ?></a></td>
+        <td><?= e($w['apple_account'] ?: '—') ?></td>
         <td class="text-end text-nowrap fw-medium text-warning"><?= e(Money::fmt($w['available'], (string) $w['currency'])) ?></td>
         <td class="text-end text-nowrap"><?= e(Money::fmt($w['need'], (string) $w['currency'])) ?></td></tr>
     <?php endforeach; ?></tbody></table>
   </div>
-  <div class="card-body pt-3 pb-4"><p class="small text-body-secondary mb-0">Các máy này không nhận được đơn có gói đắt hơn số tiền còn dùng được — nạp thêm tiền cho tài khoản Apple rồi ghi vào ví.</p></div>
+  <div class="card-body pt-3 pb-4"><p class="small text-body-secondary mb-0">Các máy này không nhận được đơn có gói đắt hơn số tiền còn dùng được — nạp thêm tiền cho tài khoản Apple rồi ghi vào ví ở app tool.</p></div>
 </div>
 <?php endif; ?>
 

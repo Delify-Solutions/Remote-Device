@@ -167,7 +167,7 @@ function showView(name) {
   const was = ($(".view.active") || {}).id;
   $$(".app-nav").forEach(b => b.closest(".menu-item").classList.toggle("active", b.dataset.view === name));
   $$(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
-  const titles = { overview: "Tổng quan", devices: "Thiết bị", esp: "ESP32", flows: "Nhóm & Kịch bản", ai: "Kết nối AI", monitor: "Theo dõi", alerts: "Thông báo & AI" };
+  const titles = { overview: "Tổng quan", devices: "Thiết bị", esp: "ESP32", flows: "Nhóm & Kịch bản", ai: "Kết nối AI", monitor: "Theo dõi", alerts: "Thông báo & AI", wallets: "Ví & Apple" };
   const pt = document.getElementById("page-title"); if (pt) pt.textContent = titles[name] || "";
   if (name === "overview") loadOverview();
   if (name === "flows") {
@@ -180,6 +180,7 @@ function showView(name) {
   if (name === "esp" && !ESP_SCANNED) espScan();   // tự quét lần đầu mở tab ESP
   if (name === "ai") loadAI();
   if (name === "alerts") loadAlerts();
+  if (name === "wallets") loadWallets();
 }
 
 /* =========================================================
@@ -3184,6 +3185,7 @@ function init() {
   $("#btn-gw-settings").onclick = gatewaySettings;
   $("#btn-tg-settings").onclick = () => showView("alerts");          // cấu hình ở trang «Thông báo & AI»
   $("#btn-ai-screen").onclick = () => showView("alerts");
+  const walRefresh = $("#btn-wal-refresh"); if (walRefresh) walRefresh.onclick = () => loadWallets();
   loadAiScreen();
   loadTelegram();
   alertsBadge();                                     // nhãn «Thông báo & AI» ở menu: đã cài Telegram / AI chưa

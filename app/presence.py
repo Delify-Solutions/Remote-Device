@@ -201,8 +201,10 @@ class Reporter:
     IDLE_WAIT = 15.0        # chưa cấu hình gateway → bao lâu xem lại
     MIN_GAP = 2.0           # hai lần GỌI gateway cách nhau ít nhất chừng này (bấm «báo ngay» liên tục cũng không dội gateway)
 
-    def __init__(self, gateway_factory, facts, tool_info=None, clock=time.monotonic):
+    def __init__(self, gateway_factory, facts, tool_info=None, clock=time.monotonic, wallets=None):
         self._gateway = gateway_factory       # () -> Gateway (ném GatewayError nếu chưa cấu hình)
+        # nguồn VÍ của các máy (module wallets hoặc đồ giả): report() / pending_acks() / acked(ids) / apply_events(events). None = không báo ví
+        self._wallets = wallets
         self._facts = facts                   # () -> (devices, groups)   xem build()
         self._tool = tool_info or (lambda: {})
         self._clock = clock
@@ -217,7 +219,7 @@ class Reporter:
         self._last_try = None                 # lúc (đồng hồ) GỌI gateway lần gần nhất, dù được hay lỗi
         self._kicks = 0                       # số lần «báo ngay» — để một lời «báo ngay» tới GIỮA lúc đang gọi gateway không bị lỗi của lần gọi đó nuốt mất
         self._off = ""                        # khác rỗng = tiến trình này không báo (lý do), xem disable()
-        self._state = {"configured": None, "ok": None, "at": None, "error": "", "devices": 0, "idle": 0, "scripts": 0, "sent": 0}
+        self._state = {"configured": None, "ok": None, "at": None, "error": "", "devices": 0, "idle": 0, "scripts": 0, "sent": 0, "wallet_warn": "", "wallet_error": ""}
 
     # ---------- điều khiển ----------
     def disable(self, reason: str):
@@ -269,6 +271,19 @@ class Reporter:
             return self.TICK
         devices, groups = facts
         body, rows = build(devices, groups, self._tool())
+        acks = []
+        read_error = ""
+        if self._wallets is not None:
+            # ví do tool quản lý: bản sao ví (ảnh chụp toàn bộ, không có mật khẩu) + các sự kiện tiền đã áp → nằm trong dấu: số dư đổi /
+            # vừa áp sự kiện thì báo ngay ở nhịp tới
+            try:
+                body["wallets"] = self._wallets.report()
+                acks = self._wallets.pending_acks()
+            except Exception as e:
+                body.pop("wallets", None)
+                read_error = "không đọc được ví của các máy (%s)" % e
+            if acks:
+                body["wallet_acks"] = acks
         sig = signature(body)
         if sig == self._last_sig and self._last_ok is not None and now - self._last_ok < self.EVERY:
             return self.TICK
@@ -311,8 +326,24 @@ class Reporter:
                 self._not_before = now + self.ERROR_WAIT
             return self.TICK
         self._last_sig, self._last_ok = sig, now
+        wallet_warn = ""
+        if self._wallets is not None and body.get("wallets") and "wallet_events" not in r:
+            # gateway bản cũ (hoặc chưa cập nhật CSDL) không biết ví do tool quản lý: không trừ tiền của đơn, không kiểm tiền khi giao đơn
+            wallet_warn = ("Gateway chưa hỗ trợ ví do tool quản lý (bản cũ / chưa chạy php bin/setup.php) — máy nhận đơn KHÔNG được kiểm tiền, "
+                           "sổ ví không tự trừ tiền của đơn")
+        wallet_error = read_error
+        if self._wallets is not None:
+            try:
+                if acks:
+                    self._wallets.acked(acks)                    # gateway đã nhận lời «đã áp» → thôi gửi
+                events = r.get("wallet_events")
+                if isinstance(events, list) and events:
+                    self._wallets.apply_events(events)            # tiền của các đơn: áp mỗi id một lần; id vừa áp sẽ được báo ở nhịp sau
+            except Exception as e:
+                # để riêng (không bị lời «gửi được» xoá): tiền của đơn KHÔNG vào được sổ — người vận hành phải thấy
+                wallet_error = "lỗi khi áp tiền của đơn vào ví (%s)" % e
         with self._lock:
-            self._state.update(configured=True, ok=True, error="", at=time.time(), devices=len(body["devices"]),
+            self._state.update(configured=True, ok=True, error="", wallet_warn=wallet_warn, wallet_error=wallet_error, at=time.time(), devices=len(body["devices"]),
                                idle=sum(1 for d in body["devices"] if d["status"] == IDLE), scripts=len(rows),
                                sent=self._state["sent"] + 1)
         return self.TICK

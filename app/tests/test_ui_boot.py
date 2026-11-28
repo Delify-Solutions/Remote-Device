@@ -77,7 +77,7 @@ const ctx = vm.createContext(win);
 const fmt = (e) => (e && e.stack ? e.stack.split("\n").slice(0, 2).join(" | ") : String(e));
 process.on("unhandledRejection", (e) => errors.push("unhandledRejection: " + fmt(e)));
 process.on("uncaughtException", (e) => errors.push("uncaughtException: " + fmt(e)));      // lỗi trong hàm hẹn giờ (vd init gọi từ pywebviewready)
-for (const f of ["_mock.js", "app.js", "ai.js", "alerts.js"]) {
+for (const f of ["_mock.js", "app.js", "ai.js", "alerts.js", "wallets.js"]) {
   try { new vm.Script(fs.readFileSync(path.join(WEB, f), "utf8"), { filename: f }).runInContext(ctx); }
   catch (e) { errors.push("load " + f + ": " + (e && e.stack ? e.stack.split("\n").slice(0, 2).join(" | ") : e)); }
 }
@@ -86,7 +86,7 @@ const run = (label, src) => { try { new vm.Script(src, { filename: label }).runI
 setTimeout(() => {
   run("init", "init()");
   setTimeout(() => {
-    for (const v of ["overview", "devices", "esp", "flows", "monitor", "ai", "alerts"]) run("showView(" + v + ")", `showView(${JSON.stringify(v)})`);
+    for (const v of ["overview", "devices", "esp", "flows", "monitor", "ai", "alerts", "wallets"]) run("showView(" + v + ")", `showView(${JSON.stringify(v)})`);
     setTimeout(() => { process.stdout.write(JSON.stringify(errors)); process.exit(0); }, 600);
   }, 600);
 }, 200);
@@ -116,7 +116,7 @@ def main():
     ok(not refs, "không có hàm / biến nào bị gọi mà không tồn tại, không tệp JS nào nạp lỗi", refs)
     syntax = [e for e in errs if "SyntaxError" in e]
     ok(not syntax, "không có lỗi cú pháp", syntax)
-    names = ["loadAiScreen", "loadTelegram", "alertsBadge", "loadAlerts", "renderTelegram", "renderAiProviders", "showView", "init", "paintProgress", "runFrom"]
+    names = ["loadAiScreen", "loadTelegram", "alertsBadge", "loadAlerts", "renderTelegram", "renderAiProviders", "showView", "init", "paintProgress", "runFrom", "loadWallets", "renderWallets", "walletEdit"]
     # kiểm ở phía node (không qua vm.run): hàm khai báo kiểu `function x()` ở cấp tệp là thuộc tính của ngữ cảnh vm
     probe = HARNESS.replace("setTimeout(() => {\n  run(\"init\"",
                             "process.stdout.write('MISSING[' + %s.filter(n => typeof ctx[n] !== 'function').join(',') + ']\\n');\nsetTimeout(() => {\n  run(\"init\"" % json.dumps(names), 1)

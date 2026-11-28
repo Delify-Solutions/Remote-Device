@@ -89,6 +89,12 @@
             <span class="badge rounded-pill bg-label-secondary ms-auto" id="nav-mon-count" hidden>0</span>
           </a>
         </li>
+        <li class="menu-item">
+          <a class="menu-link app-nav" data-view="wallets" href="javascript:void(0)">
+            <i class="menu-icon icon-base ti tabler-wallet"></i>
+            <div>Ví &amp; Apple</div>
+          </a>
+        </li>
         <li class="menu-header small"><span class="menu-header-text">Tự động hoá</span></li>
         <li class="menu-item">
           <a class="menu-link app-nav" data-view="alerts" href="javascript:void(0)">
@@ -284,6 +290,18 @@
               <button class="btn btn-primary" id="btn-ai-refresh"><i class="ti tabler-refresh me-1"></i>Tải lại</button>
             </div>
             <div id="ai-body"><div class="api-note">Đang tải…</div></div>
+          </section>
+
+          <!-- ---------- VIEW: VÍ & TÀI KHOẢN APPLE của từng máy (tool quản lý, gateway giữ bản sao) ---------- -->
+          <section class="view" id="view-wallets">
+            <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+              <div>
+                <h4 class="mb-1">Ví &amp; tài khoản Apple</h4>
+                <small class="text-muted">Mỗi máy trả tiền bằng một tài khoản Apple, một loại tiền. Máy có ví chỉ nhận đơn mà ví đủ tiền; tiền của từng đơn gateway tính rồi gửi về tự trừ vào sổ.</small>
+              </div>
+              <button class="btn btn-label-secondary" id="btn-wal-refresh"><i class="ti tabler-refresh me-1"></i>Tải lại</button>
+            </div>
+            <div class="card"><div class="card-body" id="wal-body"><div class="api-note">Đang tải…</div></div></div>
           </section>
 
           <!-- ---------- VIEW: THÔNG BÁO & AI (Telegram cho admin + AI xử lý màn hình lạ) ---------- -->
@@ -652,5 +670,6 @@
 <script src="app.js"></script>
 <script src="ai.js"></script>
 <script src="alerts.js"></script>
+<script src="wallets.js"></script>
 </body>
 </html>

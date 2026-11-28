@@ -21,6 +21,7 @@ Trước MỖI lần xin đơn, máy phải ở trạng thái «game chưa đăn
 không đơn nào của khách bị tiêu tốn chỉ để phát hiện ra máy còn đăng nhập tài khoản của người trước.
 """
 from __future__ import annotations
+import json
 import threading, time
 from collections import deque
 
@@ -82,13 +83,19 @@ class Runner:
         self.alert = None
 
     @staticmethod
-    def _wallet_why(short):
-        """Câu báo «ví không đủ» từ `wallet_short` của gateway (không chứa dữ liệu khách; tài khoản Apple đã được gateway che)."""
+    def _wallet_why(short, machine=None):
+        """Câu báo «ví không đủ» từ `wallet_short` của gateway (không chứa dữ liệu khách). Tài khoản Apple: gateway che sẵn (ví cũ) hoặc
+        lấy từ ví của máy ở tool (đã che)."""
         import notify
-        acc, cur = short.get("account") or "?", short.get("currency") or ""
+        acc = short.get("account")
+        if not acc and machine:
+            import wallets
+            mine = wallets.get(machine)
+            acc = wallets.mask(mine["apple_account"]) if mine else None
+        acc, cur = acc or "?", short.get("currency") or ""
         codes = ", ".join(str(c) for c in (short.get("package_codes") or [])[:5])
         if short.get("reason") == "no_price":
-            return "gói %s chưa có giá theo loại tiền %s của ví tài khoản Apple %s (khai giá ở trang Pool của gateway)" % (codes or "?", cur or "?", acc)
+            return "gói %s chưa có giá / chữ giá theo loại tiền %s của ví tài khoản Apple %s (khai giá ở trang Pool của gateway)" % (codes or "?", cur or "?", acc)
         return "ví tài khoản Apple %s còn %s, không đủ cho đơn cần %s%s" % (
             acc, notify.money(short.get("available"), cur), notify.money(short.get("need"), cur), (" (gói %s)" % codes) if codes else "")
 
@@ -825,8 +832,25 @@ class Runner:
             # --- máy trống → xin việc (bấm «Tạm dừng» trong lúc đang kiểm tra ở trên thì KHÔNG xin nữa: quay lại đầu vòng để tạm dừng) ---
             if w["pause"].is_set():
                 continue
+            import wallets
+            # bước mua cần {{apple.*}} (gõ mật khẩu Apple ID vào bảng mua) mà ví của máy chưa lưu → KHÔNG xin đơn (nhận đơn rồi mới thấy
+            # thiếu thì đơn của khách hỏng); báo admin một lần
+            need = sorted({k for k in apimode.PLACEHOLDER.findall(json.dumps((steps.get("purchase") or []) + (steps.get("after") or []), ensure_ascii=False))
+                           if k.startswith("apple.")})
+            have = wallets.apple(name) if need else {}
+            miss = [k for k in need if not have.get(k.split(".", 1)[1])]
+            if miss:
+                why = "bước mua cần %s nhưng ví của máy chưa lưu — khai ở trang «Ví & Apple» của tool" % ", ".join("{{%s}}" % k for k in miss)
+                status("Chờ — " + why)
+                if w.get("apple_missing") != tuple(miss):
+                    w["apple_missing"] = tuple(miss)
+                    say("Không nhận đơn: " + why, "warn")
+                    self._alert(name, "wallet", why, w)
+                stop.wait(self.NOT_READY_WAIT)
+                continue
+            w["apple_missing"] = None
             try:
-                r = gw.claim(name, pool_code)
+                r = gw.claim(name, pool_code, wallets.claim_info(name))       # ví của máy (tool quản lý): gateway chỉ giao đơn vừa túi
             except GatewayError as e:
                 if e.status == 401:
                     return halt(e.vi())
@@ -843,13 +867,13 @@ class Runner:
                 if short:
                     # Có đơn nhưng gateway không giao cho máy này vì VÍ (tài khoản Apple trên máy) không đủ tiền / gói chưa có giá theo loại
                     # tiền của ví: đơn để máy khác nhận. Báo admin MỘT lần cho mỗi tình trạng (không báo lại mỗi lần xin đơn).
-                    why = self._wallet_why(short)
+                    why = self._wallet_why(short, name)
                     status("Chờ đơn — " + why)
                     sig = (short.get("reason"), short.get("account"), short.get("currency"), tuple(short.get("package_codes") or ()))
                     if w.get("wallet_short") != sig:
                         w["wallet_short"] = sig
                         say("Không nhận đơn: " + why, "warn")
-                        self._alert(name, "wallet", why + " — đơn để máy khác nhận; nạp thêm tiền vào ví (trang «Ví & tài khoản Apple» của gateway)", w)
+                        self._alert(name, "wallet", why + " — đơn để máy khác nhận; nạp thêm tiền vào ví của máy (trang «Ví & Apple» của app tool) hoặc khai giá gói ở gateway", w)
                 else:
                     w["wallet_short"] = None
                     status("Chờ đơn")
@@ -858,10 +882,12 @@ class Runner:
             w["wallet_short"] = None
             wl = job.get("wallet") if isinstance(job.get("wallet"), dict) else None
             if wl:
-                import notify
-                say("Đơn %s — thanh toán bằng tài khoản Apple %s (%s), ví còn %s" % (
-                    job.get("ref") or job.get("id"), wl.get("account") or "?", wl.get("currency") or "?",
-                    notify.money(wl.get("available", wl.get("balance")), wl.get("currency"))))
+                import notify, wallets
+                mine = wallets.get(name) if wl.get("source") == "tool" else None
+                acc = wallets.mask(mine["apple_account"]) if mine else (wl.get("account") or "?")
+                say("Đơn %s — thanh toán bằng tài khoản Apple %s (%s), chi phí %s, ví còn %s" % (
+                    job.get("ref") or job.get("id"), acc, wl.get("currency") or "?", notify.money(wl.get("cost"), wl.get("currency")) if "cost" in wl else "?",
+                    notify.money(mine["available"] if mine else wl.get("available", wl.get("balance")), wl.get("currency"))))
 
             clean = False         # sắp đụng vào game → phải kiểm lại trước đơn sau
             outcome = self._handle_job(name, w, gw, nav, job, bool(r.get("resumed")), pool, steps, opts, abort, say, status)
@@ -1004,9 +1030,11 @@ class Runner:
             if j:
                 j.set(name, phase="purchasing")
 
+        import wallets
         flow = apimode.JobFlow(nav, gw, job, pool, steps, opts=opts,
                                status=lambda t: status("%s · %s" % (ref, t)), log=say,
-                               abort=abort.is_set, on_purchase_start=on_buy)
+                               abort=abort.is_set, on_purchase_start=on_buy,
+                               apple=wallets.apple(name))         # {{apple.account}} / {{apple.password}} cho bảng mua của App Store
         out = flow.run()
         if out.result in ("failed", "review"):
             flow._upload("error")           # ảnh màn hình lúc lỗi → người đối soát nhìn được

@@ -2,12 +2,14 @@
 $isActive = in_array($job['status'], Jobs::ACTIVE, true) || $job['status'] === 'queued';
 $actor = ['shop' => ['Shop', 'info'], 'tool' => ['Tool', 'success'], 'admin' => ['Admin', 'primary'], 'system' => ['Hệ thống', 'secondary']];
 $itemStatus = ['done' => ['success', 'đã nạp'], 'unavailable' => ['warning', 'không mua được'], 'failed' => ['danger', 'lỗi'], 'skipped' => ['secondary', 'bỏ qua']];
-$held = !empty($job['wallet_id']) && ($job['wallet_state'] ?? null) === 'held';
+$toolJob = ToolWallets::isToolJob($job);                       // đơn trả bằng ví của TOOL (tool giữ sổ, gateway gửi sự kiện tiền)
+$held = (!empty($job['wallet_id']) || $toolJob) && ($job['wallet_state'] ?? null) === 'held';
+$appleAcc = $wallet['apple_account'] ?? ($toolJob ? (string) (ToolWallets::reported((int) $job['tool_key_id'], (string) $job['device'])['apple_account'] ?? '') : '');
 $queued = $job['status'] === 'queued';
 $canDelete = !in_array($job['status'], Jobs::ACTIVE, true) && !($job['status'] === 'review' && $held);
 // đổi trạng thái tay: đơn chờ đối soát đã có thẻ chốt riêng ở dưới, đơn chờ máy đã có nút «Huỷ đơn»
 $manual = in_array($job['status'], ['queued', 'review'], true) ? [] : (Jobs::MANUAL[$job['status']] ?? []);
-$walletJob = Wallets::enabled() && !empty($job['wallet_id']);
+$walletJob = (Wallets::enabled() && !empty($job['wallet_id'])) || $toolJob;
 $manualHelp = [
     'review' => 'Máy đang làm sẽ bị từ chối khi báo tiếp. Tạm giữ cả chi phí đơn trong ví; sau đó chốt «đã nạp» / «chưa nạp» như đơn chờ đối soát.',
     'failed' => 'Báo shop đơn THẤT BẠI (sửa kết quả đã chốt).' . ($walletJob ? ' Hoàn lại vào ví đúng số tiền đơn này đã trừ.' : ''),
@@ -32,7 +34,7 @@ $isTest = (int) $job['shop_key_id'] === (int) ($testKeyId ?? 0);
   <h5 class="mb-2"><i class="ti tabler-eye-check text-primary me-1"></i>Chờ đối soát — <?= e(Jobs::REVIEW_REASON[$job['review_reason']] ?? 'cần kiểm tra') ?></h5>
   <p class="text-body-secondary">Kiểm tra trong game / lịch sử nạp của tài khoản rồi chốt. Shop chỉ nhận kết quả cuối sau khi bạn bấm. <b>Gateway không tự nạp lại và không tự hoàn tiền.</b></p>
   <?php if ($held): $cur = (string) $job['currency']; ?>
-  <p class="text-body-secondary">Ví <b><?= e($wallet['apple_account'] ?? '') ?></b> đang <b>tạm giữ <?= e(Money::fmt((int) $job['cost'], $cur)) ?></b> cho đơn này. Chốt «đã nạp» thì nhập số tiền <b>thật</b> đã bị trừ ở tài khoản Apple (xem lịch sử mua của tài khoản); chốt «chưa nạp» thì nhả tạm giữ.</p>
+  <p class="text-body-secondary">Ví <b><?= e($appleAcc !== '' ? $appleAcc : 'của máy ' . $job['device']) ?></b><?= $toolJob ? ' (tool quản lý — tool nhận kết quả chốt ở lần đồng bộ sau)' : '' ?> đang <b>tạm giữ <?= e(Money::fmt((int) $job['cost'], $cur)) ?></b> cho đơn này. Chốt «đã nạp» thì nhập số tiền <b>thật</b> đã bị trừ ở tài khoản Apple (xem lịch sử mua của tài khoản); chốt «chưa nạp» thì nhả tạm giữ.</p>
   <?php endif; ?>
   <div class="d-flex flex-wrap gap-3 align-items-end">
     <form method="post" action="/admin/jobs/<?= (int) $job['id'] ?>/resolve" class="d-flex flex-wrap gap-3 align-items-end" data-confirm="Chốt ĐÃ NẠP ĐỦ? Shop sẽ nhận job.done và hoàn tất đơn."><?= Csrf::field() ?><input type="hidden" name="to" value="done">
@@ -61,8 +63,8 @@ $isTest = (int) $job['shop_key_id'] === (int) ($testKeyId ?? 0);
         <dt>Shop</dt><dd><?= e($shop['name'] ?? '—') ?></dd>
         <dt>Tài khoản</dt><dd><span class="mono"><?= e($job['account_hint'] ?: '—') ?></span> <span class="text-body-secondary small">(<?= $job['login_enc'] ? 'thông tin đăng nhập đang được mã hoá' : 'đã xoá khỏi máy chủ' ?>)</span></dd>
         <dt>Máy nạp</dt><dd><?= e($job['device'] ?: 'chưa giao') ?><?= $tool ? ' <span class="text-body-secondary small">(' . e($tool['name']) . ')</span>' : '' ?></dd>
-        <?php if (!empty($job['wallet_id'])): ?>
-        <dt>Tài khoản Apple</dt><dd><?= $wallet ? '<a href="/admin/wallets/' . (int) $wallet['id'] . '">' . e($wallet['apple_account']) . '</a>' : '—' ?> <span class="badge bg-label-secondary mono"><?= e($job['currency']) ?></span></dd>
+        <?php if (!empty($job['wallet_id']) || $toolJob): ?>
+        <dt>Tài khoản Apple</dt><dd><?= $wallet ? '<a href="/admin/wallets/' . (int) $wallet['id'] . '">' . e($wallet['apple_account']) . '</a>' : e($appleAcc !== '' ? $appleAcc : '—') ?> <span class="badge bg-label-secondary mono"><?= e($job['currency']) ?></span><?= $toolJob ? ' <span class="small text-body-secondary">(ví do tool quản lý)</span>' : '' ?></dd>
         <dt>Chi phí đơn</dt><dd><?= e(Money::fmt((int) $job['cost'], (string) $job['currency'])) ?> <span class="text-body-secondary small">(giá lúc giao máy)</span> <?= wallet_state_badge($job['wallet_state']) ?></dd>
         <?php endif; ?>
         <dt>Bước hiện tại</dt><dd class="mono"><?= e($job['stage'] ?: '—') ?></dd>
@@ -153,6 +155,31 @@ $isTest = (int) $job['shop_key_id'] === (int) ($testKeyId ?? 0);
       <td><?= $en['qty'] !== null ? (int) $en['qty'] : '—' ?></td>
       <td class="small"><?= e($en['note'] ?: '—') ?></td>
       <td class="text-nowrap"><?= ledger_actor((string) $en['actor']) ?></td>
+    </tr>
+  <?php endforeach; ?></tbody></table>
+  </div>
+</div>
+<?php endif; ?>
+
+<?php if (!empty($toolEvents)): $tc = (string) $job['currency']; ?>
+<div class="card mb-6">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <h5 class="card-title mb-0">Tiền của đơn gửi cho tool</h5><a class="small" href="/admin/wallets">Ví &amp; tài khoản Apple <i class="ti tabler-chevron-right icon-xs"></i></a>
+  </div>
+  <div class="table-responsive">
+  <table class="table mb-0 align-middle"><thead><tr><th>Lúc</th><th>Loại</th><th class="text-end">Số dư</th><th class="text-end">Tạm giữ</th><th>Gói</th><th>SL</th><th>Ghi chú</th><th>Ai ghi</th><th>Tool</th></tr></thead><tbody>
+  <?php foreach ($toolEvents as $ev): [$kl, $kc] = ToolWallets::KINDS[$ev['kind']] ?? [$ev['kind'], 'secondary'];
+      $sg = static fn (int $v): string => $v === 0 ? '—' : (($v > 0 ? '+' : '') . Money::fmt($v, $tc)); ?>
+    <tr>
+      <td class="small text-body-secondary text-nowrap"><?= e(vntime((int) $ev['created_at'])) ?></td>
+      <td><span class="badge bg-label-<?= $kc ?>"><?= e($kl) ?></span></td>
+      <td class="text-end text-nowrap"><?= e($sg((int) $ev['d_balance'])) ?></td>
+      <td class="text-end text-nowrap"><?= e($sg((int) $ev['d_held'])) ?></td>
+      <td class="mono small"><?= e($ev['package_code'] ?: '—') ?></td>
+      <td><?= $ev['qty'] !== null ? (int) $ev['qty'] : '—' ?></td>
+      <td class="small"><?= e($ev['note'] ?: '—') ?></td>
+      <td class="text-nowrap"><?= ledger_actor((string) $ev['actor']) ?></td>
+      <td><?= $ev['acked_at'] ? '<span class="badge bg-label-success">đã nhận</span>' : '<span class="badge bg-label-warning">chưa nhận</span>' ?></td>
     </tr>
   <?php endforeach; ?></tbody></table>
   </div>
