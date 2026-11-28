@@ -319,15 +319,20 @@ def run_all(tmp, real_ocr):
     host.running.clear()
 
     g.screen, g.focus = "login", None
-    steps = [{"type": "tap_text", "text": "Đăng nhập"}, {"type": "type", "value": "{{user}}"}, {"type": "key", "name": "tab"},
+    steps = [{"type": "tap_text", "text": "Đăng nhập"}, {"type": "type", "text": "{{user}}"}, {"type": "key", "name": "tab"},
              {"type": "tap_text", "text": "Nút không có", "optional": True}, {"type": "type", "text": "{{pw}}"}, {"type": "key", "name": "enter"}, {"type": "wait_text", "text": "Trang chủ", "timeout": 2}]
     g.user = None
     r = call(server, "run_steps", {"device": "iPhoneFarm-01", "steps": steps, "vars": {"user": "a@test.vn", "pw": "PassA#1"}})
     ok(r["result"]["isError"] is False and r["result"]["structuredContent"]["completed"] is True and g.user == "a@test.vn" and "PassA#1" not in body(r),
-       "run_steps: chạy cả chuỗi (nhận cả dạng bước của gateway), bước tuỳ chọn hỏng thì bỏ qua, không lộ giá trị biến", body(r))
+       "run_steps: chạy cả chuỗi, bước tuỳ chọn hỏng thì bỏ qua, không lộ giá trị biến", body(r))
+    n_clicks = g.clicks
+    r_old = call(server, "run_steps", {"device": "iPhoneFarm-01", "steps": [{"type": "tap", "value": "10,20"}]})
+    r_bad = call(server, "run_steps", {"device": "iPhoneFarm-01", "steps": [{"type": "loai_la"}]})
+    ok(r_old["result"]["isError"] is True and "value" in body(r_old) and r_bad["result"]["isError"] is True and "tap_image" in body(r_bad) and g.clicks == n_clicks,
+       "run_steps: bước dạng {type, value} của gateway đời cũ / loại bước lạ → từ chối kèm chỉ dẫn, KHÔNG chạm vào máy (không bấm bừa ở 0,0)", (body(r_old), body(r_bad)))
     r = call(server, "run_steps", {"device": "iPhoneFarm-01", "steps": [{"type": "tap_text", "text": "Không có chữ này"}, {"type": "home"}]})
     ok(r["result"]["isError"] is True and "✗ 1." in body(r) and "2." not in body(r), "run_steps dừng ở bước lỗi đầu tiên và nói rõ bước nào", body(r))
-    ok(call(server, "run_steps", {"device": "iPhoneFarm-01", "steps": [{"type": "swipe", "value": "cheo"}]})["result"]["isError"] is True
+    ok(call(server, "run_steps", {"device": "iPhoneFarm-01", "steps": [{"type": "swipe", "dir": "cheo"}]})["result"]["isError"] is True
        and call(server, "run_steps", {"device": "iPhoneFarm-01", "steps": []})["result"]["isError"] is True, "bước sai cấu hình / danh sách rỗng → từ chối trước khi chạm vào máy")
     r = call(server, "run_steps", {"device": "iPhoneFarm-01", "steps": [{"type": "tap_if", "text": "Hộp thoại không có", "tap": "Hủy", "timeout": 0}, {"type": "home"}]})
     res_if = r["result"]["structuredContent"]["results"]

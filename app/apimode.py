@@ -36,6 +36,10 @@ GW_LISTS = {"login": "login_steps", "otp": "otp_steps", "nav": "nav_steps",
 PHASE_LABEL = {"login": "Đăng nhập", "otp": "Nhập OTP", "nav": "Vào danh sách gói",
                "purchase": "Mua 1 gói", "after": "Sau khi mua", "finish": "Kết thúc đơn"}
 DEFAULT_OTP_STEPS = [{"type": "type", "text": "{{otp}}"}, {"type": "key", "name": "enter"}]
+# MỌI loại bước mà bộ chạy (exec_step) biết làm — bảng gốc DUY NHẤT. Trình sửa trong giao diện (app/web/app.js: STEP_LABEL + bảng chọn hành
+# động), lời mô tả công cụ cho AI (control.py) và ảnh mẫu (screencheck.CHECK_TYPES) phải khớp bảng này — có phép thử canh.
+STEP_TYPES = ("tap", "tap_text", "tap_image", "tap_if", "type", "key", "combo", "home", "launch", "wait", "wait_text", "assert_text",
+              "swipe", "hold", "hold_text")
 INPUT_TYPES = ("tap", "tap_text", "tap_image", "tap_if", "type", "key", "combo", "launch", "home",
                "swipe", "hold", "hold_text")                                    # bước có (thể) gửi thao tác vào máy
 SWIPE_DIRS = {"left": "trái", "right": "phải", "up": "lên", "down": "xuống"}
@@ -62,6 +66,7 @@ STEP_GAP = 0.35
 # đủ cho hiệu ứng chuyển màn của iOS chạy xong). Bước «nhìn MỘT lần rồi quyết» (bấm chữ, kiểm chữ, giữ chữ)
 # vì thế phải chờ màn hình đứng yên trước khi nhìn — nếu không sẽ đọc phải khung hình đang trượt dở.
 LOOK_SETTLE = 0.9
+WAIT_TEXT_TIMEOUT = 15   # bước «chờ thấy chữ» không ghi thời gian chờ → chờ tối đa chừng này giây (trình sửa cũng hiện đúng con số này)
 FRESH_SETTLE = 2.0       # nghỉ sau khi «tắt hẳn rồi mở mới» một app, cho app kịp lên màn hình
 PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
 
@@ -112,7 +117,7 @@ def _gw_step(s: dict) -> dict:
         return {"type": "tap", "x": int(m.group(1)), "y": int(m.group(2))}
     if t in ("tap_text", "assert_text"):
         return {"type": t, "text": v}
-    if t == "wait_text":        # "Chữ cần chờ @45s" = chờ tối đa 45 giây (mặc định 20)
+    if t == "wait_text":        # "Chữ cần chờ @45s" = chờ tối đa 45 giây (dữ liệu đời cũ không ghi thì 20 — đúng như gateway từng hứa)
         m = re.match(r"^(.*?)\s*@\s*(\d{1,3})\s*s\s*$", v)
         return {"type": t, "text": m.group(1), "timeout": int(m.group(2))} if m else {"type": t, "text": v, "timeout": 20}
     if t == "type":
@@ -790,12 +795,31 @@ def exec_step(nav, tmpl: dict, vars: dict, abort=None):
     return r
 
 
+def _coords(tmpl: dict, what: str) -> tuple:
+    """Toạ độ (x, y) của bước. Thiếu / không phải số → lỗi cấu hình: không bao giờ bấm bừa vào (0,0)."""
+    try:
+        return int(tmpl["x"]), int(tmpl["y"])
+    except (KeyError, TypeError, ValueError):
+        raise ConfigError("bước «%s» thiếu toạ độ x, y (phải là số)" % what)
+
+
+def _seconds(tmpl: dict, key: str, default: float, what: str) -> float:
+    """Số giây ghi ở bước; KHÔNG ghi thì lấy mặc định, ghi 0 thì là 0 (không coi 0 là «không ghi»). Không phải số → lỗi cấu hình."""
+    v = tmpl.get(key)
+    if v is None or v == "":
+        return float(default)
+    try:
+        return max(0.0, float(v))
+    except (TypeError, ValueError):
+        raise ConfigError("bước «%s»: số giây phải là số" % what)
+
+
 def _exec_step(nav, tmpl: dict, vars: dict, abort=None):
     if abort and abort():
         raise Aborted()
     t = tmpl.get("type")
     if t == "tap":
-        return _tap(nav, tmpl.get("x", 0), tmpl.get("y", 0))
+        return _tap(nav, *_coords(tmpl, "Bấm tại toạ độ"))
 
     if t in ("tap_text", "wait_text", "assert_text"):
         raw = str(tmpl.get("text") or "")
@@ -827,7 +851,7 @@ def _exec_step(nav, tmpl: dict, vars: dict, abort=None):
             txt = _screen_text(nav)
             ok = any(text_has(txt, a) for a in alts)
             return ok, ("" if ok else "màn hình không có chữ «%s»" % label), False
-        timeout = float(tmpl.get("timeout") or 20)
+        timeout = _seconds(tmpl, "timeout", WAIT_TEXT_TIMEOUT, "Chờ thấy chữ")
         end = time.time() + timeout
         while True:
             txt = _screen_text(nav)
@@ -1055,7 +1079,7 @@ def _exec_step(nav, tmpl: dict, vars: dict, abort=None):
         return True, "", True
 
     if t == "wait":
-        _sleep(float(tmpl.get("seconds") or 1), abort)
+        _sleep(_seconds(tmpl, "seconds", 1.0, "Chờ"), abort)
         return True, "", False
 
     if t == "swipe":
@@ -1071,15 +1095,16 @@ def _exec_step(nav, tmpl: dict, vars: dict, abort=None):
         return gesture(nav, "vuốt", lambda: nav.swipe(*pts))
 
     if t == "hold":
-        sec = max(0.2, min(float(tmpl.get("seconds") or 1.0), 10.0))
-        return gesture(nav, "bấm giữ", lambda: nav.hold_at(int(tmpl.get("x", 0)), int(tmpl.get("y", 0)), sec))
+        x, y = _coords(tmpl, "Bấm giữ")
+        sec = max(0.2, min(_seconds(tmpl, "seconds", 1.0, "Bấm giữ"), 10.0))
+        return gesture(nav, "bấm giữ", lambda: nav.hold_at(x, y, sec))
 
     if t == "hold_text":
         raw = str(tmpl.get("text") or "")
         alts = alternatives(subst(raw, vars))
         if not alts:
             raise ConfigError("bước «Bấm giữ vào chữ» đang để trống chữ cần tìm")
-        sec = max(0.2, min(float(tmpl.get("seconds") or 1.0), 10.0))
+        sec = max(0.2, min(_seconds(tmpl, "seconds", 1.0, "Bấm giữ vào chữ"), 10.0))
         wait = _text_wait(tmpl, "Bấm giữ vào chữ")
         _sleep(LOOK_SETTLE, abort)
         pos = _find_wait(nav, alts, wait, abort)

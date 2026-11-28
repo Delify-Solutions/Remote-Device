@@ -133,6 +133,11 @@ class World:
         return draw_pointer(img, self.x, self.y) if self.visible else img
 
 
+def tap_text(n, needle):
+    """Bấm vào chữ bằng ĐÚNG bộ chạy bước của app (apimode.exec_step): nhìn một lần, đưa con trỏ tới, kiểm chữ còn đó rồi mới bấm."""
+    return apimode.exec_step(n, {"type": "tap_text", "text": needle}, {})[0]
+
+
 class FakeHands:
     def __init__(self, world):
         self.w = world
@@ -164,6 +169,10 @@ class FakeHands:
     def click(self):
         self.w.clicks.append((round(self.w.x), round(self.w.y)))
         return "OK click"
+
+    def send(self, cmd, wait=0.5):
+        """Lệnh thô xuống board (bộ chạy bước gửi «click» qua đường này) → trả đúng câu board trả lời."""
+        return self.click() if cmd == "click" else self.do(cmd)
 
     def hold(self, seconds=1.0):
         self.w.gestures.append(("hold", round(self.w.x), round(self.w.y), seconds))
@@ -437,7 +446,7 @@ def main():
     n, w = rig(visible=False)
     ok(n.tap_at(186, 831) is False and w.clicks == [], "không thấy con trỏ (AssistiveTouch tắt) → trả False, không bấm lần nào", w.clicks)
     n, w = rig(visible=False)
-    ok(n.tap_text("khong co chu nay") is False and w.clicks == [], "tap_text không thấy chữ → False, không bấm")
+    ok(tap_text(n, "khong co chu nay") is False and w.clicks == [], "tap_text không thấy chữ → False, không bấm")
 
     class Blind(FakeEyes):          # chụp được ảnh nền rồi thì hỏng
         def screenshot(self):
@@ -540,9 +549,9 @@ def main():
        "vệt bị gạt nằm GIỮA đường con trỏ đi (xa cả hai đầu: lệnh di dài bị rớt giữa chừng, con trỏ thật dừng sát vật nhấp nháy) → không gạt")
     Nav.rng, Nav.gain, Nav.gain_sure = random.Random(20261125), None, None
     n, w = rig()
-    ok(n.tap_text("Wi-Fi") is True and len(w.clicks) == 1, "tap_text: chữ vẫn còn đó tới lúc bấm → bấm", w.clicks)
+    ok(tap_text(n, "Wi-Fi") is True and len(w.clicks) == 1, "tap_text: chữ vẫn còn đó tới lúc bấm → bấm", w.clicks)
     n, w = rig(label_until=2)
-    ok(n.tap_text("Wi-Fi") is False and w.clicks == [],
+    ok(tap_text(n, "Wi-Fi") is False and w.clicks == [],
        "tap_text: chữ biến mất trong lúc đưa con trỏ tới (màn hình đổi) → không bấm vào toạ độ cũ", {"clicks": w.clicks, "shots": w.shots})
 
     n, w = rig(visible=False)
@@ -1096,11 +1105,11 @@ def main():
             ok(got is True and len(w.clicks) == 1 and abs(c[0] - u) <= 14 and abs(c[1] - v) <= 14 and n._fr.rot == rot,
                "máy ngang (góc «về» ở %s của ảnh), điểm %s: tự nhận ra hướng, bấm đúng 1 lần đúng chỗ" % (side, name), {"ok": got, "clicks": w.clicks, "rot": n._fr.rot})
         n, w = lrig(rot)
-        got = n.tap_text("Wi-Fi")
+        got = tap_text(n, "Wi-Fi")
         ok(got is True and len(w.clicks) == 1 and abs(w.clicks[0][0] - 186) <= 14 and abs(w.clicks[0][1] - 831) <= 14 and n.e.verified and all(sz == (W, H) for sz in n.e.verified),
            "máy ngang (%s): bấm vào chữ — toạ độ tìm trên ảnh ngang, hàm kiểm «chữ còn đó không» nhận lại ảnh NGANG như ảnh chụp" % side, (w.clicks, n.e.verified[:2]))
         n, w = lrig(rot, label_until=2)
-        ok(n.tap_text("Wi-Fi") is False and w.clicks == [], "máy ngang (%s): chữ biến mất trước khi con trỏ tới → KHÔNG bấm" % side, w.clicks)
+        ok(tap_text(n, "Wi-Fi") is False and w.clicks == [], "máy ngang (%s): chữ biến mất trước khi con trỏ tới → KHÔNG bấm" % side, w.clicks)
         n, w = lrig(rot)
         X, Y = n.e.to_img(636, 468)
         ok(n.hold_at(X, Y, 1.3) is True and w.gestures and w.gestures[0][0] == "hold" and abs(w.gestures[0][1] - 636) <= 14 and abs(w.gestures[0][2] - 468) <= 14,

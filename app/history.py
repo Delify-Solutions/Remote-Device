@@ -2,7 +2,7 @@
 """
 history.py — «máy nào đang chạy bước nào» + LỊCH SỬ riêng của từng máy và từng đơn.
 
-Mỗi máy có một bộ theo dõi (`Tracker`). Bộ chạy bước (apimode.exec_step / engine.run_step) báo cho nó lúc BẮT ĐẦU và lúc XONG từng
+Mỗi máy có một bộ theo dõi (`Tracker`). Bộ chạy bước (apimode.exec_step — engine.run_step cũng đi qua nó) báo cho nó lúc BẮT ĐẦU và lúc XONG từng
 bước; bộ chạy kịch bản (runner) báo lúc bắt đầu / kết thúc một lượt chạy, một giai đoạn, một đơn. Từ đó có:
 
   • trạng thái TRỰC TIẾP (trong bộ nhớ): máy đang ở lượt chạy nào, giai đoạn nào, bước thứ mấy / tổng số, là bước gì, từ bao giờ;
@@ -169,7 +169,7 @@ class Tracker:
         self.order_ = None              # {id, ref, items, t0, steps, failed}
         self.phase_ = None              # {label, total, i}
         self.step = None                # {what, type, t0, i, n, phase}
-        self.depth = 0                  # bước lồng nhau (engine.run_step gọi tiếp apimode.exec_step) chỉ tính bước NGOÀI CÙNG
+        self.depth = 0                  # bước báo lồng nhau (một bước gọi lại bộ chạy cho việc con) chỉ tính bước NGOÀI CÙNG
         self.last = None                # bước vừa xong gần nhất: {what, ok, msg, t, i, n, phase}
         self.seq = 0
 

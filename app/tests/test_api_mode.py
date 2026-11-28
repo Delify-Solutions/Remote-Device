@@ -1557,7 +1557,7 @@ def run_all(gw, rigs):
         ok7, msg7 = engine.run_step(n7, ti)
         n8 = Popup([title])
         ok8, msg8 = engine.run_step(n8, dict(ti, timeout=0))
-        ok(ok7 is True and n7.taps == [(73, 33)] and "đã bấm" in msg7 and ok8 is True and n8.taps == [] and "bỏ qua" in msg8 and "tap_if" in engine.STEP_TYPES,
+        ok(ok7 is True and n7.taps == [(73, 33)] and "đã bấm" in msg7 and ok8 is True and n8.taps == [] and "bỏ qua" in msg8 and "tap_if" in apimode.STEP_TYPES,
            "kịch bản thường / thử một bước: cùng kết quả (bấm khi thấy, bỏ qua khi không thấy) và nói rõ đã làm gì", (msg7, msg8))
 
         class Slow(Popup):                           # đưa con trỏ tới nơi tốn thời gian THẬT (trên máy thật: vài giây tới hơn chục giây)
@@ -1866,7 +1866,7 @@ def run_all(gw, rigs):
         ok(g1[0] is True and h1.holds == [(951, 378, 1.2)] and g2 == (False, "không thấy chữ «Data Transfer» trên màn hình", False) and h2.holds == [] and h2.n == 1,
            "«bấm giữ vào chữ» cũng vậy: có ghi thời gian chờ thì chờ chữ hiện ra (giữ ở chỗ đã đứng yên); không ghi thì nhìn một lần", (g1, h1.holds, g2))
 
-        # kịch bản thường / «thử một bước»: có ghi thời gian chờ → cùng MỘT cách làm; không ghi → đường cũ, không đổi gì
+        # kịch bản thường / «thử một bước»: cùng MỘT bộ chạy với lúc nhận đơn — có ghi thời gian chờ thì chờ, không ghi thì nhìn một lần
         e1 = Popup([title, menu])
         ok9, msg9 = engine.run_step(e1, dict(tt, timeout=5))
         e2 = Popup([title])
@@ -1875,14 +1875,18 @@ def run_all(gw, rigs):
         class Old(Popup):
             def tap_text(self, needle, verbose=False):
                 self.old = needle; return True
-        e3 = Old([title, menu])
+        e3 = Old([menu])
         ok11, msg11 = engine.run_step(e3, tt)
+        e3b = Old([title, menu])
+        ok11b, msg11b = engine.run_step(e3b, tt)
         e4 = Holder([title, menu])
         ok12, msg12 = engine.run_step(e4, dict(ht, timeout=5))
         ok(ok9 is True and e1.taps == [(951, 378)] and msg9 == "Tap chữ «Data Transfer»" and ok10 is False and "chờ 0.2s không thấy chữ «Data Transfer»" in msg10 and e2.taps == []
-           and ok11 is True and getattr(e3, "old", None) == "Data Transfer" and e3.n == 0 and e3.taps == [] and ok12 is True and e4.holds == [(951, 378, 1.2)],
-           "bộ chạy kịch bản thường: bước có ghi thời gian chờ dùng chung cách làm (chờ rồi bấm / giữ, báo rõ đã chờ bao lâu); bước không ghi vẫn đi đường cũ",
-           (ok9, msg9, ok10, msg10, ok11, ok12, msg12))
+           and ok11 is True and e3.taps == [(951, 378)] and msg11 == "Tap chữ «Data Transfer»" and not hasattr(e3, "old")
+           and ok11b is False and e3b.taps == [] and e3b.n == 1 and "không thấy chữ «Data Transfer»" in msg11b and not hasattr(e3b, "old")
+           and ok12 is True and e4.holds == [(951, 378, 1.2)],
+           "bộ chạy kịch bản thường = bộ chạy lúc nhận đơn: có ghi thời gian chờ thì chờ rồi bấm / giữ (báo rõ đã chờ bao lâu); không ghi thì nhìn MỘT lần rồi bấm có kiểm lại — không còn đường riêng nav.tap_text",
+           (ok9, msg9, ok10, msg10, ok11, msg11, ok11b, msg11b, ok12, msg12))
 
         print("\n== 32. «Bấm vào vùng ảnh» (nút không có chữ: tìm đúng HÌNH rồi bấm, thay cho toạ độ cố định) ==")
         import base64
@@ -2045,7 +2049,7 @@ def run_all(gw, rigs):
         p12, p13 = Pic([title_scr]), Pic([scene(btn=None)])
         ok14, msg14 = engine.run_step(p12, ti_)
         ok15, msg15 = engine.run_step(p13, ti_)
-        ok(ok14 is True and p12.taps == [MENU] and msg14 == "Bấm vào vùng ảnh 90×90" and ok15 is False and p13.taps == [] and "không thấy vùng ảnh" in msg15 and "tap_image" in engine.STEP_TYPES,
+        ok(ok14 is True and p12.taps == [MENU] and msg14 == "Bấm vào vùng ảnh 90×90" and ok15 is False and p13.taps == [] and "không thấy vùng ảnh" in msg15 and "tap_image" in apimode.STEP_TYPES,
            "kịch bản thường / «thử một bước» dùng chung cách làm", (msg14, msg15))
         ok(eyes_mod.locate_image(None, crop) == (None, 0.0) and eyes_mod.locate_image(title_scr, None) == (None, 0.0) and eyes_mod.locate_image(title_scr[:, :, 0], crop) == (None, 0.0)
            and eyes_mod.locate_image(np.dstack([title_scr, title_scr[:, :, :1]]), crop) == (None, 0.0) and eyes_mod.locate_image(title_scr.astype(np.float32), crop) == (None, 0.0),

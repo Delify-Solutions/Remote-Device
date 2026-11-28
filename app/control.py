@@ -363,7 +363,7 @@ class Control:
             return Result("Không thấy chữ «%s» trên màn hình máy %s." % (text, name), {"device": name, "matches": []})
         return Result("\n".join("(%d,%d) %s" % (r["x"], r["y"], r["text"]) for r in hits), {"device": name, "matches": hits})
 
-    def wait_for_text(self, text, device=None, timeout=20):
+    def wait_for_text(self, text, device=None, timeout=apimode.WAIT_TEXT_TIMEOUT):
         name, eyes = self._eyes(device)
         try:
             ok, why, _ = apimode.exec_step(_EyesOnly(eyes), {"type": "wait_text", "text": text, "timeout": timeout}, {}, self._abort())
@@ -467,12 +467,11 @@ class Control:
             raise ToolError("steps phải là một danh sách bước, vd [{\"type\":\"tap_text\",\"text\":\"Cài đặt\"}].")
         plan = []
         for i, s in enumerate(steps):
-            if not isinstance(s, dict) or not s.get("type"):
-                raise ToolError("Bước %d không hợp lệ (cần có «type»)." % (i + 1))
-            try:                                  # nhận cả dạng của gateway {type, value}
-                plan.append(apimode.gw_step_to_engine(s) if "value" in s else dict(s))
-            except apimode.ConfigError as e:
-                raise ToolError("Bước %d: %s" % (i + 1, e))
+            if not isinstance(s, dict) or s.get("type") not in apimode.STEP_TYPES:
+                raise ToolError("Bước %d không hợp lệ: «type» phải là một trong %s." % (i + 1, ", ".join(apimode.STEP_TYPES)))
+            if "value" in s:                      # dạng {type, value} của gateway đời cũ không còn được nhận: chạy nó như bước thiếu tham số là bấm / gõ sai chỗ
+                raise ToolError("Bước %d: không có trường «value» — ghi tham số theo từng loại bước (vd tap {x,y}, tap_text {text}, type {text}, wait {seconds})." % (i + 1))
+            plan.append(dict(s))
         values = {str(k): str(v) for k, v in (vars or {}).items()} if isinstance(vars, dict) else {}
 
         abort = self._abort()
@@ -633,7 +632,7 @@ def build_tools(c: Control) -> list:
         Tool("wait_for_text", "Wait for text",
              "Wait until a text appears on the phone screen (polls with OCR). Fails after the timeout.",
              {"text": {"type": "string", "description": "Text to wait for («a|b» = any of them)."}, "device": _DEV,
-              "timeout": {"type": "integer", "minimum": 1, "maximum": 300, "description": "Seconds to wait (default 20)."}}, ("text",),
+              "timeout": {"type": "integer", "minimum": 1, "maximum": 300, "description": "Seconds to wait (default %d)." % apimode.WAIT_TEXT_TIMEOUT}}, ("text",),
              fn=c.wait_for_text, read_only=True, idempotent=True, cli="wait", positional=("device", "text"), help="Chờ tới khi thấy chữ trên màn hình"),
         Tool("tap", "Tap",
              "Tap the phone screen either at pixel coordinates (x,y) or on a visible text. The pointer is moved in a closed loop and "

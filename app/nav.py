@@ -816,26 +816,6 @@ class Nav:
         self.kb_reason = "" if state == "ok" else state
         return state == "ok", seen
 
-    LOOK_SETTLE = 0.9     # chờ màn hình đứng yên trước khi «nhìn một lần» (ảnh chụp giờ tức thì, xem apimode.LOOK_SETTLE)
-
-    def tap_text(self, needle: str, verbose=False):
-        """OCR tìm nhãn chữ rồi click vào giữa nó. Trả True nếu thấy & tap."""
-        time.sleep(self.LOOK_SETTLE)
-        img = self.e.screenshot()
-        pos = self.e.find_text(needle, img)
-        if not pos:
-            if verbose: print(f"  không thấy chữ '{needle}'")
-            return False
-        if verbose: print(f"  '{needle}' ở {pos} -> tap")
-        def still(shot):                       # chữ còn ở chỗ cũ ngay trước khi bấm?
-            q = self.e.find_text(needle, shot)
-            return bool(q) and abs(q[0] - pos[0]) <= 45 and abs(q[1] - pos[1]) <= 45
-        return self.tap_at(pos[0], pos[1], verify=still)   # không tới nơi / màn hình đã đổi -> không bấm, False
-
-    def home_screen(self):
-        """Về màn hình chính (Cmd+H)."""
-        self.h.do("combo gui h"); time.sleep(1.2)
-
     def shot(self, path: str):
         return self.e.save(path)
 
